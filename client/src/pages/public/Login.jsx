@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowLeft, Landmark } from 'lucide-react';
 import AuthService from '../../services/AuthService';
 import logo from '../../assets/logo.png';
 
-// --- 🧠 LOGIC LAYER (Custom Hook) ---
-// Decouples Business Logic from Presentation (Separation of Concerns)
 const useLoginLogic = () => {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState('');
-  const [fieldErrors, setFieldErrors] = useState({}); // For inline validation
+  const [fieldErrors, setFieldErrors] = useState({});
 
-  // 🚦 Traffic Controller Logic
   const getRouteByRole = (role) => {
     const safeRole = role?.toUpperCase() || '';
     switch (safeRole) {
@@ -20,17 +17,14 @@ const useLoginLogic = () => {
       case 'MAYOR': return '/mayor/dashboard';
       case 'DEPW': return '/depw/dashboard';
       case 'CPDO': return '/cpdo/dashboard';
-      default:
-
-        return '/unauthorized';
+      default: return '/unauthorized';
     }
   };
 
   const loginUser = async (email, password) => {
-    // 1. Strict Input Traps (Validation)
     const errors = {};
-    if (!email.trim()) errors.email = "Official Email is required";
-    if (!password) errors.password = "Secure credential is required";
+    if (!email.trim()) errors.email = 'Official email is required';
+    if (!password) errors.password = 'Password is required';
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -43,30 +37,20 @@ const useLoginLogic = () => {
     setIsLoading(true);
 
     try {
-      // 2. Centralized Authentication via Service
       const { user, role } = await AuthService.login(email, password);
-
-      // 3. Authorization (Route Determination)
       const targetRoute = getRouteByRole(role);
 
       if (targetRoute === '/unauthorized') {
-
-        setAuthError("Access Denied. Unauthorized Role.");
+        setAuthError('Access denied. Your role is not authorized.');
         return;
-        // Note: In strict systems, we might route them anyway or show a specific error.
-        // For now, staying on page with error is better UX than redirecting to a 403 page.
       }
 
-      // 4. Secure Hand-off (Redirect to OTP)
       navigate('/verify-identity', {
         state: { email: user.email, targetPath: targetRoute },
         replace: true
       });
-
     } catch (err) {
-
-      // AuthService throws user-friendly errors
-      setAuthError(err.message || "Access Denied. Verification failed.");
+      setAuthError(err.message || 'Authentication failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +59,6 @@ const useLoginLogic = () => {
   return { loginUser, isLoading, authError, fieldErrors, setAuthError };
 };
 
-// --- 🎨 UI LAYER (Presentation) ---
 const Login = () => {
   const navigate = useNavigate();
   const { loginUser, isLoading, authError, fieldErrors } = useLoginLogic();
@@ -85,7 +68,7 @@ const Login = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (isLoading) return; // Enforce Idempotency
+    if (isLoading) return;
     loginUser(formData.email, formData.password);
   };
 
@@ -94,140 +77,173 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex font-sans text-slate-800 bg-slate-50">
+    <div className="min-h-screen flex font-sans text-slate-800 bg-[#F8FAFC]">
 
-      {/* LEFT SIDE: Visual Branding */}
-      <div className="hidden lg:flex w-1/2 bg-blue-600 relative flex-col items-center justify-center text-white p-12 overflow-hidden">
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
-        <div className="relative z-10 flex flex-col items-center text-center">
-          <div className="w-24 h-24 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-8 shadow-inner border border-white/30 overflow-hidden p-1">
-            <img src={logo} alt="Seal" className="w-full h-full rounded-full object-cover" />
+      {/* Left Panel — Branding */}
+      <div className="hidden lg:flex w-1/2 bg-teal-700 relative flex-col items-center justify-center text-white p-12 overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.06]" aria-hidden="true">
+          <svg className="w-full h-full">
+            <defs>
+              <pattern id="login-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5" />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#login-grid)" />
+          </svg>
+        </div>
+        <div className="absolute top-0 right-0 w-80 h-80 bg-white/5 rounded-full blur-[100px]" aria-hidden="true" />
+        <div className="absolute bottom-0 left-0 w-60 h-60 bg-teal-400/10 rounded-full blur-[80px]" aria-hidden="true" />
+
+        <div className="relative z-10 flex flex-col items-center text-center max-w-md">
+          <div className="w-24 h-24 rounded-full overflow-hidden mb-8">
+            <img src={logo} alt="TranspiraFund seal" className="w-full h-full object-cover scale-[1.55]" />
           </div>
-          <h1 className="text-4xl font-bold mb-4 tracking-tight">Secure Access<br />Portal</h1>
-          <p className="max-w-md text-blue-100 text-lg leading-relaxed opacity-90 font-medium">
-            Strict Role-Based Access Control (RBAC).<br />Authorized LGU Personnel Only.
+          <h1 className="text-4xl font-black mb-4 tracking-tight leading-tight">
+            Secure Access<br />Portal
+          </h1>
+          <p className="text-teal-100 text-[15px] leading-relaxed">
+            City-wide transparency. Barangay-level visibility.
+            <br />
+            Authorized LGU personnel only.
           </p>
+          <div className="mt-8 flex items-center gap-3">
+            {['Encrypted', 'Role-Based', 'Audited'].map(tag => (
+              <span key={tag} className="px-3 py-1 bg-white/10 border border-white/10 rounded-lg text-xs font-semibold tracking-wide uppercase">
+                {tag}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* RIGHT SIDE: Login Form */}
-      <div className="w-full lg:w-1/2 bg-white flex flex-col justify-center px-8 md:px-24 relative">
+      {/* Right Panel — Login Form */}
+      <div className="w-full lg:w-1/2 bg-white flex flex-col justify-center px-6 sm:px-12 md:px-24 relative">
 
-        {/* Back Button */}
         <button
           onClick={() => navigate('/')}
-          className="absolute top-8 left-8 flex items-center gap-2 text-slate-400 hover:text-blue-600 transition-colors font-semibold text-sm group"
+          className="absolute top-6 left-6 sm:top-8 sm:left-8 flex items-center gap-2 text-slate-400 hover:text-teal-700 transition-colors font-semibold text-sm group"
+          aria-label="Back to home page"
         >
-          <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+          <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" aria-hidden="true" />
           Back to Home
         </button>
 
-        <div className="max-w-md w-full mx-auto">
+        {/* Mobile logo — visible only on small screens */}
+        <div className="flex lg:hidden items-center gap-2.5 mb-8">
+          <div className="w-8 h-8 rounded-full overflow-hidden">
+            <img src={logo} alt="TranspiraFund" className="w-full h-full object-cover scale-[1.55]" />
+          </div>
+          <span className="font-bold text-slate-800 text-base tracking-tight">TranspiraFund</span>
+        </div>
 
-          {/* Header Section */}
-          <div className="mb-10">
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Official Login</h2>
-            <p className="text-slate-500">Sign in with your government email address.</p>
+        <div className="max-w-md w-full mx-auto">
+          <div className="mb-8 sm:mb-10">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200/60 text-teal-700 text-xs font-semibold tracking-widest uppercase mb-4">
+              <Landmark size={12} />
+              LGU Portal
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mb-2 tracking-tight">Official Login</h2>
+            <p className="text-slate-500 text-[15px]">Sign in with your government email address.</p>
           </div>
 
-          {/* Top Level Error (Access Denied) */}
           {authError && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-lg flex items-center gap-3 text-red-600 animate-in fade-in slide-in-from-top-2">
-              <AlertCircle size={20} className="shrink-0" />
+            <div className="mb-6 p-4 bg-red-50 border border-red-200/80 rounded-xl flex items-center gap-3 text-red-700" role="alert">
+              <AlertCircle size={18} className="shrink-0" aria-hidden="true" />
               <span className="text-sm font-semibold">{authError}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-
-            {/* Email Field */}
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide ml-1">
+          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+            <div className="space-y-1.5">
+              <label htmlFor="login-email" className="text-xs font-bold text-slate-500 uppercase tracking-wide ml-1">
                 Official Email
               </label>
               <div className="relative group">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                  <Mail size={20} />
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-teal-700 transition-colors" aria-hidden="true">
+                  <Mail size={18} />
                 </div>
                 <input
+                  id="login-email"
                   type="email"
                   name="email"
                   value={formData.email}
                   onChange={handleChange}
-                  className={`w-full pl-12 pr-4 py-3.5 bg-slate-50 border rounded-xl focus:ring-4 focus:ring-blue-500/10 outline-none transition-all font-medium text-slate-800 placeholder:text-slate-400
-                    ${fieldErrors.email ? 'border-red-300 focus:border-red-500 bg-red-50/50' : 'border-slate-200 focus:border-blue-500'}
-                  `}
+                  className={`w-full pl-12 pr-4 py-3.5 bg-[#F8FAFC] border rounded-xl focus:ring-4 focus:ring-teal-500/10 outline-none transition-all font-medium text-slate-800 text-[15px] placeholder:text-slate-400
+                    ${fieldErrors.email ? 'border-red-300 focus:border-red-500 bg-red-50/50' : 'border-slate-200 focus:border-teal-600'}`}
                   placeholder="name@lgu.gov.ph"
+                  autoComplete="email"
+                  aria-invalid={fieldErrors.email ? 'true' : 'false'}
+                  aria-describedby={fieldErrors.email ? 'email-error' : undefined}
                 />
               </div>
-              {/* Inline Validation Error */}
               {fieldErrors.email && (
-                <p className="text-xs text-red-500 font-bold ml-1 animate-in slide-in-from-top-1">
+                <p id="email-error" className="text-xs text-red-600 font-semibold ml-1" role="alert">
                   {fieldErrors.email}
                 </p>
               )}
             </div>
 
-            {/* Password Field */}
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide ml-1">
+            <div className="space-y-1.5">
+              <label htmlFor="login-password" className="text-xs font-bold text-slate-500 uppercase tracking-wide ml-1">
                 Password
               </label>
               <div className="relative group">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors">
-                  <Lock size={20} />
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-teal-700 transition-colors" aria-hidden="true">
+                  <Lock size={18} />
                 </div>
                 <input
-                  type={showPassword ? "text" : "password"}
+                  id="login-password"
+                  type={showPassword ? 'text' : 'password'}
                   name="password"
                   value={formData.password}
                   onChange={handleChange}
-                  className={`w-full pl-12 pr-12 py-3.5 bg-slate-50 border rounded-xl focus:ring-4 focus:ring-blue-500/10 outline-none transition-all font-medium text-slate-800 placeholder:text-slate-400
-                    ${fieldErrors.password ? 'border-red-300 focus:border-red-500 bg-red-50/50' : 'border-slate-200 focus:border-blue-500'}
-                  `}
+                  className={`w-full pl-12 pr-12 py-3.5 bg-[#F8FAFC] border rounded-xl focus:ring-4 focus:ring-teal-500/10 outline-none transition-all font-medium text-slate-800 text-[15px] placeholder:text-slate-400
+                    ${fieldErrors.password ? 'border-red-300 focus:border-red-500 bg-red-50/50' : 'border-slate-200 focus:border-teal-600'}`}
                   placeholder="••••••••"
+                  autoComplete="current-password"
+                  aria-invalid={fieldErrors.password ? 'true' : 'false'}
+                  aria-describedby={fieldErrors.password ? 'password-error' : undefined}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              {/* Inline Validation Error */}
               {fieldErrors.password && (
-                <p className="text-xs text-red-500 font-bold ml-1 animate-in slide-in-from-top-1">
+                <p id="password-error" className="text-xs text-red-600 font-semibold ml-1" role="alert">
                   {fieldErrors.password}
                 </p>
               )}
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className={`w-full font-bold py-4 rounded-xl shadow-lg shadow-blue-600/20 transition-all flex items-center justify-center gap-2 mt-4
+              className={`w-full font-bold py-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 mt-2 text-[15px]
                 ${isLoading
-                  ? 'bg-blue-400 cursor-wait'
-                  : 'bg-blue-600 hover:bg-blue-700 hover:-translate-y-0.5 active:translate-y-0'
+                  ? 'bg-teal-500 cursor-wait shadow-teal-500/20'
+                  : 'bg-teal-700 hover:bg-teal-800 hover:-translate-y-0.5 active:translate-y-0 shadow-teal-700/20 hover:shadow-lg hover:shadow-teal-700/20'
                 } text-white`}
             >
               {isLoading ? (
                 <>
-                  <Loader2 size={20} className="animate-spin" />
+                  <Loader2 size={18} className="animate-spin" aria-hidden="true" />
                   Authenticating...
                 </>
               ) : (
-                'Authenticate'
+                'Sign In'
               )}
             </button>
           </form>
 
-          <div className="mt-12 text-center">
-            <p className="text-xs text-slate-400 font-bold tracking-wide uppercase flex items-center justify-center gap-2">
-              <Lock size={12} />
-              Secured by TranspiraFund Infrastructure
+          <div className="mt-10 text-center">
+            <p className="text-xs text-slate-400 font-semibold tracking-wide uppercase flex items-center justify-center gap-2">
+              <ShieldCheck size={13} className="text-teal-700" aria-hidden="true" />
+              Secured by TranspiraFund
             </p>
           </div>
         </div>
