@@ -104,9 +104,7 @@ const useDashboardData = () => {
   return { departments, systemHealth };
 };
 
-// --- 🧩 UI COMPONENTS ---
-
-// --- 🧩 UI COMPONENTS ---
+// --- UI COMPONENTS ---
 
 const DepartmentCard = memo(({ data }) => {
   const containerClass = data.isMissing
