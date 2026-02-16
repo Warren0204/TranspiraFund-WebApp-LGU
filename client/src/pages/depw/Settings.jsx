@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-    Settings as SettingsIcon, Shield, Upload, Moon, AlertCircle
+    Settings as SettingsIcon, Shield, Upload, AlertCircle
 } from 'lucide-react';
 import DepwSidebar from '../../components/layout/DepwSidebar';
 import { useAuth } from '../../context/AuthContext';
 
 const Settings = () => {
     const { currentUser } = useAuth();
-    const [isDarkMode, setIsDarkMode] = useState(false);
 
     // Fallbacks for data to ensure UI doesn't break
     const userName = currentUser
@@ -97,22 +96,15 @@ const Settings = () => {
                         <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                             <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center">
-                                    <Moon size={20} />
+                                    <SettingsIcon size={20} />
                                 </div>
                                 <div>
-                                    <h4 className="font-bold text-slate-800 text-sm">Dark Mode</h4>
-                                    <p className="text-xs font-medium text-slate-400">Toggle interface appearance.</p>
+                                    <h4 className="font-bold text-slate-800 text-sm">Theme Customization</h4>
+                                    <p className="text-xs font-medium text-slate-400">Coming soon in a future update.</p>
                                 </div>
                             </div>
 
-                            {/* TOGGLE SWITCH */}
-                            <button
-                                onClick={() => setIsDarkMode(!isDarkMode)}
-                                className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${isDarkMode ? 'bg-blue-600' : 'bg-slate-200'}`}
-                                aria-label="Toggle dark mode"
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform duration-200 ease-in-out ${isDarkMode ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
+                            <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-lg">Coming Soon</span>
                         </div>
                     </div>
                 </div>

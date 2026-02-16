@@ -1,17 +1,19 @@
 import React, { useState, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-    LayoutDashboard, Users, FolderKanban, FileText, Bell, Settings, LogOut, HardHat,
-    Briefcase, AlertTriangle, FileBarChart, Menu, X
+    LayoutDashboard, Users, FolderKanban, Bell, Settings, LogOut,
+    FileBarChart, Menu, X
 } from 'lucide-react';
 import { getAuth } from 'firebase/auth';
 import logo from '../../assets/logo.png';
 import LogoutModal from '../shared/LogoutModal';
+import { useAuth } from '../../context/AuthContext';
 
 
 const DepwSidebar = memo(() => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { currentUser } = useAuth();
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const [showLogoutModal, setShowLogoutModal] = useState(false);
     const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -152,11 +154,15 @@ const DepwSidebar = memo(() => {
                     <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border-2 border-white shadow-sm">
-                                E
+                                {currentUser?.firstName?.[0]?.toUpperCase() || '?'}
                             </div>
                             <div className="overflow-hidden">
-                                <h4 className="text-sm font-bold text-slate-900 truncate">Engr. Sarah Connor</h4>
-                                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wide truncate">City Engineer</p>
+                                <h4 className="text-sm font-bold text-slate-900 truncate">
+                                    {currentUser ? `Engr. ${currentUser.firstName} ${currentUser.lastName}` : 'Loading...'}
+                                </h4>
+                                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wide truncate">
+                                    {currentUser?.role || 'Official'}
+                                </p>
                             </div>
                         </div>
 

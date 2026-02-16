@@ -4,6 +4,13 @@ import { ShieldCheck, ArrowLeft, Mail, Lock, AlertCircle, RefreshCw, Landmark } 
 import emailjs from '@emailjs/browser';
 import logo from '../../assets/logo.png';
 
+// --- LOGIC LAYER (Custom Hook) ---
+// ⚠️ SECURITY WARNING: This OTP verification is CLIENT-SIDE ONLY.
+// The OTP code is generated in-browser and validated in-browser, which means
+// it can be bypassed by manipulating React state or navigating directly.
+// TODO: Migrate OTP generation & validation to a Firebase Cloud Function
+// for production-grade security. The server should generate the code,
+// send it via email, and validate the user's input server-side.
 const useOtpVerification = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -53,6 +60,13 @@ const useOtpVerification = () => {
     setError('');
     setSuccessMsg('');
 
+    // Clear session lock allows valid re-sends if manually triggered? 
+    // Actually, manual trigger bypasses the useEffect check, so it's fine.
+    // But let's be safe and update the timestamp or similar if we wanted complex logic.
+    // For now, simple is better.
+
+    // ⚠️ TODO: Move code generation to server-side (Cloud Function).
+    // Currently stored in client memory — accessible via React DevTools.
     const newCode = generateRandomCode();
     setGeneratedCode(newCode);
 

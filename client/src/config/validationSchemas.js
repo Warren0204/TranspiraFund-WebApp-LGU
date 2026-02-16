@@ -60,7 +60,15 @@ export const projectSchema = z.object({
         message: "Start date must be in the future"
     }),
 
-    completionDate: z.string()
+    completionDate: z.string().min(1, "Completion date is required")
+}).refine((data) => {
+    if (data.startDate && data.completionDate) {
+        return new Date(data.completionDate) > new Date(data.startDate);
+    }
+    return true;
+}, {
+    message: "Completion date must be after the start date",
+    path: ["completionDate"]
 });
 
 export default {
