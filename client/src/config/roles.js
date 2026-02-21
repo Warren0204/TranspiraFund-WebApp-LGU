@@ -35,5 +35,3 @@ export const ROLE_METADATA = [
     titlePrefix: 'Engr.'
   }
 ];
-
-export const isValidRole = (role) => Object.values(ROLES).includes(role);

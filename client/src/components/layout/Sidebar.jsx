@@ -48,14 +48,25 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
 
     return (
         <>
-            {/* Mobile Menu Button */}
-            <button
-                onClick={() => setIsMobileOpen(true)}
-                className="fixed top-4 left-4 z-20 p-2 bg-white rounded-lg shadow-md md:hidden text-slate-600 hover:text-blue-600 transition-colors"
-                aria-label="Open Menu"
-            >
-                <Menu size={24} />
-            </button>
+            {/* Mobile Top Bar — logo always visible on mobile/tablet */}
+            <div className="fixed top-0 left-0 right-0 z-20 md:hidden bg-white/90 backdrop-blur-md border-b border-slate-200/60 px-4 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-full overflow-hidden shrink-0">
+                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.3]" />
+                    </div>
+                    <div>
+                        <h1 className="text-sm font-bold text-slate-900 leading-tight">TranspiraFund</h1>
+                        <p className="text-[9px] font-bold text-teal-700 tracking-wider uppercase">{brandLabel}</p>
+                    </div>
+                </div>
+                <button
+                    onClick={() => setIsMobileOpen(true)}
+                    className="p-2 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-slate-50 transition-colors"
+                    aria-label="Open Menu"
+                >
+                    <Menu size={22} />
+                </button>
+            </div>
 
             {/* Mobile Overlay */}
             {isMobileOpen && (
@@ -78,12 +89,12 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
 
                 {/* Header / Logo */}
                 <div className="p-6 flex items-center gap-3">
-                    <div className="bg-white p-0.5 rounded-full shadow-lg shadow-blue-600/10 border border-slate-100 overflow-hidden w-10 h-10 flex items-center justify-center">
-                        <img src={logo} alt="Logo" className="w-full h-full rounded-full object-cover" />
+                    <div className="w-10 h-10 rounded-full overflow-hidden shrink-0">
+                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.3]" />
                     </div>
                     <div>
                         <h1 className="font-bold text-slate-900 leading-tight">TranspiraFund</h1>
-                        <p className="text-[10px] font-bold text-blue-600 tracking-wider uppercase">{brandLabel}</p>
+                        <p className="text-[10px] font-bold text-teal-700 tracking-wider uppercase">{brandLabel}</p>
                     </div>
                 </div>
 
@@ -102,7 +113,7 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
                                             key={item.path}
                                             onClick={() => navigate(item.path)}
                                             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${active
-                                                ? 'bg-blue-50 text-blue-600 shadow-sm ring-1 ring-blue-100'
+                                                ? 'bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-200/60'
                                                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
                                                 }`}
                                         >
@@ -120,14 +131,14 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
                 <div className="p-4 border-t border-slate-100">
                     <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
                         <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm border-2 border-white shadow-sm">
+                            <div className="w-10 h-10 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-sm border-2 border-white shadow-sm">
                                 {userInitial || '?'}
                             </div>
                             <div className="overflow-hidden">
                                 <h4 className="text-sm font-bold text-slate-900 truncate">
                                     {userDisplay?.name || 'Loading...'}
                                 </h4>
-                                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wide truncate">
+                                <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wide truncate">
                                     {userDisplay?.subtitle || 'Official'}
                                 </p>
                             </div>
@@ -135,7 +146,7 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
 
                         <button
                             onClick={() => setShowLogoutModal(true)}
-                            className="w-full flex items-center justify-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-bold py-2.5 rounded-xl transition-all shadow-sm"
+                            className="w-full flex items-center justify-center gap-2 bg-white border border-teal-200/60 hover:bg-teal-50 text-teal-700 text-xs font-bold py-2.5 rounded-xl transition-all shadow-sm"
                         >
                             <LogOut size={14} />
                             Secure Logout
