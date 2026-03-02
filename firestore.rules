@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── HELPER FUNCTIONS ───────────────────────────────────────────
+
+    // Returns the calling user's role from the users collection.
+    // Returns '' if the user document does not exist.
+    function getUserRole() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : '';
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Returns true if the caller has one of the specified roles.
+    function hasRole(roles) {
+      return isAuthenticated() && getUserRole() in roles;
+    }
+
+
+    // ─── users collection ────────────────────────────────────────────
+    // Reads:  Own doc (any auth user), all docs (MIS, DEPW)
+    // Writes: Blocked — only Cloud Functions (Admin SDK) manage user docs
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() &&
+                     (request.auth.uid == userId ||
+                      hasRole(['MIS', 'DEPW']));
+      allow write: if false;
+    }
+
+
+    // ─── projects collection ─────────────────────────────────────────
+    // Reads:  All authenticated roles (dashboards, registries, approvals)
+    // Create: DEPW only (CreateProject.jsx writes directly via addDoc)
+    // Update/Delete: Blocked — future Cloud Functions will handle lifecycle
+
+    match /projects/{projectId} {
+      allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
+      allow create: if hasRole(['DEPW']);
+      allow update, delete: if false;
+    }
+
+
+    // ─── milestones collection ───────────────────────────────────────
+    // Reads:  All authenticated roles
+    // Create: DEPW only (CreateProject.jsx writes via writeBatch)
+    // Update/Delete: Blocked
+
+    match /milestones/{milestoneId} {
+      allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
+      allow create: if hasRole(['DEPW']);
+      allow update, delete: if false;
+    }
+
+
+    // ─── stats collection ────────────────────────────────────────────
+    // The stats/public document is the ONLY intentionally public read
+    // in the entire database. It contains pre-computed aggregate counts
+    // maintained by Cloud Function triggers.
+
+    match /stats/{docId} {
+      allow read: if docId == 'public';
+      allow write: if false;
+    }
+
+
+    // ─── DEFAULT: Deny everything not explicitly matched ─────────────
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

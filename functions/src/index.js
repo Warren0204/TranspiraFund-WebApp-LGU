@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const admin = require("firebase-admin");
 
@@ -135,5 +136,52 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     } catch (error) {
         console.error("Error deleting user:", error);
         throw new HttpsError('internal', error.message);
+    }
+});
+
+// ─── TRIGGER: Recompute public stats when any user document changes ──────────
+exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
+    try {
+        const usersSnapshot = await admin.firestore().collection("users").get();
+        const users = usersSnapshot.docs.map(doc => doc.data());
+
+        const engineerCount = users.filter(u =>
+            u.role === 'PROJ_ENG' || u.role === 'Project Engineer'
+        ).length;
+
+        const departmentCount = new Set(
+            users.map(u => u.department).filter(Boolean)
+        ).size;
+
+        await admin.firestore().doc("stats/public").set({
+            engineerCount,
+            departmentCount,
+            lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+    } catch (error) {
+        console.error("[onUserWritten] Failed to update stats:", error);
+    }
+});
+
+// ─── TRIGGER: Recompute public stats when any project document changes ───────
+exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () => {
+    try {
+        const projectsSnapshot = await admin.firestore().collection("projects").get();
+        const projects = projectsSnapshot.docs.map(doc => doc.data());
+
+        const projectCount = projects.length;
+        const totalBudget = projects.reduce(
+            (acc, p) => acc + (Number(p.budget) || 0), 0
+        );
+
+        await admin.firestore().doc("stats/public").set({
+            projectCount,
+            totalBudget,
+            lastUpdated: new Date().toISOString()
+        }, { merge: true });
+
+    } catch (error) {
+        console.error("[onProjectWritten] Failed to update stats:", error);
     }
 });

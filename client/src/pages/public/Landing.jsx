@@ -5,9 +5,8 @@ import {
   Building2, BarChart3, ArrowRight, CheckCircle2, Users,
   Activity, Eye, FileSearch, Landmark, Award
 } from 'lucide-react';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { ROLES } from '../../config/roles';
 import logo from '../../assets/logo.png';
 
 const AnimatedCounter = ({ target, prefix = '', suffix = '', duration = 1200 }) => {
@@ -68,41 +67,38 @@ const GridPattern = memo(() => (
 const Landing = () => {
   const navigate = useNavigate();
 
-  const [projectCount, setProjectCount] = useState(0);
-  const [totalBudget, setTotalBudget] = useState(0);
-  const [engineerCount, setEngineerCount] = useState(0);
-  const [departmentCount, setDepartmentCount] = useState(0);
+  const [stats, setStats] = useState({
+    projectCount: 0,
+    totalBudget: 0,
+    engineerCount: 0,
+    departmentCount: 0,
+  });
   const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    const unsubProjects = onSnapshot(
-      query(collection(db, 'projects'), orderBy('createdAt', 'desc')),
+    // Read the single pre-computed public stats document.
+    // This is the only Firestore read permitted without authentication.
+    const unsubStats = onSnapshot(
+      doc(db, 'stats', 'public'),
       (snapshot) => {
-        const projects = snapshot.docs.map(doc => doc.data());
-        setProjectCount(projects.length);
-        setTotalBudget(projects.reduce((acc, p) => acc + (Number(p.budget) || 0), 0));
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setStats({
+            projectCount: data.projectCount || 0,
+            totalBudget: data.totalBudget || 0,
+            engineerCount: data.engineerCount || 0,
+            departmentCount: data.departmentCount || 0,
+          });
+        }
         setDataLoaded(true);
       },
       () => setDataLoaded(true)
     );
 
-    const unsubUsers = onSnapshot(
-      query(collection(db, 'users'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        const users = snapshot.docs.map(doc => doc.data());
-        setEngineerCount(users.filter(u => {
-          const r = u.role;
-          return r === ROLES.PROJECT_ENGINEER || r === 'Project Engineer' || r === 'PROJ_ENG';
-        }).length);
-        setDepartmentCount(new Set(users.map(u => u.department).filter(Boolean)).size);
-      },
-      () => { }
-    );
-
-    return () => { unsubProjects(); unsubUsers(); };
+    return () => unsubStats();
   }, []);
 
-  const budget = useMemo(() => formatBudgetShort(totalBudget), [totalBudget]);
+  const budget = useMemo(() => formatBudgetShort(stats.totalBudget), [stats.totalBudget]);
   const handleLoginClick = () => navigate('/login');
 
   return (
@@ -177,10 +173,10 @@ const Landing = () => {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 max-w-4xl mx-auto">
             {[
-              { label: 'Active Projects', value: projectCount, icon: <Building2 size={16} /> },
+              { label: 'Active Projects', value: stats.projectCount, icon: <Building2 size={16} /> },
               { label: 'Budget Tracked', value: budget.num, prefix: '₱', suffix: budget.suffix, icon: <BarChart3 size={16} /> },
-              { label: 'Field Engineers', value: engineerCount, icon: <Users size={16} /> },
-              { label: 'Departments', value: departmentCount, icon: <Landmark size={16} /> },
+              { label: 'Field Engineers', value: stats.engineerCount, icon: <Users size={16} /> },
+              { label: 'Departments', value: stats.departmentCount, icon: <Landmark size={16} /> },
             ].map(stat => (
               <div key={stat.label} className="relative group bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-4 sm:p-5 hover:border-teal-300/60 hover:shadow-md hover:shadow-teal-50 transition-all duration-300">
                 <div className="flex items-center gap-2 mb-2 sm:mb-3">
