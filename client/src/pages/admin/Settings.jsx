@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Sun, Moon, Settings2, KeyRound, Eye, EyeOff, CheckCircle2, AlertCircle, ChevronDown, Mail, Building2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Sun, Moon, Settings2, KeyRound, Eye, EyeOff, CheckCircle2, AlertCircle, ChevronDown, Mail, Building2, Pencil, X, Camera } from 'lucide-react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import AdminSidebar from '../../components/layout/AdminSidebar';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -39,6 +40,111 @@ const Settings = () => {
     const userDept    = currentUser?.department || 'Information Technology Division';
     const userEmail   = currentUser?.email || '—';
     const userInitial = currentUser?.firstName?.charAt(0).toUpperCase() || 'M';
+
+    const photoInputRef = useRef(null);
+    const [photoLoading, setPhotoLoading]   = useState(false);
+    const [photoError, setPhotoError]       = useState('');
+    const [photoSuccess, setPhotoSuccess]   = useState(false);
+
+    const handlePhotoSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+
+        if (!file.type.startsWith('image/')) { setPhotoError('Please select an image file.'); return; }
+        if (file.size > 5 * 1024 * 1024)    { setPhotoError('Image must be smaller than 5 MB.'); return; }
+
+        setPhotoLoading(true);
+        setPhotoError('');
+        setPhotoSuccess(false);
+
+        try {
+            // Center-crop and resize to 200×200 JPEG via canvas
+            const blob = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const SIZE = 200;
+                        const canvas = document.createElement('canvas');
+                        canvas.width = SIZE;
+                        canvas.height = SIZE;
+                        const ctx = canvas.getContext('2d');
+                        const min = Math.min(img.width, img.height);
+                        const sx = (img.width  - min) / 2;
+                        const sy = (img.height - min) / 2;
+                        ctx.drawImage(img, sx, sy, min, min, 0, 0, SIZE, SIZE);
+                        canvas.toBlob(resolve, 'image/jpeg', 0.82);
+                    };
+                    img.onerror = reject;
+                    img.src = ev.target.result;
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+
+            // Upload to Firebase Storage → get CDN download URL
+            const storage = getStorage(app);
+            const photoRef = storageRef(storage, `profile-photos/${currentUser.uid}`);
+            await uploadBytes(photoRef, blob, { contentType: 'image/jpeg' });
+            const downloadURL = await getDownloadURL(photoRef);
+
+            // Store URL in Firestore + Firebase Auth via CF
+            await httpsCallable(getFunctions(app, 'asia-southeast1'), 'updateProfilePhoto')({ photoURL: downloadURL });
+            await refreshUserData();
+            setPhotoSuccess(true);
+            setTimeout(() => setPhotoSuccess(false), 2500);
+        } catch (err) {
+            setPhotoError(err.message || 'Unable to update photo. Please try again.');
+        } finally {
+            setPhotoLoading(false);
+        }
+    };
+
+    const [editingName, setEditingName]     = useState(false);
+    const [nameForm, setNameForm]           = useState({ firstName: '', lastName: '' });
+    const [nameLoading, setNameLoading]     = useState(false);
+    const [nameError, setNameError]         = useState('');
+    const [nameSuccess, setNameSuccess]     = useState(false);
+
+    const openEditName = () => {
+        setNameForm({
+            firstName: currentUser?.firstName || '',
+            lastName:  currentUser?.lastName  || '',
+        });
+        setNameError('');
+        setNameSuccess(false);
+        setEditingName(true);
+    };
+
+    const cancelEditName = () => {
+        setEditingName(false);
+        setNameError('');
+        setNameSuccess(false);
+    };
+
+    const handleSaveName = async () => {
+        if (nameLoading) return;
+        const first = nameForm.firstName.trim();
+        const last  = nameForm.lastName.trim();
+        if (!first || !last) { setNameError('Both first and last name are required.'); return; }
+        if (first.length < 2 || last.length < 2) { setNameError('Each name must be at least 2 characters.'); return; }
+        setNameLoading(true);
+        setNameError('');
+        try {
+            await httpsCallable(getFunctions(app, 'asia-southeast1'), 'updateProfile')({
+                firstName: first,
+                lastName:  last,
+            });
+            await refreshUserData();
+            setNameSuccess(true);
+            setTimeout(() => { setEditingName(false); setNameSuccess(false); }, 1500);
+        } catch (err) {
+            setNameError(err.message || 'Unable to update name. Please try again.');
+        } finally {
+            setNameLoading(false);
+        }
+    };
 
     const [showPwForm, setShowPwForm]       = useState(false);
     const [currentPwStep, setCurrentPwStep] = useState(false);
@@ -151,18 +257,129 @@ const Settings = () => {
 
                         <div className="flex flex-col items-center -mt-10 pb-6 px-6">
                             <div className="relative">
-                                <div className="absolute inset-0 rounded-2xl bg-teal-500/20 blur-xl scale-125 pointer-events-none" />
-                                <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-teal-600 to-emerald-500 flex items-center justify-center text-white text-3xl font-extrabold shadow-xl shadow-teal-500/30 border-4 border-white dark:border-slate-900">
-                                    {userInitial}
+                                <div className="absolute inset-0 rounded-full bg-teal-500/20 blur-xl scale-125 pointer-events-none" />
+                                <button
+                                    type="button"
+                                    disabled={photoLoading}
+                                    onClick={() => photoInputRef.current?.click()}
+                                    title="Change profile photo"
+                                    className="relative w-20 h-20 rounded-full bg-gradient-to-br from-teal-600 to-emerald-500 flex items-center justify-center text-white text-3xl font-extrabold shadow-xl shadow-teal-500/30 border-4 border-white dark:border-slate-900 overflow-hidden group cursor-pointer disabled:cursor-not-allowed focus:outline-none"
+                                >
+                                    {currentUser?.photoURL ? (
+                                        <img src={currentUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                                    ) : userInitial}
+                                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                        {photoLoading
+                                            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+                                            : <Camera size={18} className="text-white" />
+                                        }
+                                    </div>
+                                </button>
+                                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 flex items-center justify-center pointer-events-none">
+                                    <Camera size={9} className="text-white" />
                                 </div>
-                                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900" />
+                                <input
+                                    ref={photoInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={handlePhotoSelect}
+                                />
                             </div>
 
-                            <div className="mt-3 text-center">
-                                <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">{userName}</h2>
-                                <span className="inline-block mt-1.5 px-3 py-0.5 rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm shadow-teal-500/30">
-                                    {userRole}
-                                </span>
+                            {photoError && (
+                                <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 max-w-xs">
+                                    <AlertCircle size={13} className="shrink-0" />
+                                    <span className="text-xs font-semibold">{photoError}</span>
+                                </div>
+                            )}
+                            {photoSuccess && (
+                                <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 max-w-xs">
+                                    <CheckCircle2 size={13} className="shrink-0" />
+                                    <span className="text-xs font-semibold">Photo updated successfully.</span>
+                                </div>
+                            )}
+
+                            <div className="mt-3 text-center w-full">
+                                {!editingName ? (
+                                    <>
+                                        <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">{userName}</h2>
+                                        <span className="inline-block mt-1.5 px-3 py-0.5 rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm shadow-teal-500/30">
+                                            {userRole}
+                                        </span>
+                                        <button
+                                            onClick={openEditName}
+                                            className="mt-3 flex items-center gap-1.5 text-xs font-bold text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 transition-colors mx-auto px-3 py-1.5 rounded-lg hover:bg-teal-50 dark:hover:bg-teal-900/20"
+                                        >
+                                            <Pencil size={13} />
+                                            Edit Name
+                                        </button>
+                                    </>
+                                ) : (
+                                    <div className="w-full max-w-sm mx-auto mt-1">
+                                        <p className="text-[11px] font-extrabold uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500 mb-3">Update Your Name</p>
+                                        <div className="grid grid-cols-2 gap-2.5 mb-3">
+                                            <div className="text-left">
+                                                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">First Name</label>
+                                                <input
+                                                    type="text"
+                                                    value={nameForm.firstName}
+                                                    onChange={(e) => { setNameForm(f => ({ ...f, firstName: e.target.value })); setNameError(''); }}
+                                                    disabled={nameLoading}
+                                                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-sm font-medium text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 outline-none transition-all disabled:opacity-60"
+                                                    placeholder="First name"
+                                                />
+                                            </div>
+                                            <div className="text-left">
+                                                <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Last Name</label>
+                                                <input
+                                                    type="text"
+                                                    value={nameForm.lastName}
+                                                    onChange={(e) => { setNameForm(f => ({ ...f, lastName: e.target.value })); setNameError(''); }}
+                                                    disabled={nameLoading}
+                                                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 text-sm font-medium text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 outline-none transition-all disabled:opacity-60"
+                                                    placeholder="Last name"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {nameError && (
+                                            <div className="flex items-center gap-2 mb-3 px-3 py-2.5 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 text-left">
+                                                <AlertCircle size={14} className="shrink-0" />
+                                                <span className="text-xs font-semibold">{nameError}</span>
+                                            </div>
+                                        )}
+                                        {nameSuccess && (
+                                            <div className="flex items-center gap-2 mb-3 px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-left">
+                                                <CheckCircle2 size={14} className="shrink-0" />
+                                                <span className="text-xs font-semibold">Name updated successfully.</span>
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-2.5">
+                                            <button
+                                                onClick={cancelEditName}
+                                                disabled={nameLoading}
+                                                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm font-bold hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-all disabled:opacity-50"
+                                            >
+                                                <X size={14} />
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={handleSaveName}
+                                                disabled={nameLoading || !nameForm.firstName.trim() || !nameForm.lastName.trim()}
+                                                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white text-sm font-bold shadow-md shadow-teal-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {nameLoading ? (
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                                                        <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
+                                                    </svg>
+                                                ) : <CheckCircle2 size={14} />}
+                                                {nameLoading ? 'Saving…' : 'Save Name'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">

@@ -12,12 +12,14 @@ const ACTION_CONFIG = {
     PASSWORD_CHANGED:   { label: 'Password Changed', tw: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',     dot: 'bg-amber-500'   },
     PASSWORD_RESET:     { label: 'Password Reset',   tw: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300', dot: 'bg-orange-500'  },
     STATS_RECALCULATED: { label: 'Stats Synced',     tw: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300', dot: 'bg-purple-500'  },
+    PROFILE_UPDATED:      { label: 'Profile Updated',    tw: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300',               dot: 'bg-sky-500'     },
+    PROFILE_PHOTO_UPDATED:{ label: 'Photo Updated',      tw: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300',             dot: 'bg-cyan-500'    },
 };
 
 const FILTERS = [
     { key: 'ALL',     label: 'All',           actions: null },
     { key: 'ACCOUNT', label: 'Account Events', actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
-    { key: 'AUTH',    label: 'Auth Events',    actions: ['OTP_VERIFIED', 'PASSWORD_CHANGED', 'PASSWORD_RESET'] },
+    { key: 'AUTH',    label: 'Auth Events',    actions: ['OTP_VERIFIED', 'PASSWORD_CHANGED', 'PASSWORD_RESET', 'PROFILE_UPDATED', 'PROFILE_PHOTO_UPDATED'] },
 ];
 
 const fmt = (ts) => {
@@ -54,6 +56,14 @@ const getDetails = (log) => {
             if (t.engineerCount !== undefined) lines.push(`Engineers: ${t.engineerCount}`);
             return lines;
         }
+        case 'PROFILE_UPDATED':
+            return [
+                'Profile name updated',
+                t.oldName ? `From: ${t.oldName}` : null,
+                t.newName ? `To: ${t.newName}`   : null,
+            ].filter(Boolean);
+        case 'PROFILE_PHOTO_UPDATED':
+            return ['Profile photo changed'];
         default:
             return ['—'];
     }
@@ -202,50 +212,87 @@ export default function AuditTrails() {
                                 return (
                                     <div
                                         key={log.id}
-                                        className="grid grid-cols-1 lg:grid-cols-[1.4fr_1.8fr_2.4fr_1.4fr] gap-2 lg:gap-4 px-6 py-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/20 transition-colors"
+                                        className="px-4 sm:px-6 py-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/20 transition-colors"
                                         style={{ animation: `slideUp 0.3s ease-out ${i * 0.03}s both` }}
                                     >
-                                        {/* ── EVENT ── */}
-                                        <div className="flex items-start gap-2.5 min-w-0">
-                                            <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-                                            <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide ${cfg.tw}`}>
-                                                {cfg.label}
-                                            </span>
-                                        </div>
+                                        {/* ── MOBILE CARD ── */}
+                                        <div className="lg:hidden space-y-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                                                    <span className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wide ${cfg.tw}`}>
+                                                        {cfg.label}
+                                                    </span>
+                                                </div>
+                                                <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium whitespace-nowrap shrink-0">
+                                                    {fmt(log.createdAt)}
+                                                </span>
+                                            </div>
 
-                                        {/* ── ACTOR ── */}
-                                        <div className="pl-4 lg:pl-0 flex flex-col justify-center min-w-0">
-                                            {log.actor?.name && (
-                                                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">
-                                                    {log.actor.name}
+                                            <div className="pl-3 border-l-2 border-slate-200 dark:border-slate-700">
+                                                {log.actor?.name && (
+                                                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 leading-snug">
+                                                        {log.actor.name}
+                                                    </p>
+                                                )}
+                                                <p className="text-xs font-mono text-slate-400 dark:text-slate-500 truncate mt-0.5">
+                                                    {log.actor?.email || log.actorEmail || '—'}
                                                 </p>
-                                            )}
-                                            <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
-                                                {log.actor?.email || log.actorEmail || '—'}
-                                            </p>
+                                            </div>
+
+                                            <div className={`pl-3 border-l-2 ${cfg.dot.replace('bg-', 'border-')}/40 space-y-0.5`}>
+                                                {details.map((line, idx) => (
+                                                    <p
+                                                        key={idx}
+                                                        className={`text-xs leading-relaxed ${
+                                                            idx === 0
+                                                                ? 'text-slate-700 dark:text-slate-200 font-semibold'
+                                                                : 'text-slate-400 dark:text-slate-500'
+                                                        }`}
+                                                    >
+                                                        {line}
+                                                    </p>
+                                                ))}
+                                            </div>
                                         </div>
 
-                                        {/* ── DETAILS ── */}
-                                        <div className="pl-4 lg:pl-0 flex flex-col justify-center gap-0.5 min-w-0">
-                                            {details.map((line, idx) => (
-                                                <p
-                                                    key={idx}
-                                                    className={`text-[11px] font-mono truncate ${
-                                                        idx === 0
-                                                            ? 'text-slate-600 dark:text-slate-300 font-semibold'
-                                                            : 'text-slate-400 dark:text-slate-500'
-                                                    }`}
-                                                >
-                                                    {line}
+                                        {/* ── DESKTOP ROW ── */}
+                                        <div className="hidden lg:grid grid-cols-[1.4fr_1.8fr_2.4fr_1.4fr] gap-4">
+                                            <div className="flex items-start gap-2.5 min-w-0">
+                                                <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                                                <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide ${cfg.tw}`}>
+                                                    {cfg.label}
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col justify-center min-w-0">
+                                                {log.actor?.name && (
+                                                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">
+                                                        {log.actor.name}
+                                                    </p>
+                                                )}
+                                                <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                                                    {log.actor?.email || log.actorEmail || '—'}
                                                 </p>
-                                            ))}
-                                        </div>
-
-                                        {/* ── TIMESTAMP ── */}
-                                        <div className="pl-4 lg:pl-0 flex lg:justify-end items-center">
-                                            <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium whitespace-nowrap">
-                                                {fmt(log.createdAt)}
-                                            </p>
+                                            </div>
+                                            <div className="flex flex-col justify-center gap-0.5 min-w-0">
+                                                {details.map((line, idx) => (
+                                                    <p
+                                                        key={idx}
+                                                        className={`text-[11px] font-mono truncate ${
+                                                            idx === 0
+                                                                ? 'text-slate-600 dark:text-slate-300 font-semibold'
+                                                                : 'text-slate-400 dark:text-slate-500'
+                                                        }`}
+                                                    >
+                                                        {line}
+                                                    </p>
+                                                ))}
+                                            </div>
+                                            <div className="flex justify-end items-center">
+                                                <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium whitespace-nowrap">
+                                                    {fmt(log.createdAt)}
+                                                </p>
+                                            </div>
                                         </div>
                                     </div>
                                 );

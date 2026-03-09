@@ -9,8 +9,8 @@ const NAV_SECTIONS = [
         items: [
             { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
             { label: 'Account Management', path: '/admin/accounts', icon: Users },
-            { label: 'Audit Trails', path: '/admin/audits',   icon: ScrollText },
-            { label: 'Settings',   path: '/admin/settings', icon: Settings },
+            { label: 'Audit Trails', path: '/admin/audits', icon: ScrollText },
+            { label: 'Settings', path: '/admin/settings', icon: Settings },
         ]
     }
 ];
@@ -30,6 +30,7 @@ const AdminSidebar = memo(() => {
             navSections={NAV_SECTIONS}
             userDisplay={{ name: fullName, subtitle: department }}
             userInitial={initial}
+            userPhotoURL={currentUser?.photoURL || null}
         />
     );
 });

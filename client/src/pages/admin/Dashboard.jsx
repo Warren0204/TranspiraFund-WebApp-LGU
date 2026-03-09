@@ -31,7 +31,7 @@ const useDashboardData = () => {
                     extra: null,
                 },
                 {
-                    id: 'depw', title: 'Engineering Dept.', role: 'DEPW',
+                    id: 'depw', title: 'Engineering Department', role: 'DEPW',
                     status: depwUser ? 'Active' : 'Required', isMissing: !depwUser,
                     person: { label: 'Department Head', name: depwUser ? `${depwUser.firstName} ${depwUser.lastName}` : null },
                     extra: { label: 'Field Engineers', value: `${engCount}` },
@@ -140,17 +140,17 @@ const DepartmentCard = memo(({ data, index }) => {
                             {data.person.label}
                         </p>
                     </div>
-                    {data.extra && (
-                        <div className="shrink-0 text-right pl-2 border-l border-slate-100 dark:border-slate-700/50">
-                            <p className="text-2xl font-black text-teal-600 dark:text-teal-400 leading-none">
-                                {data.extra.value}
-                            </p>
-                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mt-1">
-                                {data.extra.label}
-                            </p>
-                        </div>
-                    )}
                 </div>
+                {data.extra && (
+                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
+                        <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                            {data.extra.label}
+                        </p>
+                        <p className="text-2xl font-black text-teal-600 dark:text-teal-400 leading-none">
+                            {data.extra.value}
+                        </p>
+                    </div>
+                )}
             </div>
         </div>
     );

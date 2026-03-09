@@ -38,6 +38,7 @@ const DepwSidebar = memo(() => {
             navSections={NAV_SECTIONS}
             userDisplay={{ name: userName, subtitle: currentUser?.role || 'Official' }}
             userInitial={currentUser?.firstName?.[0]?.toUpperCase() || '?'}
+            userPhotoURL={currentUser?.photoURL || null}
         />
     );
 });

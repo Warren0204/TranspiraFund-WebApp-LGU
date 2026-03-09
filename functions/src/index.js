@@ -13,9 +13,6 @@ admin.initializeApp();
 setGlobalOptions({ region: "asia-southeast1" });
 
 // ─── Secrets ───────────────────────────────────────────────────────────────
-// Configure via:
-//   firebase functions:secrets:set GMAIL_USER
-//   firebase functions:secrets:set GMAIL_APP_PASSWORD
 const gmailUser = defineSecret("GMAIL_USER");
 const gmailAppPassword = defineSecret("GMAIL_APP_PASSWORD");
 
@@ -28,7 +25,7 @@ const createTransporter = () => nodemailer.createTransport({
     },
 });
 
-// ─── Zod validation schemas (Step 6) ───────────────────────────────────────
+// ─── Zod validation schemas ─────────────────────────────────────────────────
 const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
@@ -55,7 +52,7 @@ const createProjectSchema = z.object({
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-// Cryptographically secure password (Step 4)
+// Cryptographically secure password generator
 const generatePassword = (length = 16) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
     let password = "";
@@ -65,7 +62,7 @@ const generatePassword = (length = 16) => {
     return password;
 };
 
-// Write an audit trail entry — DEPW-scoped (Step 12)
+// Write an audit trail entry — DEPW-scoped
 const logAudit = async (actorUid, actorEmail, action, targetId = null, details = {}) => {
     try {
         await admin.firestore().collection("depwAuditTrails").add({
@@ -98,7 +95,7 @@ const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status 
     }
 };
 
-// ─── CLOUD FUNCTION: Send OTP (Steps 2, 10) ────────────────────────────────
+// ─── CLOUD FUNCTION: Send OTP ───────────────────────────────────────────────
 exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to request a verification code.");
@@ -107,7 +104,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     const userEmail = auth.token.email;
     if (!userEmail) throw new HttpsError("invalid-argument", "No email address found for this account.");
 
-    // Rate limiting: enforce 60-second cooldown between resend requests (Step 10)
+    // Enforce 60-second cooldown between resend requests
     const existingOtp = await admin.firestore().collection("otpCodes").doc(uid).get();
     if (existingOtp.exists) {
         const { sentAt } = existingOtp.data();
@@ -163,7 +160,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Verify OTP (Step 2) ───────────────────────────────────
+// ─── CLOUD FUNCTION: Verify OTP ─────────────────────────────────────────────
 exports.verifyOtp = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to verify a code.");
@@ -208,7 +205,7 @@ exports.verifyOtp = onCall(async (request) => {
 
     await otpRef.delete();
 
-    // Bind OTP verification to this specific login session (Step 2)
+    // Bind OTP claim to this login session
     const authTime = auth.token.auth_time;
     await admin.auth().setCustomUserClaims(uid, {
         otpVerified: true,
@@ -219,7 +216,7 @@ exports.verifyOtp = onCall(async (request) => {
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Create Official Account (Steps 3, 4, 5, 6, 8, 12) ─────
+// ─── CLOUD FUNCTION: Create Official Account ────────────────────────────────
 exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
@@ -230,7 +227,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     const callerRole = callerDoc.data().role;
     if (!["MIS", "DEPW"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to create accounts.");
 
-    // Step 6: Zod input validation
+    // Validate input
     const parsed = createAccountSchema.safeParse(data);
     if (!parsed.success) {
         const msg = parsed.error.errors[0]?.message ?? "Invalid input.";
@@ -251,7 +248,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             displayName: `${firstName} ${lastName}`,
         });
 
-        // Step 8: Set role as custom claim so it is in the JWT token
+        // Set role as custom claim
         await admin.auth().setCustomUserClaims(userRecord.uid, {
             role: roleType,
             otpVerified: false,
@@ -271,7 +268,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             createdBy: auth.uid,
         });
 
-        // Step 3: Send credentials server-side via Gmail — password never reaches the browser
+        // Send credentials via Gmail
         const transporter = createTransporter();
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
@@ -292,7 +289,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             `,
         });
 
-        // Step 12: Audit trail — route by caller role
+        // Audit trail — route by caller role
         const callerName = `${callerDoc.data().firstName} ${callerDoc.data().lastName}`;
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_CREATED",
@@ -315,7 +312,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     }
 });
 
-// ─── CLOUD FUNCTION: Delete Official Account (Steps 5, 12) ─────────────────
+// ─── CLOUD FUNCTION: Delete Official Account ────────────────────────────────
 exports.deleteOfficialAccount = onCall(async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to delete accounts.");
@@ -338,12 +335,12 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     try {
         const targetDoc = await admin.firestore().collection("users").doc(uid).get();
         const targetEmail = targetDoc.exists ? targetDoc.data().email : null;
-        const targetRole  = targetDoc.exists ? targetDoc.data().role  : null;
+        const targetRole = targetDoc.exists ? targetDoc.data().role : null;
 
         await admin.auth().deleteUser(uid);
         await admin.firestore().collection("users").doc(uid).delete();
 
-        // Step 12: Audit trail — route by caller role
+        // Audit trail — route by caller role
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED",
                 { uid, email: targetEmail, role: targetRole }, "SUCCESS");
@@ -358,7 +355,7 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Create Project (Steps 7, 12) ──────────────────────────
+// ─── CLOUD FUNCTION: Create Project ─────────────────────────────────────────
 exports.createProject = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to create projects.");
@@ -368,7 +365,7 @@ exports.createProject = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Only DEPW personnel can create projects.");
     }
 
-    // Step 6/7: Zod server-side validation
+    // Validate project data
     const parsed = createProjectSchema.safeParse(data);
     if (!parsed.success) {
         const msg = parsed.error.errors[0]?.message ?? "Invalid project data.";
@@ -400,7 +397,7 @@ exports.createProject = onCall(async (request) => {
         });
         await batch.commit();
 
-        // Step 12: Audit trail
+        // Audit trail
         await logAudit(auth.uid, auth.token.email, "PROJECT_CREATED", projectRef.id, {
             projectTitle: projectFields.projectTitle,
             budget: projectFields.budget,
@@ -414,7 +411,7 @@ exports.createProject = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Change Password (Step 11) ─────────────────────────────
+// ─── CLOUD FUNCTION: Change Password ────────────────────────────────────────
 exports.changePassword = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to change password.");
@@ -450,7 +447,7 @@ exports.changePassword = onCall(async (request) => {
             passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-        // Step 12: Audit trail
+        // Audit trail
         await logSystemAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", {}, "SUCCESS");
 
         return { success: true };
@@ -472,10 +469,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     const cleanEmail = email.trim().toLowerCase();
     const RESET_BASE = "https://transpirafund-webapp.web.app/reset-password";
 
-    // ── Rate limiting: 60-second cooldown per email ──────────────────────────
-    // Uses SHA-256 hash of the email as the Firestore doc ID.
-    // Checking BEFORE looking up the user means the error is thrown consistently
-    // for both registered and unregistered emails — no account enumeration leak.
+    // Rate limiting — consistent for registered and unregistered emails (anti-enumeration)
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
     const cooldownRef = admin.firestore().collection("passwordResetCooldowns").doc(emailHash);
     const cooldownDoc = await cooldownRef.get();
@@ -487,19 +481,16 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
             throw new HttpsError("resource-exhausted", `Please wait ${secondsLeft} second(s) before requesting another reset link.`);
         }
     }
-    // Record the attempt pre-emptively to block parallel/rapid requests
     await cooldownRef.set({
         lastSent: Date.now(),
         expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
     });
 
     try {
-        // Generate the reset link server-side — throws auth/user-not-found if not registered
         const firebaseLink = await admin.auth().generatePasswordResetLink(cleanEmail, {
             url: "https://transpirafund-webapp.web.app/login",
         });
 
-        // Extract oobCode and build our custom reset URL (enforces our password rules)
         const parsedUrl = new URL(firebaseLink);
         const oobCode = parsedUrl.searchParams.get("oobCode");
         if (!oobCode) throw new Error("Failed to extract reset token.");
@@ -553,15 +544,11 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Reset Password (server-side enforcement) ────────────────
-// Called by ResetPassword.jsx instead of the client SDK's confirmPasswordReset.
-// Validates the password server-side BEFORE consuming the oobCode, so even a
-// direct API call bypassing the UI cannot set a weak password.
+// ─── CLOUD FUNCTION: Reset Password ─────────────────────────────────────────
 exports.resetPassword = onCall(async (request) => {
     const { data } = request;
     const { oobCode, newPassword } = data;
 
-    // 1. Input presence check
     if (!oobCode || typeof oobCode !== "string") {
         throw new HttpsError("invalid-argument", "Invalid reset token.");
     }
@@ -569,16 +556,14 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Password is required.");
     }
 
-    // 2. Server-side password rules — mirrors changePassword CF exactly
-    if (newPassword.length < 12)            throw new HttpsError("invalid-argument", "Password must be at least 12 characters.");
-    if (newPassword.length > 128)           throw new HttpsError("invalid-argument", "Password is too long.");
-    if (!/[A-Z]/.test(newPassword))         throw new HttpsError("invalid-argument", "Password must contain at least one uppercase letter.");
-    if (!/[a-z]/.test(newPassword))         throw new HttpsError("invalid-argument", "Password must contain at least one lowercase letter.");
-    if (!/[0-9]/.test(newPassword))         throw new HttpsError("invalid-argument", "Password must contain at least one number.");
-    if (!/[^A-Za-z0-9]/.test(newPassword))  throw new HttpsError("invalid-argument", "Password must contain at least one special character.");
+    // Password rules
+    if (newPassword.length < 12) throw new HttpsError("invalid-argument", "Password must be at least 12 characters.");
+    if (newPassword.length > 128) throw new HttpsError("invalid-argument", "Password is too long.");
+    if (!/[A-Z]/.test(newPassword)) throw new HttpsError("invalid-argument", "Password must contain at least one uppercase letter.");
+    if (!/[a-z]/.test(newPassword)) throw new HttpsError("invalid-argument", "Password must contain at least one lowercase letter.");
+    if (!/[0-9]/.test(newPassword)) throw new HttpsError("invalid-argument", "Password must contain at least one number.");
+    if (!/[^A-Za-z0-9]/.test(newPassword)) throw new HttpsError("invalid-argument", "Password must contain at least one special character.");
 
-    // 3. Call Firebase Auth REST API — atomically verifies, consumes the oobCode,
-    //    and sets the new password in a single request. Node 22 has native fetch.
     const WEB_API_KEY = process.env.WEB_API_KEY;
     if (!WEB_API_KEY) {
         logger.error("WEB_API_KEY environment variable is not set.");
@@ -614,7 +599,7 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to reset password. Please try again.");
     }
 
-    // 4. Audit trail — non-blocking; failure must never break the reset
+    // Audit trail — non-blocking
     const email = resetResult?.email;
     if (email) {
         try {
@@ -628,7 +613,56 @@ exports.resetPassword = onCall(async (request) => {
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Recalculate Stats (MIS only, one-time seed/refresh) ────
+exports.updateProfilePhoto = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+
+    const { photoURL } = data;
+    if (!photoURL || typeof photoURL !== "string") {
+        throw new HttpsError("invalid-argument", "Photo URL is required.");
+    }
+
+    try {
+        await admin.auth().updateUser(auth.uid, { photoURL });
+        await admin.firestore().collection("users").doc(auth.uid).update({ photoURL });
+        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS");
+        return { success: true };
+    } catch (error) {
+        logger.error("Error updating profile photo:", error);
+        throw new HttpsError("internal", "Unable to update profile photo. Please try again.");
+    }
+});
+
+exports.updateProfile = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+
+    const { firstName, lastName } = data;
+    if (!firstName || !lastName || typeof firstName !== "string" || typeof lastName !== "string") {
+        throw new HttpsError("invalid-argument", "First and last name are required.");
+    }
+    if (firstName.trim().length < 2 || lastName.trim().length < 2) {
+        throw new HttpsError("invalid-argument", "Each name must be at least 2 characters.");
+    }
+
+    const cleanFirst = firstName.trim();
+    const cleanLast = lastName.trim();
+
+    try {
+        await admin.auth().updateUser(auth.uid, { displayName: `${cleanFirst} ${cleanLast}` });
+        await admin.firestore().collection("users").doc(auth.uid).update({
+            firstName: cleanFirst,
+            lastName: cleanLast,
+        });
+        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_NAME_UPDATED",
+            { firstName: cleanFirst, lastName: cleanLast }, "SUCCESS");
+        return { success: true };
+    } catch (error) {
+        logger.error("Error updating profile:", error);
+        throw new HttpsError("internal", "Unable to update profile. Please try again.");
+    }
+});
+
 exports.recalculateStats = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -710,5 +744,93 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
         );
     } catch (error) {
         logger.error("[onProjectWritten] Failed to update stats:", error);
+    }
+});
+
+// ─── CLOUD FUNCTION: Update Profile Photo ────────────────────────────────────
+exports.updateProfilePhoto = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile photo.");
+
+    const { photoURL } = data;
+    if (!photoURL || typeof photoURL !== "string") {
+        throw new HttpsError("invalid-argument", "Invalid photo URL.");
+    }
+    // Validate URL is a Firebase Storage download URL for this user's profile photo
+    if (!photoURL.startsWith("https://firebasestorage.googleapis.com/")) {
+        throw new HttpsError("invalid-argument", "Invalid photo source.");
+    }
+    if (!photoURL.includes(`/o/profile-photos%2F${auth.uid}`)) {
+        throw new HttpsError("invalid-argument", "Photo path does not match authenticated user.");
+    }
+
+    const userRef = admin.firestore().collection("users").doc(auth.uid);
+    const userDoc = await userRef.get();
+    if (userDoc.exists) {
+        const { photoChangedAt } = userDoc.data();
+        const COOLDOWN_MS = 30 * 1000;
+        if (photoChangedAt && Date.now() - photoChangedAt < COOLDOWN_MS) {
+            const secondsLeft = Math.ceil((COOLDOWN_MS - (Date.now() - photoChangedAt)) / 1000);
+            throw new HttpsError("resource-exhausted", `Please wait ${secondsLeft} second(s) before updating your photo again.`);
+        }
+    }
+
+    try {
+        await userRef.update({ photoURL, photoChangedAt: Date.now() });
+        await admin.auth().updateUser(auth.uid, { photoURL });
+        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS");
+        return { success: true };
+    } catch (error) {
+        logger.error("Error updating profile photo:", error);
+        throw new HttpsError("internal", "Unable to update profile photo. Please try again.");
+    }
+});
+
+// ─── CLOUD FUNCTION: Update Profile Name ─────────────────────────────────────
+exports.updateProfile = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile.");
+
+    const nameSchema = z.object({
+        firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters."),
+        lastName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "Last name contains invalid characters."),
+    });
+
+    const parsed = nameSchema.safeParse(data);
+    if (!parsed.success) {
+        throw new HttpsError("invalid-argument", parsed.error.errors[0]?.message ?? "Invalid name.");
+    }
+
+    const { firstName, lastName } = parsed.data;
+
+    const userRef = admin.firestore().collection("users").doc(auth.uid);
+    const userDoc = await userRef.get();
+    const userData = userDoc.exists ? userDoc.data() : {};
+
+    if (userDoc.exists) {
+        const { nameChangedAt } = userData;
+        const COOLDOWN_MS = 60 * 1000;
+        if (nameChangedAt && Date.now() - nameChangedAt < COOLDOWN_MS) {
+            const secondsLeft = Math.ceil((COOLDOWN_MS - (Date.now() - nameChangedAt)) / 1000);
+            throw new HttpsError("resource-exhausted", `Please wait ${secondsLeft} second(s) before updating your name again.`);
+        }
+    }
+
+    const oldName = userData.firstName && userData.lastName
+        ? `${userData.firstName} ${userData.lastName}`
+        : null;
+
+    try {
+        await userRef.update({ firstName, lastName, nameChangedAt: Date.now() });
+        await admin.auth().updateUser(auth.uid, { displayName: `${firstName} ${lastName}` });
+        await logSystemAudit(
+            auth.uid, auth.token.email, "PROFILE_UPDATED",
+            { oldName: oldName ?? "—", newName: `${firstName} ${lastName}` },
+            "SUCCESS", `${firstName} ${lastName}`
+        );
+        return { success: true };
+    } catch (error) {
+        logger.error("Error updating profile:", error);
+        throw new HttpsError("internal", "Unable to update name. Please try again.");
     }
 });

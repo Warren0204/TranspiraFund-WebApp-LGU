@@ -6,7 +6,7 @@ import { auth } from '../../config/firebase';
 import logo from '../../assets/logo.png';
 import LogoutModal from '../shared/LogoutModal';
 
-const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => {
+const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userPhotoURL }) => {
     const navigate = useNavigate();
     const location = useLocation();
     const currentPath = location.pathname;
@@ -106,8 +106,8 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
                                             key={item.path}
                                             onClick={() => navigate(item.path)}
                                             className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${active
-                                                    ? 'bg-gradient-to-r from-teal-50 to-cyan-50/30 dark:from-teal-900/25 dark:to-cyan-900/10 text-teal-700 dark:text-cyan-400 shadow-sm'
-                                                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                                                ? 'bg-gradient-to-r from-teal-50 to-cyan-50/30 dark:from-teal-900/25 dark:to-cyan-900/10 text-teal-700 dark:text-cyan-400 shadow-sm'
+                                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
                                                 }`}
                                         >
 
@@ -132,8 +132,10 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial }) => 
                 <div className="p-4 border-t border-slate-100 dark:border-slate-800">
                     <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-100 dark:border-slate-700/50">
                         <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-cyan-400 text-white flex items-center justify-center font-bold text-sm shadow-md shadow-teal-500/20 shrink-0">
-                                {userInitial || '?'}
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-cyan-400 text-white flex items-center justify-center font-bold text-sm shadow-md shadow-teal-500/20 shrink-0 overflow-hidden">
+                                {userPhotoURL ? (
+                                    <img src={userPhotoURL} alt="Profile" className="w-full h-full object-cover" />
+                                ) : (userInitial || '?')}
                             </div>
                             <div className="overflow-hidden">
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">
