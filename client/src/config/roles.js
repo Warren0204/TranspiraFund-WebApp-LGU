@@ -1,14 +1,12 @@
-// client/src/config/roles.js
 
 export const ROLES = {
-  MIS: 'MIS',       // IT Admin
-  DEPW: 'DEPW',     // Engineering
-  MAYOR: 'MAYOR',   // Executive
-  CPDO: 'CPDO',      // Planning
-  PROJECT_ENGINEER: 'PROJ_ENG' // Field Staff
+  MIS: 'MIS',
+  DEPW: 'DEPW',
+  MAYOR: 'MAYOR',
+  CPDO: 'CPDO',
+  PROJECT_ENGINEER: 'PROJ_ENG'
 };
 
-// Metadata for UI Display and Provisioning
 export const ROLE_METADATA = [
   {
     type: ROLES.MAYOR,

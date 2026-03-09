@@ -64,9 +64,7 @@ const GridPattern = memo(() => (
   </svg>
 ));
 
-const Landing = () => {
-  const navigate = useNavigate();
-
+const useLandingStats = () => {
   const [stats, setStats] = useState({
     projectCount: 0,
     totalBudget: 0,
@@ -76,9 +74,7 @@ const Landing = () => {
   const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    // Read the single pre-computed public stats document.
-    // This is the only Firestore read permitted without authentication.
-    const unsubStats = onSnapshot(
+    const unsubscribe = onSnapshot(
       doc(db, 'stats', 'public'),
       (snapshot) => {
         if (snapshot.exists()) {
@@ -94,9 +90,15 @@ const Landing = () => {
       },
       () => setDataLoaded(true)
     );
-
-    return () => unsubStats();
+    return () => unsubscribe();
   }, []);
+
+  return { stats, dataLoaded };
+};
+
+const Landing = () => {
+  const navigate = useNavigate();
+  const { stats, dataLoaded } = useLandingStats();
 
   const budget = useMemo(() => formatBudgetShort(stats.totalBudget), [stats.totalBudget]);
   const handleLoginClick = () => navigate('/login');
@@ -275,7 +277,7 @@ const Landing = () => {
                 <div className="w-12 h-12 bg-white/20 text-white rounded-2xl flex items-center justify-center mb-5">
                   <FileSearch size={22} />
                 </div>
-                <h3 className="text-lg sm:text-xl font-extrabold mb-2 tracking-tight">Real-Time Audit Log</h3>
+                <h3 className="text-lg sm:text-xl font-extrabold mb-2 tracking-tight">Real-Time Audit Trail</h3>
                 <p className="text-teal-100 leading-relaxed text-[15px]">
                   Every action is recorded — who did what, when, and why. Searchable and exportable anytime.
                 </p>

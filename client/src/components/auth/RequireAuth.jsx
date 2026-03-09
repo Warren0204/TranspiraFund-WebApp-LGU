@@ -1,14 +1,9 @@
-import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Loader2 } from 'lucide-react';
 
-/**
- * 🛡️ Security Guard Component
- * Protects routes based on Authentication status and Role Authorization.
- */
 const RequireAuth = ({ allowedRoles, children }) => {
-    const { currentUser, userRole, loading } = useAuth();
+    const { currentUser, userRole, otpVerified, mustChangePassword, loading } = useAuth();
     const location = useLocation();
 
     if (loading) {
@@ -19,16 +14,25 @@ const RequireAuth = ({ allowedRoles, children }) => {
         );
     }
 
-    // 1. Authentication Check
     if (!currentUser) {
-        // Redirect to login, but save the location they tried to access
         return <Navigate to="/" state={{ from: location }} replace />;
     }
 
-    // 2. Authorization Check (RBAC)
-    // If allowedRoles is defined, check if user's role is in the list
-    if (allowedRoles && !allowedRoles.includes(userRole)) {
+    if (!otpVerified) {
+        return (
+            <Navigate
+                to="/verify-identity"
+                state={{ email: currentUser.email, targetPath: location.pathname }}
+                replace
+            />
+        );
+    }
 
+    if (mustChangePassword && location.pathname !== "/change-password") {
+        return <Navigate to="/change-password" replace />;
+    }
+
+    if (allowedRoles && !allowedRoles.includes(userRole)) {
         return <Navigate to="/unauthorized" replace />;
     }
 

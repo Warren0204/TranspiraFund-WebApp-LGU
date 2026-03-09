@@ -1,36 +1,50 @@
 import React, { memo } from 'react';
-import { LogOut } from 'lucide-react';
+import { LogOut, ShieldOff } from 'lucide-react';
 
 const LogoutModal = memo(({ isOpen, onConfirm, onCancel, isProcessing }) => {
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white p-8 rounded-[24px] shadow-2xl w-full max-w-sm transform transition-all scale-100 animate-in zoom-in-95 duration-200 flex flex-col items-center text-center">
-                <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center mb-4">
-                    <LogOut size={24} className="ml-1" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-200 p-4">
+            <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-white/80 dark:border-white/10 rounded-[28px] shadow-2xl w-full max-w-sm animate-in zoom-in-95 duration-200 flex flex-col items-center text-center p-8">
+
+                {/* Icon */}
+                <div className="relative mb-5">
+                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center shadow-xl shadow-slate-900/30">
+                        <ShieldOff size={28} className="text-white" />
+                    </div>
+                    <div className="absolute inset-0 rounded-full bg-slate-800/20 blur-xl scale-150 -z-10" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 mb-2">End Session?</h3>
-                <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-                    You are about to securely sign out of the <span className="font-semibold text-slate-700">Local Government</span> system.
+
+                <h3 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-2">
+                    End Session?
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-8 leading-relaxed max-w-[260px]">
+                    You will be securely signed out of the&nbsp;
+                    <span className="font-bold text-slate-700 dark:text-slate-300">Local Government</span> system.
                 </p>
 
-                <div className="flex items-center gap-3 w-full justify-center">
+                <div className="flex gap-3 w-full">
                     <button
                         onClick={onCancel}
                         disabled={isProcessing}
-                        className="text-slate-500 hover:text-slate-800 font-semibold text-sm px-4 py-2 transition-colors disabled:opacity-50"
+                        className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl transition-all duration-200 disabled:opacity-50"
                     >
-                        Cancel
+                        Stay
                     </button>
                     <button
                         onClick={onConfirm}
                         disabled={isProcessing}
-                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-6 py-2.5 rounded-xl shadow-lg shadow-blue-600/20 transition-all flex items-center justify-center min-w-[100px] disabled:opacity-70 disabled:cursor-not-allowed"
+                        className="flex-1 py-3 bg-gradient-to-r from-slate-800 to-slate-700 dark:from-slate-700 dark:to-slate-600 hover:from-slate-900 hover:to-slate-800 text-white font-bold rounded-xl shadow-lg transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                     >
                         {isProcessing ? (
-                            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                        ) : 'Sign Out'}
+                            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                            <>
+                                <LogOut size={16} />
+                                Sign Out
+                            </>
+                        )}
                     </button>
                 </div>
             </div>

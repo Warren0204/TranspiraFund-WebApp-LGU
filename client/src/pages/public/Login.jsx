@@ -79,7 +79,7 @@ const Login = () => {
   return (
     <div className="min-h-screen flex font-sans text-slate-800 bg-[#F8FAFC]">
 
-      {/* Left Panel — Branding */}
+
       <div className="hidden lg:flex w-1/2 bg-teal-700 relative flex-col items-center justify-center text-white p-12 overflow-hidden">
         <div className="absolute inset-0 opacity-[0.06]" aria-hidden="true">
           <svg className="w-full h-full">
@@ -116,7 +116,7 @@ const Login = () => {
         </div>
       </div>
 
-      {/* Right Panel — Login Form */}
+
       <div className="w-full lg:w-1/2 bg-white flex flex-col justify-center px-6 sm:px-12 md:px-24 relative">
 
         <button
@@ -128,8 +128,8 @@ const Login = () => {
           Back to Home
         </button>
 
-        {/* Mobile logo — visible only on small screens */}
-        <div className="flex lg:hidden items-center gap-2.5 mb-8">
+
+        <div className="flex lg:hidden items-center justify-center gap-2.5 mb-8">
           <div className="w-8 h-8 rounded-full overflow-hidden">
             <img src={logo} alt="TranspiraFund" className="w-full h-full object-cover scale-[1.55]" />
           </div>
@@ -137,7 +137,7 @@ const Login = () => {
         </div>
 
         <div className="max-w-md w-full mx-auto">
-          <div className="mb-8 sm:mb-10">
+          <div className="mb-8 sm:mb-10 text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200/60 text-teal-700 text-xs font-semibold tracking-widest uppercase mb-4">
               <Landmark size={12} />
               LGU Portal
@@ -218,6 +218,16 @@ const Login = () => {
                   {fieldErrors.password}
                 </p>
               )}
+            </div>
+
+            <div className="flex justify-end -mt-1">
+              <button
+                type="button"
+                onClick={() => navigate('/forgot-password')}
+                className="text-xs font-semibold text-teal-600 hover:text-teal-800 transition-colors"
+              >
+                Forgot Password?
+              </button>
             </div>
 
             <button

@@ -1,25 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ShieldCheck, ArrowLeft, Mail, Lock, AlertCircle, RefreshCw, Landmark } from 'lucide-react';
-import emailjs from '@emailjs/browser';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { ShieldCheck, ArrowLeft, Mail, AlertCircle, RefreshCw, Landmark } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import app from '../../config/firebase';
 import logo from '../../assets/logo.png';
 
-// --- LOGIC LAYER (Custom Hook) ---
-// ⚠️ SECURITY WARNING: This OTP verification is CLIENT-SIDE ONLY.
-// The OTP code is generated in-browser and validated in-browser, which means
-// it can be bypassed by manipulating React state or navigating directly.
-// TODO: Migrate OTP generation & validation to a Firebase Cloud Function
-// for production-grade security. The server should generate the code,
-// send it via email, and validate the user's input server-side.
 const useOtpVerification = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { refreshOtpStatus } = useAuth();
 
   const userEmail = location.state?.email || '';
   const targetDashboard = location.state?.targetPath || '/';
 
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
-  const [generatedCode, setGeneratedCode] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
@@ -35,12 +30,8 @@ const useOtpVerification = () => {
   }, [userEmail, navigate]);
 
   useEffect(() => {
-    const sessionKey = `otp_sent_${userEmail}`;
-    const alreadySent = sessionStorage.getItem(sessionKey);
-
-    if (userEmail && !hasSent.current && !alreadySent) {
+    if (userEmail && !hasSent.current) {
       hasSent.current = true;
-      sessionStorage.setItem(sessionKey, 'true');
       sendOtpCode();
     }
   }, [userEmail]);
@@ -51,55 +42,24 @@ const useOtpVerification = () => {
     }
   }, [isSending]);
 
-  const generateRandomCode = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-  };
-
   const sendOtpCode = async () => {
     setIsSending(true);
     setError('');
     setSuccessMsg('');
 
-    // Clear session lock allows valid re-sends if manually triggered? 
-    // Actually, manual trigger bypasses the useEffect check, so it's fine.
-    // But let's be safe and update the timestamp or similar if we wanted complex logic.
-    // For now, simple is better.
-
-    // ⚠️ TODO: Move code generation to server-side (Cloud Function).
-    // Currently stored in client memory — accessible via React DevTools.
-    const newCode = generateRandomCode();
-    setGeneratedCode(newCode);
-
-    const serviceId = import.meta.env.VITE_EMAILJS_SERVICE_ID?.trim();
-    const templateId = import.meta.env.VITE_EMAILJS_TEMPLATE_ID?.trim();
-    const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY?.trim();
-
-    if (!serviceId || !templateId || !publicKey) {
-      setError('System configuration error. Please contact support.');
-      setIsSending(false);
-      return;
-    }
-
     try {
-      await emailjs.send(
-        serviceId,
-        templateId,
-        {
-          to_email: userEmail,
-          email: userEmail,
-          otp_code: newCode,
-        },
-        publicKey
-      );
-      setSuccessMsg('Verification code sent successfully.');
+      const functions = getFunctions(app, 'asia-southeast1');
+      const sendOtp = httpsCallable(functions, 'sendOtp');
+      await sendOtp();
+      setSuccessMsg('Verification code sent to your email.');
     } catch (err) {
-      setError('Unable to send verification code. Please try again later.');
+      setError(err.message || 'Unable to send verification code. Please try again.');
     } finally {
       setIsSending(false);
     }
   };
 
-  const handleVerify = (e) => {
+  const handleVerify = async (e) => {
     e.preventDefault();
     if (isVerifying) return;
 
@@ -111,17 +71,21 @@ const useOtpVerification = () => {
     }
 
     setIsVerifying(true);
+    setError('');
 
-    setTimeout(() => {
-      if (enteredCode === generatedCode) {
-        navigate(targetDashboard, { replace: true });
-      } else {
-        setError('Invalid verification code.');
-        setIsVerifying(false);
-        setOtp(['', '', '', '', '', '']);
-        inputRefs.current[0].focus();
-      }
-    }, 800);
+    try {
+      const functions = getFunctions(app, 'asia-southeast1');
+      const verifyOtp = httpsCallable(functions, 'verifyOtp');
+      await verifyOtp({ code: enteredCode });
+
+      await refreshOtpStatus();
+      navigate(targetDashboard, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Invalid verification code.');
+      setIsVerifying(false);
+      setOtp(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+    }
   };
 
   const handleDigitChange = (index, value) => {
@@ -222,7 +186,7 @@ const Authentication = () => {
           Back to Login
         </button>
 
-        <div className="flex lg:hidden items-center gap-2.5 mb-8">
+        <div className="flex lg:hidden items-center justify-center gap-2.5 mb-8">
           <div className="w-8 h-8 rounded-full overflow-hidden">
             <img src={logo} alt="TranspiraFund" className="w-full h-full object-cover scale-[1.55]" />
           </div>

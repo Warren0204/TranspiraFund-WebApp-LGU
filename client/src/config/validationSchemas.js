@@ -1,15 +1,8 @@
 import { z } from 'zod';
 
-/**
- * Shared Validation Schemas
- * Enforces strict input validation across the application
- */
-
-// Regex Patterns (Allowlisting)
 const NAME_REGEX = /^[a-zA-Z\s\-']+$/;
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-// Reusable Field Schemas
 export const nameSchema = z
     .string()
     .min(2, "Name must be at least 2 characters")
@@ -21,7 +14,6 @@ export const emailSchema = z
     .email("Invalid email format")
     .regex(EMAIL_REGEX, "Please enter a valid email address");
 
-// Account Provisioning Schema
 export const accountProvisionSchema = z.object({
     firstName: nameSchema,
     lastName: nameSchema,
@@ -29,14 +21,12 @@ export const accountProvisionSchema = z.object({
     roleType: z.string().min(1, "Role selection is required")
 });
 
-// Staff/Engineer Provisioning Schema
 export const staffProvisionSchema = z.object({
     firstName: nameSchema,
     lastName: nameSchema,
     email: emailSchema
 });
 
-// Project Schema (already exists in CreateProject, but centralizing)
 export const projectSchema = z.object({
     projectTitle: z.string()
         .min(10, "Title must be at least 10 characters")

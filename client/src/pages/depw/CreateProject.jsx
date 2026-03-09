@@ -8,12 +8,11 @@ import {
 import { z } from 'zod';
 import DepwSidebar from '../../components/layout/DepwSidebar';
 import { ROLES } from '../../config/roles';
-import { collection, query, where, getDocs, addDoc, writeBatch, serverTimestamp, doc } from 'firebase/firestore';
+import { collection, query, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import app from '../../config/firebase';
 
-// --- CONSTANTS ---
-
-// Complete list of 80 Cebu City Barangays (alphabetical order)
 const CEBU_CITY_BARANGAYS = [
     "Adlaon", "Agsungot", "Apas", "Babag", "Bacayan", "Banilad",
     "Basak Pardo", "Basak San Nicolas", "Binaliw", "Bonbon",
@@ -33,16 +32,12 @@ const CEBU_CITY_BARANGAYS = [
     "Tejero", "Tinago", "Tisa", "Toong", "Zapatera"
 ];
 
-// Character limits
 const CHAR_LIMITS = {
     projectTitle: 100,
     description: 500,
     contractor: 100
 };
 
-// --- LOGIC LAYER (Custom Hook) ---
-
-// 1. Validation Schema
 const projectSchema = z.object({
     projectTitle: z.string()
         .min(10, "Title must be at least 10 characters")
@@ -69,7 +64,6 @@ const projectSchema = z.object({
     completionDate: z.string()
 });
 
-// Format number with commas
 const formatWithCommas = (value) => {
     if (!value) return '';
     const numericValue = value.toString().replace(/[^0-9]/g, '');
@@ -77,13 +71,11 @@ const formatWithCommas = (value) => {
     return Number(numericValue).toLocaleString('en-US');
 };
 
-// Parse formatted number to raw value
 const parseFormattedNumber = (value) => {
     if (!value) return '';
     return value.toString().replace(/,/g, '');
 };
 
-// Get minimum completion date (day after start date)
 const getMinCompletionDate = (startDate) => {
     if (!startDate) return '';
     const date = new Date(startDate);
@@ -98,7 +90,7 @@ const useCreateProject = () => {
         projectTitle: '',
         location: '',
         budget: '',
-        budgetDisplay: '', // Formatted display value with commas
+        budgetDisplay: '',
         description: '',
         contractor: '',
         engineer: '',
@@ -110,18 +102,15 @@ const useCreateProject = () => {
     const [errors, setErrors] = useState({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isAiGenerating, setIsAiGenerating] = useState(false);
-    const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(null); // For delete confirmation modal
-    const [isReviewOpen, setIsReviewOpen] = useState(false); // Review Overlay State
+    const [deleteConfirmIndex, setDeleteConfirmIndex] = useState(null);
+    const [isReviewOpen, setIsReviewOpen] = useState(false);
 
-    // Engineer Data State
     const [engineers, setEngineers] = useState([]);
     const [loadingEngineers, setLoadingEngineers] = useState(true);
 
-    // Fetch Project Engineers
     useEffect(() => {
         const fetchEngineers = async () => {
             try {
-                // Fetch ALL users then filter client-side to catch legacy "Project Engineer" strings
                 const q = query(collection(db, "users"));
                 const snapshot = await getDocs(q);
                 const fetched = snapshot.docs
@@ -137,7 +126,6 @@ const useCreateProject = () => {
                     );
                 setEngineers(fetched);
             } catch {
-                // Silent fail - engineers will show empty state
             } finally {
                 setLoadingEngineers(false);
             }
@@ -145,11 +133,9 @@ const useCreateProject = () => {
         fetchEngineers();
     }, []);
 
-    // Generic change handler with character limit enforcement
     const handleChange = (field, value) => {
-        // Enforce character limits
         if (CHAR_LIMITS[field] && value.length > CHAR_LIMITS[field]) {
-            return; // Prevent input beyond limit
+            return;
         }
 
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -162,7 +148,6 @@ const useCreateProject = () => {
         }
     };
 
-    // Budget change handler with comma formatting
     const handleBudgetChange = (e) => {
         const rawValue = parseFormattedNumber(e.target.value);
         const displayValue = formatWithCommas(rawValue);
@@ -182,14 +167,12 @@ const useCreateProject = () => {
         }
     };
 
-    // Start date change handler with completion date dependency
     const handleStartDateChange = (e) => {
         const newStartDate = e.target.value;
 
         setFormData(prev => {
             const updates = { ...prev, startDate: newStartDate };
 
-            // Clear completion date if it's now invalid (before or equal to new start date)
             if (prev.completionDate && new Date(prev.completionDate) <= new Date(newStartDate)) {
                 updates.completionDate = '';
             }
@@ -206,9 +189,6 @@ const useCreateProject = () => {
         }
     };
 
-    // --- MILESTONE MANAGEMENT ---
-
-    // Helper: Distribute weights evenly among milestones
     const distributeWeights = (milestones) => {
         const count = milestones.length;
         if (count === 0) return [];
@@ -218,19 +198,16 @@ const useCreateProject = () => {
 
         return milestones.map((m, index) => ({
             ...m,
-            // Add remainder to the last milestone
             weight: index === count - 1 ? baseWeight + remainder : baseWeight
         }));
     };
 
-    // Helper: Distribute dates evenly between start and completion
     const distributeDates = (milestones, startStr, endStr) => {
         if (!startStr || !endStr || milestones.length === 0) return milestones;
 
         const start = new Date(startStr).getTime();
         const end = new Date(endStr).getTime();
 
-        // Prevent division by zero or negative time
         if (end <= start) return milestones;
 
         const totalDuration = end - start;
@@ -245,19 +222,17 @@ const useCreateProject = () => {
         });
     };
 
-    // Handler: Update individual milestone field
     const handleMilestoneChange = (index, field, value) => {
         setFormData(prev => {
             const updatedMilestones = [...prev.milestones];
             updatedMilestones[index] = {
                 ...updatedMilestones[index],
-                [field]: value // Weight is now handled automatically, but keeping safety if needed
+                [field]: value
             };
             return { ...prev, milestones: updatedMilestones };
         });
     };
 
-    // Handler: Add new phase
     const addPhase = () => {
         setFormData(prev => {
             const newPhase = {
@@ -267,10 +242,8 @@ const useCreateProject = () => {
             };
             const tempMilestones = [...prev.milestones, newPhase];
 
-            // First distribute weights
             let balancedMilestones = distributeWeights(tempMilestones);
 
-            // Then distribute dates if start/end dates exist
             if (prev.startDate && prev.completionDate) {
                 balancedMilestones = distributeDates(balancedMilestones, prev.startDate, prev.completionDate);
             }
@@ -282,7 +255,6 @@ const useCreateProject = () => {
         });
     };
 
-    // Handler: Delete milestone (after confirmation)
     const confirmDeleteMilestone = (index) => {
         setDeleteConfirmIndex(index);
     };
@@ -296,10 +268,8 @@ const useCreateProject = () => {
             setFormData(prev => {
                 const filteredMilestones = prev.milestones.filter((_, i) => i !== deleteConfirmIndex);
 
-                // First distribute weights
                 let balancedMilestones = distributeWeights(filteredMilestones);
 
-                // Then distribute dates
                 if (prev.startDate && prev.completionDate) {
                     balancedMilestones = distributeDates(balancedMilestones, prev.startDate, prev.completionDate);
                 }
@@ -313,9 +283,6 @@ const useCreateProject = () => {
         }
     };
 
-    // --- COMPUTED VALUES ---
-
-    // Computed: Check if core fields are complete (for AI generation)
     const isCoreFieldsComplete = Boolean(
         formData.projectTitle &&
         formData.location &&
@@ -325,12 +292,10 @@ const useCreateProject = () => {
         formData.completionDate
     );
 
-    // Computed: Total weight of all milestones
     const totalWeight = useMemo(() => {
         return formData.milestones.reduce((sum, m) => sum + (Number(m.weight) || 0), 0);
     }, [formData.milestones]);
 
-    // Computed: Check if all milestones are valid
     const areMilestonesValid = useMemo(() => {
         if (formData.milestones.length === 0) return false;
 
@@ -341,16 +306,13 @@ const useCreateProject = () => {
         );
     }, [formData.milestones]);
 
-    // Computed: Check if form is complete for submission
     const isFormComplete = isCoreFieldsComplete && areMilestonesValid && totalWeight === 100;
 
-    // Computed: Minimum completion date
     const minCompletionDate = getMinCompletionDate(formData.startDate);
 
     const handleReviewRequest = (e) => {
         e.preventDefault();
 
-        // 1. Validate Form Data using Zod
         try {
             const cleanData = {
                 ...formData,
@@ -359,7 +321,6 @@ const useCreateProject = () => {
 
             const validatedData = projectSchema.parse(cleanData);
 
-            // Additional Custom Validations
             if (new Date(validatedData.completionDate) <= new Date(validatedData.startDate)) {
                 setErrors(prev => ({ ...prev, completionDate: "Completion must be after start date" }));
                 return;
@@ -370,7 +331,6 @@ const useCreateProject = () => {
                 return;
             }
 
-            // Milestone specific field validation
             if (!areMilestonesValid) {
                 setErrors(prev => ({ ...prev, global: "Please fill in all milestone titles and dates." }));
                 return;
@@ -381,7 +341,6 @@ const useCreateProject = () => {
                 return;
             }
 
-            // If all valid, open the review modal
             setErrors({});
             setIsReviewOpen(true);
 
@@ -399,56 +358,30 @@ const useCreateProject = () => {
     };
 
     const handleConfirmSubmission = async () => {
-        // Idempotency Check
         if (isSubmitting) return;
-
         setIsSubmitting(true);
 
         try {
-            // Data is already validated by handleReviewRequest, but we parse again for safety/clean types
-            const cleanData = {
-                ...formData,
-                budget: Number(formData.budget)
-            };
-            const validatedData = projectSchema.parse(cleanData);
+            const functions = getFunctions(app, 'asia-southeast1');
+            const createProjectFn = httpsCallable(functions, 'createProject');
 
-            // --- FIRESTORE TRANSACTION ---
-
-            // 1. Create Project Document
-            const projectData = {
-                ...validatedData,
-                status: 'For Mayor', // Initial Status
-                createdAt: serverTimestamp(),
-                progress: 0
-            };
-
-            const docRef = await addDoc(collection(db, "projects"), projectData);
-            const projectId = docRef.id;
-
-            // 2. Batch Write Milestones
-            const batch = writeBatch(db);
-
-            formData.milestones.forEach((milestone, index) => {
-                const milestoneRef = doc(collection(db, "milestones")); // Auto-ID for milestone
-                batch.set(milestoneRef, {
-                    projectId: projectId,
-                    title: milestone.title,
-                    description: milestone.title, // Sync Title as Description
-                    status: 'PENDING',
-                    sequence: index + 1,
-                    createdAt: serverTimestamp()
-                });
+            await createProjectFn({
+                projectTitle: formData.projectTitle,
+                location: formData.location,
+                budget: Number(formData.budget),
+                description: formData.description,
+                contractor: formData.contractor || undefined,
+                engineer: formData.engineer || undefined,
+                startDate: formData.startDate,
+                completionDate: formData.completionDate,
+                milestones: formData.milestones,
             });
 
-            await batch.commit();
-
-            // Navigate back to registry after success
             navigate('/depw/projects');
 
         } catch (err) {
-
-            setErrors(prev => ({ ...prev, global: "Failed to submit project. Please try again." }));
-            setIsSubmitting(false); // Only reset if failed. If success, we navigate away.
+            setErrors(prev => ({ ...prev, global: err.message || "Failed to submit project. Please try again." }));
+            setIsSubmitting(false);
         }
     };
 
@@ -459,10 +392,8 @@ const useCreateProject = () => {
         }
 
         setIsAiGenerating(true);
-        // Simulate AI Latency
         await new Promise(resolve => setTimeout(resolve, 1500));
 
-        // Base milestones (Title acts as description)
         const baseMilestones = [
             { title: "Site Preparation: Clearing, mobilization, and foundation works" },
             { title: "Structural Framework: Columns, beams, and slabs erection" },
@@ -472,10 +403,8 @@ const useCreateProject = () => {
             { title: "Project Closeout: Final inspection, punch listing, and turnover" }
         ];
 
-        // 1. Distribute Weights
         let optimizedMilestones = distributeWeights(baseMilestones);
 
-        // 2. Distribute Dates
         optimizedMilestones = distributeDates(optimizedMilestones, formData.startDate, formData.completionDate);
 
         setFormData(prev => ({
@@ -495,19 +424,13 @@ const useCreateProject = () => {
         engineers, loadingEngineers,
         handleChange, handleBudgetChange, handleStartDateChange, generateAiPlan,
         navigate,
-        // Milestone management
         handleMilestoneChange, addPhase, confirmDeleteMilestone, cancelDelete, executeDelete,
         deleteConfirmIndex,
-        // Review Modal
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
-        // Computed values
         isCoreFieldsComplete, isFormComplete, minCompletionDate, totalWeight, areMilestonesValid,
         CEBU_CITY_BARANGAYS, CHAR_LIMITS
     };
 };
-
-
-// --- UI LAYER ---
 
 const CreateProject = () => {
     const {
@@ -515,12 +438,9 @@ const CreateProject = () => {
         engineers, loadingEngineers,
         handleChange, handleBudgetChange, handleStartDateChange, generateAiPlan,
         navigate,
-        // Milestone management
         handleMilestoneChange, addPhase, confirmDeleteMilestone, cancelDelete, executeDelete,
         deleteConfirmIndex,
-        // Review Modal
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
-        // Computed values
         isCoreFieldsComplete, isFormComplete, minCompletionDate, totalWeight, areMilestonesValid,
         CEBU_CITY_BARANGAYS, CHAR_LIMITS
     } = useCreateProject();
@@ -529,9 +449,8 @@ const CreateProject = () => {
         <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
             <DepwSidebar />
 
-            <main className="ml-0 md:ml-72 p-4 md:p-10 max-w-[1200px] mx-auto pb-20 md:pb-32">
-                {/* HEADER */}
-                <div className="flex items-center justify-between mb-8">
+            <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10 pb-20 md:pb-32">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 sm:mb-8">
                     <div className="flex flex-col gap-2">
                         <button onClick={() => navigate('/depw/projects')}
                             className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-slate-700 transition-colors w-fit">
@@ -539,12 +458,12 @@ const CreateProject = () => {
                             Back to Project Registry
                         </button>
                         <div>
-                            <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">Create Mandate</h1>
+                            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Create Mandate</h1>
                             <p className="text-slate-500 font-bold text-xs uppercase tracking-wider mt-1">NEW INFRASTRUCTURE PROJECT</p>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 shrink-0">
                         <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 text-green-700 rounded-full text-xs font-bold uppercase tracking-wide">
                             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                             Drafting Mode
@@ -553,15 +472,13 @@ const CreateProject = () => {
                 </div>
 
                 <div className="space-y-8">
-                    {/* SECTION 1: IDENTITY */}
                     <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
                             <LayoutDashboard className="text-blue-600" size={24} />
                             <h2 className="text-lg font-bold text-slate-800">Project Identity & Financials</h2>
                         </div>
 
-                        <div className="p-8 space-y-8">
-                            {/* Title */}
+                        <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
                             <div className="space-y-2">
                                 <div className="flex justify-between">
                                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Official Project Title</label>
@@ -582,7 +499,6 @@ const CreateProject = () => {
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {/* Location */}
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Location (Barangay)</label>
                                     <div className="relative">
@@ -602,7 +518,6 @@ const CreateProject = () => {
                                     {errors.location && <p className="text-xs text-red-500 font-bold">{errors.location}</p>}
                                 </div>
 
-                                {/* Budget */}
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Allocated Budget (PHP)</label>
                                     <div className="relative">
@@ -620,7 +535,6 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            {/* Description */}
                             <div className="space-y-2">
                                 <div className="flex justify-between">
                                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Scope of Work</label>
@@ -641,15 +555,14 @@ const CreateProject = () => {
                         </div>
                     </div>
 
-                    {/* SECTION 2: EXECUTION */}
                     <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
                             <Briefcase className="text-green-600" size={24} />
                             <h2 className="text-lg font-bold text-slate-800">Technical Execution</h2>
                         </div>
 
-                        <div className="p-8 space-y-8">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                 <div className="space-y-2">
                                     <div className="flex justify-between">
                                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Contractor / Entity</label>
@@ -743,10 +656,8 @@ const CreateProject = () => {
                         </div>
                     </div>
 
-                    {/* SECTION 3: PLANNING */}
-                    {/* SECTION 3: PLANNING */}
                     <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden opacity-90">
-                        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                        <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div className="flex items-center gap-3">
                                 <BrainCircuit className="text-purple-600" size={24} />
                                 <div className="flex flex-col">
@@ -755,11 +666,11 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 shrink-0">
                                 <button
                                     onClick={addPhase}
                                     disabled={!isCoreFieldsComplete}
-                                    className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <Plus size={16} />
                                     Add Phase
@@ -768,16 +679,17 @@ const CreateProject = () => {
                                     onClick={generateAiPlan}
                                     disabled={!isCoreFieldsComplete || isAiGenerating}
                                     aria-label="Generate AI Plan"
-                                    className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${isCoreFieldsComplete ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} disabled:opacity-50`}
+                                    className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors ${isCoreFieldsComplete ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} disabled:opacity-50`}
                                 >
                                     {isAiGenerating ? <LoaderSpinner /> : <BrainCircuit size={16} />}
-                                    Generate AI Plan
+                                    <span className="hidden sm:inline">Generate AI Plan</span>
+                                    <span className="sm:hidden">AI Plan</span>
                                 </button>
                             </div>
                         </div>
                         {errors.ai && <p className="px-6 pt-2 text-xs text-red-500 font-bold text-right">{errors.ai}</p>}
 
-                        <div className="p-8">
+                        <div className="p-4 sm:p-8">
                             {formData.milestones.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center text-center py-8">
                                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-6 text-slate-400">
@@ -797,49 +709,41 @@ const CreateProject = () => {
 
                                     <div className="space-y-3">
                                         {formData.milestones.map((milestone, idx) => (
-                                            <div key={idx} className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-4 hover:border-blue-300 transition-colors group">
-                                                {/* Sequence */}
-                                                <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
-                                                    {idx + 1}
-                                                </div>
+                                            <div key={idx} className="p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3 hover:border-blue-300 transition-colors group">
+                                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                    <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
+                                                        {idx + 1}
+                                                    </div>
 
-                                                {/* Details (Title Only) */}
-                                                <div className="flex-1">
-                                                    <input
-                                                        type="text"
-                                                        value={milestone.title}
-                                                        onChange={(e) => handleMilestoneChange(idx, 'title', e.target.value)}
-                                                        placeholder="Milestone / Deliverable Description"
-                                                        className={`w-full bg-transparent font-bold text-slate-800 text-sm focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-3 py-2 transition-all placeholder:text-slate-400 border ${!milestone.title.trim() ? 'border-red-300 bg-red-50/50' : 'border-transparent focus:border-blue-200'}`}
-                                                    />
-                                                </div>
-
-                                                {/* Actions */}
-                                                <div className="flex items-center gap-3">
-                                                    {/* Date Picker */}
-                                                    <div className="relative">
+                                                    <div className="flex-1 min-w-0">
                                                         <input
-                                                            type="date"
-                                                            value={milestone.targetDate}
-                                                            min={formData.startDate}
-                                                            max={formData.completionDate}
-                                                            onChange={(e) => handleMilestoneChange(idx, 'targetDate', e.target.value)}
-                                                            className={`w-36 px-3 py-2 bg-white border rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 transition-all text-center ${!milestone.targetDate ? 'border-red-300 bg-red-50/50' : 'border-slate-200'}`}
+                                                            type="text"
+                                                            value={milestone.title}
+                                                            onChange={(e) => handleMilestoneChange(idx, 'title', e.target.value)}
+                                                            placeholder="Milestone / Deliverable Description"
+                                                            className={`w-full bg-transparent font-bold text-slate-800 text-sm focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-3 py-2 transition-all placeholder:text-slate-400 border ${!milestone.title.trim() ? 'border-red-300 bg-red-50/50' : 'border-transparent focus:border-blue-200'}`}
                                                         />
                                                     </div>
+                                                </div>
 
-                                                    {/* Weight Input (Read Only) */}
-                                                    <div className="relative w-20">
-                                                        <div className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 text-center flex items-center justify-center gap-1 cursor-lock">
-                                                            <Lock size={10} className="text-slate-400" />
-                                                            <span>{milestone.weight}%</span>
-                                                        </div>
+                                                <div className="flex items-center gap-2 sm:gap-3 pl-11 sm:pl-0">
+                                                    <input
+                                                        type="date"
+                                                        value={milestone.targetDate}
+                                                        min={formData.startDate}
+                                                        max={formData.completionDate}
+                                                        onChange={(e) => handleMilestoneChange(idx, 'targetDate', e.target.value)}
+                                                        className={`flex-1 sm:flex-none sm:w-36 px-2 sm:px-3 py-2 bg-white border rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 transition-all text-center ${!milestone.targetDate ? 'border-red-300 bg-red-50/50' : 'border-slate-200'}`}
+                                                    />
+
+                                                    <div className="w-16 sm:w-20 px-2 sm:px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 text-center flex items-center justify-center gap-1 shrink-0">
+                                                        <Lock size={10} className="text-slate-400 shrink-0" />
+                                                        <span>{milestone.weight}%</span>
                                                     </div>
 
-                                                    {/* Delete Button */}
                                                     <button
                                                         onClick={() => confirmDeleteMilestone(idx)}
-                                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
                                                         title="Delete Phase"
                                                         aria-label="Delete milestone"
                                                     >
@@ -855,18 +759,18 @@ const CreateProject = () => {
                     </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-3 pt-6 border-t border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3 pt-6 border-t border-slate-200">
                     <button
                         type="button"
                         onClick={() => navigate('/depw/projects')}
-                        className="px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors"
+                        className="w-full sm:w-auto px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors text-center"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={handleReviewRequest}
                         disabled={!isFormComplete || isSubmitting}
-                        className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
+                        className="w-full sm:w-auto px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
                     >
                         {isSubmitting ? <LoaderSpinner /> : <CheckCircle size={20} />}
                         Submit for Approval
@@ -883,7 +787,6 @@ const CreateProject = () => {
                 </div>
             )}
 
-            {/* DELETE CONFIRMATION MODAL */}
             {deleteConfirmIndex !== null && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 transform transition-all scale-100 animate-in zoom-in-95 duration-200">
@@ -917,13 +820,11 @@ const CreateProject = () => {
                 </div>
             )}
 
-            {/* REVIEW MANDATE MODAL (FINAL VALIDATION) */}
             {isReviewOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-                    <div className="bg-white w-full max-w-4xl h-[90vh] rounded-[32px] shadow-2xl overflow-hidden flex flex-col transform transition-all animate-in slide-in-from-bottom-8 duration-300">
+                    <div className="bg-white w-full max-w-4xl h-[95vh] sm:h-[90vh] rounded-t-[32px] sm:rounded-[32px] shadow-2xl overflow-hidden flex flex-col transform transition-all animate-in slide-in-from-bottom-8 duration-300">
 
-                        {/* HEADER */}
-                        <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-white z-10">
+                        <div className="px-4 sm:px-8 py-4 sm:py-6 border-b border-slate-100 flex items-center justify-between bg-white z-10">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
                                     <CheckCircle size={20} className="fill-blue-100" />
@@ -938,19 +839,15 @@ const CreateProject = () => {
                             </button>
                         </div>
 
-                        {/* SCROLLABLE CONTENT */}
-                        <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-slate-50/50">
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 sm:space-y-8 bg-slate-50/50">
                             <p className="text-slate-500 text-sm font-medium">Please verify all project details below before submission.</p>
 
-                            {/* Project Title Card */}
                             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm border-l-4 border-l-blue-500">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 block">Official Project Title</label>
                                 <h3 className="text-xl font-bold text-slate-900 leading-normal">{formData.projectTitle}</h3>
                             </div>
 
-                            {/* Details Grid */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {/* Location & Budget */}
                                 <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
                                     <div className="flex items-center gap-2 mb-2">
                                         <MapPin size={18} className="text-blue-500" />
@@ -968,7 +865,6 @@ const CreateProject = () => {
                                     </div>
                                 </div>
 
-                                {/* Execution Team */}
                                 <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
                                     <div className="flex items-center gap-2 mb-2">
                                         <Briefcase size={18} className="text-green-500" />
@@ -995,7 +891,6 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            {/* Scope of Work */}
                             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-2">
                                 <div className="flex items-center gap-2 mb-2">
                                     <LayoutDashboard size={18} className="text-indigo-500" />
@@ -1006,7 +901,6 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            {/* Milestone Schedule */}
                             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
                                     <BrainCircuit size={18} className="text-purple-500" />
@@ -1036,23 +930,22 @@ const CreateProject = () => {
                             </div>
                         </div>
 
-                        {/* FOOTER */}
-                        <div className="px-8 py-6 border-t border-slate-100 bg-white flex items-center justify-between z-10">
+                        <div className="px-4 sm:px-8 py-4 sm:py-6 border-t border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 z-10">
                             <div className="flex items-center gap-2 text-blue-500">
-                                <AlertCircle size={16} />
+                                <AlertCircle size={16} className="shrink-0" />
                                 <span className="text-xs font-medium">Action cannot be undone once submitted.</span>
                             </div>
-                            <div className="flex gap-4">
+                            <div className="flex gap-3">
                                 <button
                                     onClick={() => setIsReviewOpen(false)}
-                                    className="px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors"
+                                    className="flex-1 sm:flex-none px-4 sm:px-6 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors text-center"
                                 >
                                     Back to Edit
                                 </button>
                                 <button
                                     onClick={handleConfirmSubmission}
                                     disabled={isSubmitting}
-                                    className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all flex items-center gap-2 disabled:opacity-50"
+                                    className="flex-1 sm:flex-none px-6 sm:px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
                                     {isSubmitting ? <LoaderSpinner /> : <CheckCircle size={20} />}
                                     Confirm Submission
@@ -1062,8 +955,6 @@ const CreateProject = () => {
                     </div>
                 </div>
             )}
-
-            {/* FOOTER REMOVED AS PER UI/UX CLEANUP */}
 
         </div>
     );

@@ -2,7 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─── HELPER FUNCTIONS ───────────────────────────────────────────
+    // ════════════════════════════════════════════════════════════════
+    //  HELPER FUNCTIONS
+    // ════════════════════════════════════════════════════════════════
 
     // Returns the calling user's role from the users collection.
     // Returns '' if the user document does not exist.
@@ -22,9 +24,13 @@ service cloud.firestore {
     }
 
 
-    // ─── users collection ────────────────────────────────────────────
-    // Reads:  Own doc (any auth user), all docs (MIS, DEPW)
-    // Writes: Blocked — only Cloud Functions (Admin SDK) manage user docs
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 1 — USER MANAGEMENT
+    // ════════════════════════════════════════════════════════════════
+
+    // users/{uid}
+    //   Read:  Own document (any authenticated user) or MIS/DEPW (all docs)
+    //   Write: BLOCKED — Cloud Functions (Admin SDK) only
 
     match /users/{userId} {
       allow read: if isAuthenticated() &&
@@ -34,45 +40,101 @@ service cloud.firestore {
     }
 
 
-    // ─── projects collection ─────────────────────────────────────────
-    // Reads:  All authenticated roles (dashboards, registries, approvals)
-    // Create: DEPW only (CreateProject.jsx writes directly via addDoc)
-    // Update/Delete: Blocked — future Cloud Functions will handle lifecycle
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 2 — PROJECT DATA
+    // ════════════════════════════════════════════════════════════════
+
+    // projects/{projectId}
+    //   Read:  All authenticated roles (dashboards, registries, approvals)
+    //   Write: BLOCKED — createProject Cloud Function via Admin SDK
 
     match /projects/{projectId} {
       allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
-      allow create: if hasRole(['DEPW']);
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
 
-
-    // ─── milestones collection ───────────────────────────────────────
-    // Reads:  All authenticated roles
-    // Create: DEPW only (CreateProject.jsx writes via writeBatch)
-    // Update/Delete: Blocked
+    // milestones/{milestoneId}
+    //   Read:  All authenticated roles
+    //   Write: BLOCKED — createProject Cloud Function via Admin SDK
 
     match /milestones/{milestoneId} {
       allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
-      allow create: if hasRole(['DEPW']);
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
 
 
-    // ─── stats collection ────────────────────────────────────────────
-    // The stats/public document is the ONLY intentionally public read
-    // in the entire database. It contains pre-computed aggregate counts
-    // maintained by Cloud Function triggers.
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 3 — AUDIT TRAILS
+    //  Two separate collections. Each role sees only its own scope.
+    //  All writes are append-only via Admin SDK — clients cannot write.
+    // ════════════════════════════════════════════════════════════════
 
-    match /stats/{docId} {
-      allow read: if docId == 'public';
+    // systemAuditTrails/{logId}  →  MIS SCOPE ONLY
+    //   Events: OTP_VERIFIED, ACCOUNT_CREATED (by MIS), ACCOUNT_DELETED (by MIS),
+    //           PASSWORD_CHANGED, STATS_RECALCULATED
+    //   Read:  MIS only
+    //   Write: BLOCKED — logSystemAudit() helper in Cloud Functions
+
+    match /systemAuditTrails/{logId} {
+      allow read:  if hasRole(['MIS']);
+      allow write: if false;
+    }
+
+    // depwAuditTrails/{logId}  →  DEPW SCOPE ONLY
+    //   Events: PROJECT_CREATED, PROJ_ENG ACCOUNT_CREATED/DELETED (by DEPW)
+    //   Read:  DEPW only
+    //   Write: BLOCKED — logAudit() helper in Cloud Functions (Admin SDK)
+
+    match /depwAuditTrails/{logId} {
+      allow read:  if hasRole(['DEPW']);
       allow write: if false;
     }
 
 
-    // ─── DEFAULT: Deny everything not explicitly matched ─────────────
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 4 — AUTHENTICATION / OTP
+    // ════════════════════════════════════════════════════════════════
+
+    // otpCodes/{uid}
+    //   OTP records written and read exclusively via Admin SDK in Cloud Functions.
+    //   The OTP code must NEVER reach the browser — fully blocked to all clients.
+
+    match /otpCodes/{uid} {
+      allow read, write: if false;
+    }
+
+    // passwordResetCooldowns/{emailHash}
+    //   Rate-limit records keyed by SHA-256 hash of the email address.
+    //   Written and read exclusively by the sendPasswordReset Cloud Function (Admin SDK).
+    //   Fully blocked to all clients.
+
+    match /passwordResetCooldowns/{docId} {
+      allow read, write: if false;
+    }
+
+
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 5 — PUBLIC DATA
+    // ════════════════════════════════════════════════════════════════
+
+    // stats/public
+    //   The ONLY intentionally public read in the entire database.
+    //   Contains pre-computed aggregate counts from Cloud Function triggers.
+    //   Write: BLOCKED — Cloud Function triggers maintain this document.
+
+    match /stats/{docId} {
+      allow read:  if docId == 'public';
+      allow write: if false;
+    }
+
+
+    // ════════════════════════════════════════════════════════════════
+    //  DEFAULT — Deny everything not explicitly matched above
+    // ════════════════════════════════════════════════════════════════
 
     match /{document=**} {
       allow read, write: if false;
     }
+
   }
 }
