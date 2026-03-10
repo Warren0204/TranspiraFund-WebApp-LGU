@@ -45,7 +45,10 @@ const Settings = () => {
     const [photoLoading, setPhotoLoading]   = useState(false);
     const [photoError, setPhotoError]       = useState('');
     const [photoSuccess, setPhotoSuccess]   = useState(false);
+    const [previewBlob, setPreviewBlob]     = useState(null);
+    const [previewURL, setPreviewURL]       = useState('');
 
+    // Phase 1: process image and show preview — no upload yet
     const handlePhotoSelect = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -54,13 +57,12 @@ const Settings = () => {
         if (!file.type.startsWith('image/')) { setPhotoError('Please select an image file.'); return; }
         if (file.size > 5 * 1024 * 1024)    { setPhotoError('Image must be smaller than 5 MB.'); return; }
 
-        setPhotoLoading(true);
         setPhotoError('');
         setPhotoSuccess(false);
 
         try {
             // Center-crop and resize to 200×200 JPEG via canvas
-            const blob = await new Promise((resolve, reject) => {
+            const { dataURL, blob } = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const img = new Image();
@@ -74,7 +76,12 @@ const Settings = () => {
                         const sx = (img.width  - min) / 2;
                         const sy = (img.height - min) / 2;
                         ctx.drawImage(img, sx, sy, min, min, 0, 0, SIZE, SIZE);
-                        canvas.toBlob(resolve, 'image/jpeg', 0.82);
+                        // Use data URL for preview (blob: URLs are blocked by CSP img-src)
+                        const dataURL = canvas.toDataURL('image/jpeg', 0.82);
+                        canvas.toBlob((b) => {
+                            if (b === null) reject(new Error('Failed to process image. Please try a different file.'));
+                            else resolve({ dataURL, blob: b });
+                        }, 'image/jpeg', 0.82);
                     };
                     img.onerror = reject;
                     img.src = ev.target.result;
@@ -83,13 +90,29 @@ const Settings = () => {
                 reader.readAsDataURL(file);
             });
 
-            // Upload to Firebase Storage → get CDN download URL
+            setPreviewBlob(blob);
+            setPreviewURL(dataURL);
+        } catch (err) {
+            setPhotoError(err.message || 'Unable to process image. Please try again.');
+        }
+    };
+
+    // Phase 2: user confirmed the preview — now upload
+    const handleConfirmUpload = async () => {
+        if (!previewBlob || photoLoading) return;
+
+        // Capture and clear preview immediately so the UI doesn't linger
+        const blobToUpload = previewBlob;
+        setPreviewBlob(null);
+        setPreviewURL('');
+        setPhotoLoading(true);
+        setPhotoError('');
+
+        try {
             const storage = getStorage(app);
             const photoRef = storageRef(storage, `profile-photos/${currentUser.uid}`);
-            await uploadBytes(photoRef, blob, { contentType: 'image/jpeg' });
+            await uploadBytes(photoRef, blobToUpload, { contentType: 'image/jpeg' });
             const downloadURL = await getDownloadURL(photoRef);
-
-            // Store URL in Firestore + Firebase Auth via CF
             await httpsCallable(getFunctions(app, 'asia-southeast1'), 'updateProfilePhoto')({ photoURL: downloadURL });
             await refreshUserData();
             setPhotoSuccess(true);
@@ -99,6 +122,13 @@ const Settings = () => {
         } finally {
             setPhotoLoading(false);
         }
+    };
+
+    // User cancelled the preview
+    const handleCancelPreview = () => {
+        setPreviewBlob(null);
+        setPreviewURL('');
+        setPhotoError('');
     };
 
     const [editingName, setEditingName]     = useState(false);
@@ -260,24 +290,25 @@ const Settings = () => {
                                 <div className="absolute inset-0 rounded-full bg-teal-500/20 blur-xl scale-125 pointer-events-none" />
                                 <button
                                     type="button"
-                                    disabled={photoLoading}
+                                    disabled={photoLoading || !!previewURL}
                                     onClick={() => photoInputRef.current?.click()}
-                                    title="Change profile photo"
+                                    title={previewURL ? 'Confirm or cancel the preview below' : 'Change profile photo'}
                                     className="relative w-20 h-20 rounded-full bg-gradient-to-br from-teal-600 to-emerald-500 flex items-center justify-center text-white text-3xl font-extrabold shadow-xl shadow-teal-500/30 border-4 border-white dark:border-slate-900 overflow-hidden group cursor-pointer disabled:cursor-not-allowed focus:outline-none"
                                 >
-                                    {currentUser?.photoURL ? (
+                                    {previewURL ? (
+                                        <img src={previewURL} alt="Preview" className="w-full h-full object-cover" />
+                                    ) : currentUser?.photoURL ? (
                                         <img src={currentUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
                                     ) : userInitial}
-                                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                        {photoLoading
-                                            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
-                                            : <Camera size={18} className="text-white" />
-                                        }
-                                    </div>
+                                    {!previewURL && (
+                                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                            {photoLoading
+                                                ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+                                                : <Camera size={18} className="text-white" />
+                                            }
+                                        </div>
+                                    )}
                                 </button>
-                                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 flex items-center justify-center pointer-events-none">
-                                    <Camera size={9} className="text-white" />
-                                </div>
                                 <input
                                     ref={photoInputRef}
                                     type="file"
@@ -286,6 +317,35 @@ const Settings = () => {
                                     onChange={handlePhotoSelect}
                                 />
                             </div>
+
+                            {previewURL && (
+                                <div className="mt-3 flex flex-col items-center gap-2 w-full max-w-xs">
+                                    <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                                        Preview — does this look right?
+                                    </p>
+                                    <div className="flex gap-2 w-full">
+                                        <button
+                                            type="button"
+                                            onClick={handleCancelPreview}
+                                            disabled={photoLoading}
+                                            className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-all disabled:opacity-50"
+                                        >
+                                            Choose Different
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleConfirmUpload}
+                                            disabled={photoLoading}
+                                            className="flex-1 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white text-xs font-bold shadow-md shadow-teal-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                        >
+                                            {photoLoading ? (
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+                                            ) : <CheckCircle2 size={12} />}
+                                            {photoLoading ? 'Uploading…' : 'Use This Photo'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
                             {photoError && (
                                 <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 max-w-xs">

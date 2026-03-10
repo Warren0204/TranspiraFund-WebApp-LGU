@@ -34,9 +34,9 @@ const DepwSidebar = memo(() => {
 
     return (
         <Sidebar
-            brandLabel="DEPW"
+            brandLabel="Department of Engineering and Public Works"
             navSections={NAV_SECTIONS}
-            userDisplay={{ name: userName, subtitle: currentUser?.role || 'Official' }}
+            userDisplay={{ name: userName, subtitle: 'Department of Engineering and Public Works' }}
             userInitial={currentUser?.firstName?.[0]?.toUpperCase() || '?'}
             userPhotoURL={currentUser?.photoURL || null}
         />

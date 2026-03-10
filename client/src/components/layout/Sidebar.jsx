@@ -48,7 +48,9 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
                     </div>
                     <div>
                         <h1 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">TranspiraFund</h1>
-                        <p className="text-[9px] font-bold text-teal-700 dark:text-cyan-400 tracking-wider uppercase">{brandLabel}</p>
+                        <p className="text-[9px] font-bold text-teal-700 dark:text-cyan-400 tracking-wider uppercase truncate max-w-[120px]" title={brandLabel}>
+                            {brandLabel}
+                        </p>
                     </div>
                 </div>
                 <button
@@ -87,7 +89,9 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
                     </div>
                     <div>
                         <h1 className="font-extrabold text-slate-900 dark:text-white leading-tight tracking-tight">TranspiraFund</h1>
-                        <p className="text-[10px] font-bold text-teal-700 dark:text-cyan-400 tracking-[0.15em] uppercase">{brandLabel}</p>
+                        <p className="text-[10px] font-bold text-teal-700 dark:text-cyan-400 tracking-[0.15em] uppercase truncate max-w-[140px]" title={brandLabel}>
+                            {brandLabel}
+                        </p>
                     </div>
                 </div>
 

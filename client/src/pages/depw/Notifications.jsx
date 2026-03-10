@@ -57,9 +57,9 @@ const Notifications = () => {
             default:
                 return {
                     wrapper: 'border-slate-200 dark:border-slate-700/60 bg-white/60 dark:bg-slate-800/30',
-                    leftBar: 'bg-gradient-to-b from-blue-400 to-cyan-400',
-                    icon: <Info className="text-blue-500 dark:text-blue-400" size={26} />,
-                    iconBg: 'bg-blue-50 dark:bg-blue-900/30',
+                    leftBar: 'bg-gradient-to-b from-teal-500 to-emerald-400',
+                    icon: <Info className="text-teal-500 dark:text-teal-400" size={26} />,
+                    iconBg: 'bg-teal-50 dark:bg-teal-900/30',
                     titleColor: 'text-slate-800 dark:text-slate-100',
                     textColor: 'text-slate-600 dark:text-slate-400',
                     timeColor: 'text-slate-400 dark:text-slate-500',
@@ -74,7 +74,7 @@ const Notifications = () => {
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
                 {/* PAGE HEADER */}
-                <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-8"
+                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
                         <div className="inline-flex items-center gap-2 bg-amber-500/10 dark:bg-amber-400/10 border border-amber-400/20 dark:border-amber-400/20 rounded-full px-3 py-1 mb-3">
@@ -98,7 +98,7 @@ const Notifications = () => {
 
                     {unreadCount > 0 && (
                         <button onClick={markAllRead}
-                            className="shrink-0 flex items-center gap-2 text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 bg-white/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-4 py-2.5 rounded-xl transition-all hover:shadow-sm">
+                            className="shrink-0 flex items-center gap-2 text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 bg-white/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-4 py-2.5 rounded-xl transition-all hover:shadow-sm">
                             <CheckCheck size={16} />
                             Mark All Read
                         </button>

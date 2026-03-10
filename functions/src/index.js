@@ -613,56 +613,6 @@ exports.resetPassword = onCall(async (request) => {
     return { success: true };
 });
 
-exports.updateProfilePhoto = onCall(async (request) => {
-    const { auth, data } = request;
-    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
-
-    const { photoURL } = data;
-    if (!photoURL || typeof photoURL !== "string") {
-        throw new HttpsError("invalid-argument", "Photo URL is required.");
-    }
-
-    try {
-        await admin.auth().updateUser(auth.uid, { photoURL });
-        await admin.firestore().collection("users").doc(auth.uid).update({ photoURL });
-        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS");
-        return { success: true };
-    } catch (error) {
-        logger.error("Error updating profile photo:", error);
-        throw new HttpsError("internal", "Unable to update profile photo. Please try again.");
-    }
-});
-
-exports.updateProfile = onCall(async (request) => {
-    const { auth, data } = request;
-    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
-
-    const { firstName, lastName } = data;
-    if (!firstName || !lastName || typeof firstName !== "string" || typeof lastName !== "string") {
-        throw new HttpsError("invalid-argument", "First and last name are required.");
-    }
-    if (firstName.trim().length < 2 || lastName.trim().length < 2) {
-        throw new HttpsError("invalid-argument", "Each name must be at least 2 characters.");
-    }
-
-    const cleanFirst = firstName.trim();
-    const cleanLast = lastName.trim();
-
-    try {
-        await admin.auth().updateUser(auth.uid, { displayName: `${cleanFirst} ${cleanLast}` });
-        await admin.firestore().collection("users").doc(auth.uid).update({
-            firstName: cleanFirst,
-            lastName: cleanLast,
-        });
-        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_NAME_UPDATED",
-            { firstName: cleanFirst, lastName: cleanLast }, "SUCCESS");
-        return { success: true };
-    } catch (error) {
-        logger.error("Error updating profile:", error);
-        throw new HttpsError("internal", "Unable to update profile. Please try again.");
-    }
-});
-
 exports.recalculateStats = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");

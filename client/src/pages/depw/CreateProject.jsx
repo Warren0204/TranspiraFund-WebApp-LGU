@@ -474,7 +474,7 @@ const CreateProject = () => {
                 <div className="space-y-8">
                     <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-                            <LayoutDashboard className="text-blue-600" size={24} />
+                            <LayoutDashboard className="text-teal-600" size={24} />
                             <h2 className="text-lg font-bold text-slate-800">Project Identity & Financials</h2>
                         </div>
 
@@ -493,7 +493,7 @@ const CreateProject = () => {
                                     placeholder="e.g. Construction of Multi-Purpose Building Phase 1"
                                     maxLength={CHAR_LIMITS.projectTitle}
                                     aria-label="Official Project Title"
-                                    className={`w-full p-4 bg-slate-50 border ${errors.projectTitle ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-blue-100'} rounded-xl font-semibold text-slate-700 focus:border-blue-500 focus:ring-4 outline-none transition-all`}
+                                    className={`w-full p-4 bg-slate-50 border ${errors.projectTitle ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-teal-100'} rounded-xl font-semibold text-slate-700 focus:border-teal-500 focus:ring-4 outline-none transition-all`}
                                 />
                                 {errors.projectTitle && <p className="text-xs text-red-500 font-bold flex items-center gap-1"><AlertCircle size={12} />{errors.projectTitle}</p>}
                             </div>
@@ -507,7 +507,7 @@ const CreateProject = () => {
                                             value={formData.location}
                                             onChange={(e) => handleChange('location', e.target.value)}
                                             aria-label="Location Barangay"
-                                            className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all appearance-none cursor-pointer"
+                                            className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100 transition-all appearance-none cursor-pointer"
                                         >
                                             <option value="">Select Barangay...</option>
                                             {CEBU_CITY_BARANGAYS.map(barangay => (
@@ -528,7 +528,7 @@ const CreateProject = () => {
                                             onChange={handleBudgetChange}
                                             placeholder="0"
                                             aria-label="Allocated Budget"
-                                            className="w-full pl-10 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all"
+                                            className="w-full pl-10 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100 transition-all"
                                         />
                                     </div>
                                     {errors.budget && <p className="text-xs text-red-500 font-bold">{errors.budget}</p>}
@@ -548,7 +548,7 @@ const CreateProject = () => {
                                     placeholder="Describe the technical scope, objectives, and deliverables..."
                                     maxLength={CHAR_LIMITS.description}
                                     aria-label="Scope of Work Description"
-                                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all h-32 resize-none"
+                                    className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 focus:border-teal-500 focus:ring-4 focus:ring-teal-100 outline-none transition-all h-32 resize-none"
                                 />
                                 {errors.description && <p className="text-xs text-red-500 font-bold">{errors.description}</p>}
                             </div>
@@ -632,7 +632,7 @@ const CreateProject = () => {
                                             value={formData.startDate}
                                             onChange={handleStartDateChange}
                                             aria-label="Target Start Date"
-                                            className="w-full p-3 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
+                                            className="w-full p-3 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all"
                                         />
                                         {errors.startDate && <p className="text-xs text-red-500 font-bold">{errors.startDate}</p>}
                                     </div>
@@ -647,7 +647,7 @@ const CreateProject = () => {
                                             disabled={!formData.startDate}
                                             min={minCompletionDate}
                                             aria-label="Completion Date"
-                                            className={`w-full p-3 border border-slate-200 rounded-lg font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all ${!formData.startDate ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-700'}`}
+                                            className={`w-full p-3 border border-slate-200 rounded-lg font-medium outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition-all ${!formData.startDate ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-700'}`}
                                         />
                                         {errors.completionDate && <p className="text-xs text-red-500 font-bold">{errors.completionDate}</p>}
                                     </div>
@@ -659,7 +659,7 @@ const CreateProject = () => {
                     <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden opacity-90">
                         <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div className="flex items-center gap-3">
-                                <BrainCircuit className="text-purple-600" size={24} />
+                                <BrainCircuit className="text-teal-600" size={24} />
                                 <div className="flex flex-col">
                                     <h2 className="text-lg font-bold text-slate-800">Strategic Planning</h2>
                                     <span className="text-xs font-medium text-slate-400">Auto-balanced milestones ensure accountability.</span>
@@ -679,7 +679,7 @@ const CreateProject = () => {
                                     onClick={generateAiPlan}
                                     disabled={!isCoreFieldsComplete || isAiGenerating}
                                     aria-label="Generate AI Plan"
-                                    className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors ${isCoreFieldsComplete ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} disabled:opacity-50`}
+                                    className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors ${isCoreFieldsComplete ? 'bg-teal-100 text-teal-700 hover:bg-teal-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} disabled:opacity-50`}
                                 >
                                     {isAiGenerating ? <LoaderSpinner /> : <BrainCircuit size={16} />}
                                     <span className="hidden sm:inline">Generate AI Plan</span>
@@ -709,9 +709,9 @@ const CreateProject = () => {
 
                                     <div className="space-y-3">
                                         {formData.milestones.map((milestone, idx) => (
-                                            <div key={idx} className="p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3 hover:border-blue-300 transition-colors group">
+                                            <div key={idx} className="p-3 sm:p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3 hover:border-teal-300 transition-colors group">
                                                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                    <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
+                                                    <div className="w-8 h-8 bg-teal-100 text-teal-600 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
                                                         {idx + 1}
                                                     </div>
 
@@ -721,7 +721,7 @@ const CreateProject = () => {
                                                             value={milestone.title}
                                                             onChange={(e) => handleMilestoneChange(idx, 'title', e.target.value)}
                                                             placeholder="Milestone / Deliverable Description"
-                                                            className={`w-full bg-transparent font-bold text-slate-800 text-sm focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 rounded px-3 py-2 transition-all placeholder:text-slate-400 border ${!milestone.title.trim() ? 'border-red-300 bg-red-50/50' : 'border-transparent focus:border-blue-200'}`}
+                                                            className={`w-full bg-transparent font-bold text-slate-800 text-sm focus:outline-none focus:bg-white focus:ring-2 focus:ring-teal-100 rounded px-3 py-2 transition-all placeholder:text-slate-400 border ${!milestone.title.trim() ? 'border-red-300 bg-red-50/50' : 'border-transparent focus:border-teal-200'}`}
                                                         />
                                                     </div>
                                                 </div>
@@ -733,7 +733,7 @@ const CreateProject = () => {
                                                         min={formData.startDate}
                                                         max={formData.completionDate}
                                                         onChange={(e) => handleMilestoneChange(idx, 'targetDate', e.target.value)}
-                                                        className={`flex-1 sm:flex-none sm:w-36 px-2 sm:px-3 py-2 bg-white border rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-blue-500 transition-all text-center ${!milestone.targetDate ? 'border-red-300 bg-red-50/50' : 'border-slate-200'}`}
+                                                        className={`flex-1 sm:flex-none sm:w-36 px-2 sm:px-3 py-2 bg-white border rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-teal-500 transition-all text-center ${!milestone.targetDate ? 'border-red-300 bg-red-50/50' : 'border-slate-200'}`}
                                                     />
 
                                                     <div className="w-16 sm:w-20 px-2 sm:px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold text-slate-500 text-center flex items-center justify-center gap-1 shrink-0">
@@ -770,7 +770,7 @@ const CreateProject = () => {
                     <button
                         onClick={handleReviewRequest}
                         disabled={!isFormComplete || isSubmitting}
-                        className="w-full sm:w-auto px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                        className="w-full sm:w-auto px-8 py-3 bg-teal-600 text-white font-bold rounded-xl shadow-lg shadow-teal-200 hover:bg-teal-700 hover:shadow-teal-300 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
                     >
                         {isSubmitting ? <LoaderSpinner /> : <CheckCircle size={20} />}
                         Submit for Approval
@@ -798,7 +798,7 @@ const CreateProject = () => {
                                 <h3 className="text-lg font-bold text-slate-900">Delete Phase?</h3>
                                 <p className="text-slate-500 text-sm mt-1">
                                     Are you sure you want to remove this project phase?
-                                    <span className="block mt-1 text-xs text-blue-600 font-medium">Auto-balancing will adjust remaining dates & weights.</span>
+                                    <span className="block mt-1 text-xs text-teal-600 font-medium">Auto-balancing will adjust remaining dates & weights.</span>
                                 </p>
                             </div>
                             <div className="flex gap-3 w-full mt-2">
@@ -826,11 +826,11 @@ const CreateProject = () => {
 
                         <div className="px-4 sm:px-8 py-4 sm:py-6 border-b border-slate-100 flex items-center justify-between bg-white z-10">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                                <div className="w-10 h-10 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center">
                                     <CheckCircle size={20} className="fill-blue-100" />
                                 </div>
                                 <div>
-                                    <span className="text-xs font-bold text-blue-600 uppercase tracking-widest block mb-0.5">Final Validation</span>
+                                    <span className="text-xs font-bold text-teal-600 uppercase tracking-widest block mb-0.5">Final Validation</span>
                                     <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Review Mandate</h2>
                                 </div>
                             </div>
@@ -842,7 +842,7 @@ const CreateProject = () => {
                         <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 sm:space-y-8 bg-slate-50/50">
                             <p className="text-slate-500 text-sm font-medium">Please verify all project details below before submission.</p>
 
-                            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm border-l-4 border-l-blue-500">
+                            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm border-l-4 border-l-teal-500">
                                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 block">Official Project Title</label>
                                 <h3 className="text-xl font-bold text-slate-900 leading-normal">{formData.projectTitle}</h3>
                             </div>
@@ -850,7 +850,7 @@ const CreateProject = () => {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
                                     <div className="flex items-center gap-2 mb-2">
-                                        <MapPin size={18} className="text-blue-500" />
+                                        <MapPin size={18} className="text-teal-500" />
                                         <h4 className="font-bold text-slate-800">Location & Budget</h4>
                                     </div>
                                     <div className="space-y-4">
@@ -860,7 +860,7 @@ const CreateProject = () => {
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Total Appropriation</label>
-                                            <p className="font-bold text-blue-600 text-2xl tracking-tight">{formData.budgetDisplay} <span className="text-sm text-slate-400 font-bold ml-1">PHP</span></p>
+                                            <p className="font-bold text-teal-600 text-2xl tracking-tight">{formData.budgetDisplay} <span className="text-sm text-slate-400 font-bold ml-1">PHP</span></p>
                                         </div>
                                     </div>
                                 </div>
@@ -878,7 +878,7 @@ const CreateProject = () => {
                                         <div>
                                             <label className="text-xs font-bold text-slate-400 uppercase tracking-wide block">Project Engineer</label>
                                             <div className="flex items-center gap-3 mt-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                                                <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs ring-2 ring-white shadow-sm">
+                                                <div className="w-8 h-8 rounded-full bg-teal-600 text-white flex items-center justify-center font-bold text-xs ring-2 ring-white shadow-sm">
                                                     {formData.engineer?.charAt(0) || "U"}
                                                 </div>
                                                 <div>
@@ -893,7 +893,7 @@ const CreateProject = () => {
 
                             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-2">
                                 <div className="flex items-center gap-2 mb-2">
-                                    <LayoutDashboard size={18} className="text-indigo-500" />
+                                    <LayoutDashboard size={18} className="text-teal-500" />
                                     <h4 className="font-bold text-slate-800">Scope of Work</h4>
                                 </div>
                                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-sm text-slate-600 leading-relaxed min-h-[80px]">
@@ -903,14 +903,14 @@ const CreateProject = () => {
 
                             <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
-                                    <BrainCircuit size={18} className="text-purple-500" />
+                                    <BrainCircuit size={18} className="text-teal-500" />
                                     <h4 className="font-bold text-slate-800">Milestone Schedule</h4>
                                 </div>
                                 <div className="space-y-2">
                                     {formData.milestones.map((m, idx) => (
                                         <div key={idx} className="flex items-center justify-between p-3 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-8 h-8 bg-purple-50 text-purple-600 rounded-lg flex items-center justify-center font-bold text-xs">
+                                                <div className="w-8 h-8 bg-teal-50 text-teal-600 rounded-lg flex items-center justify-center font-bold text-xs">
                                                     {idx + 1}
                                                 </div>
                                                 <span className="text-sm font-bold text-slate-700">{m.title}</span>
@@ -931,7 +931,7 @@ const CreateProject = () => {
                         </div>
 
                         <div className="px-4 sm:px-8 py-4 sm:py-6 border-t border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 z-10">
-                            <div className="flex items-center gap-2 text-blue-500">
+                            <div className="flex items-center gap-2 text-teal-500">
                                 <AlertCircle size={16} className="shrink-0" />
                                 <span className="text-xs font-medium">Action cannot be undone once submitted.</span>
                             </div>
@@ -945,7 +945,7 @@ const CreateProject = () => {
                                 <button
                                     onClick={handleConfirmSubmission}
                                     disabled={isSubmitting}
-                                    className="flex-1 sm:flex-none px-6 sm:px-8 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 hover:shadow-blue-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    className="flex-1 sm:flex-none px-6 sm:px-8 py-3 bg-teal-600 text-white font-bold rounded-xl shadow-lg shadow-teal-200 hover:bg-teal-700 hover:shadow-teal-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
                                     {isSubmitting ? <LoaderSpinner /> : <CheckCircle size={20} />}
                                     Confirm Submission
@@ -961,7 +961,7 @@ const CreateProject = () => {
 };
 
 const LoaderSpinner = () => (
-    <svg className="animate-spin h-4 w-4 text-purple-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <svg className="animate-spin h-4 w-4 text-teal-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
     </svg>

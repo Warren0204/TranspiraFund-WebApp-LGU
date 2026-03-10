@@ -281,9 +281,9 @@ const VacantRoleCard = memo(({ slot, onProvision, index }) => {
 
                 <button
                     onClick={() => onProvision(slot.roleType)}
-                    className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-teal-500/25 transition-all flex items-center justify-center gap-2 text-sm"
+                    className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-teal-500/25 transition-all flex items-center justify-center gap-2 text-sm leading-none"
                 >
-                    <UserPlus size={16} />
+                    <UserPlus size={16} className="shrink-0" />
                     Provision Account
                 </button>
             </div>

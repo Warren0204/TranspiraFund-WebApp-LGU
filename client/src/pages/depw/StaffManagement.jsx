@@ -165,7 +165,7 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, errors
     const hasAllFields = form.firstName && form.lastName && form.email;
 
     const inputBase = 'w-full pl-10 pr-4 py-3.5 bg-white dark:bg-slate-800 border rounded-xl text-sm font-medium text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 outline-none transition-all';
-    const inputNormal = 'border-slate-300 dark:border-slate-600 focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-indigo-500/20 dark:focus:ring-indigo-400/20';
+    const inputNormal = 'border-slate-300 dark:border-slate-600 focus:border-teal-500 dark:focus:border-teal-400 focus:ring-teal-500/20 dark:focus:ring-teal-400/20';
     const inputError = 'border-red-400 dark:border-red-500/60 ring-2 ring-red-100 dark:ring-red-900/30';
 
     return (
@@ -178,9 +178,9 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, errors
                     <X size={20} strokeWidth={2.5} />
                 </button>
 
-                <div className="relative bg-gradient-to-br from-indigo-600 via-indigo-500 to-purple-600 px-7 pt-7 pb-12 overflow-hidden">
+                <div className="relative bg-gradient-to-br from-teal-600 via-teal-500 to-emerald-500 px-7 pt-7 pb-12 overflow-hidden">
                     <div className="absolute -top-6 -right-6 w-36 h-36 rounded-full bg-white/10 pointer-events-none" />
-                    <div className="absolute bottom-0 left-4 w-20 h-20 rounded-full bg-purple-400/20 pointer-events-none" />
+                    <div className="absolute bottom-0 left-4 w-20 h-20 rounded-full bg-emerald-400/20 pointer-events-none" />
 
                     <div className="relative flex items-center gap-4 pr-12">
                         <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg shrink-0">
@@ -195,7 +195,7 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, errors
 
                 <div className="px-6 -mt-6 relative z-10 mb-5">
                     <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-xl flex items-center gap-3.5">
-                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-extrabold text-white text-lg shadow-md shrink-0 transition-all duration-300 ${initial ? 'bg-gradient-to-br from-indigo-500 to-purple-500' : 'bg-slate-100 dark:bg-slate-700'}`}>
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-extrabold text-white text-lg shadow-md shrink-0 transition-all duration-300 ${initial ? 'bg-gradient-to-br from-teal-500 to-emerald-400' : 'bg-slate-100 dark:bg-slate-700'}`}>
                             {initial ?? <User size={18} className="text-slate-400 dark:text-slate-500" />}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -206,7 +206,7 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, errors
                                 {form.email || 'email@lgu.gov.ph'}
                             </p>
                         </div>
-                        <span className="shrink-0 inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
+                        <span className="shrink-0 inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-500/30">
                             Proj. Eng.
                         </span>
                     </div>
@@ -248,23 +248,23 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, errors
                         {errors.email && <p className="text-xs text-red-500 font-semibold mt-1.5">{errors.email}</p>}
                     </div>
 
-                    <div className="flex items-center justify-between px-4 py-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-500/30 rounded-xl">
+                    <div className="flex items-center justify-between px-4 py-4 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-500/30 rounded-xl">
                         <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shrink-0">
+                            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
                                 <HardHat size={16} className="text-white" />
                             </div>
                             <div>
-                                <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide mb-0.5">Assigned Role</p>
-                                <p className="text-sm font-bold text-indigo-900 dark:text-indigo-100">Project Engineer</p>
+                                <p className="text-xs font-bold text-teal-600 dark:text-teal-400 uppercase tracking-wide mb-0.5">Assigned Role</p>
+                                <p className="text-sm font-bold text-teal-900 dark:text-teal-100">Project Engineer</p>
                             </div>
                         </div>
-                        <span className="text-xs font-bold px-3 py-1.5 bg-white dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 rounded-full border border-indigo-200 dark:border-indigo-500/50">
+                        <span className="text-xs font-bold px-3 py-1.5 bg-white dark:bg-teal-900/60 text-teal-600 dark:text-teal-300 rounded-full border border-teal-200 dark:border-teal-500/50">
                             Locked
                         </span>
                     </div>
 
                     <button onClick={onSubmit} disabled={!hasAllFields}
-                        className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-500 hover:from-indigo-700 hover:to-purple-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed text-sm">
+                        className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-teal-500/25 hover:shadow-teal-500/40 transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed text-sm">
                         <Plus size={17} strokeWidth={2.5} />
                         Review & Provision
                     </button>
@@ -339,12 +339,12 @@ const StaffManagement = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-8"
+                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
-                        <div className="inline-flex items-center gap-2 bg-indigo-500/10 dark:bg-indigo-500/20 border border-indigo-500/20 dark:border-indigo-400/30 rounded-full px-3 py-1 mb-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400" />
-                            <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-widest">Field Personnel</span>
+                        <div className="inline-flex items-center gap-2 bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 dark:border-teal-400/30 rounded-full px-3 py-1 mb-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-teal-500 dark:bg-teal-400" />
+                            <span className="text-xs font-bold text-teal-700 dark:text-teal-300 uppercase tracking-widest">Field Personnel</span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                             Field Staff Management
@@ -355,7 +355,7 @@ const StaffManagement = () => {
                     </div>
                     <div className="shrink-0">
                         <button onClick={openProvisionModal}
-                            className="w-full lg:w-auto bg-gradient-to-r from-indigo-600 to-purple-500 hover:from-indigo-700 hover:to-purple-600 text-white font-bold py-3.5 px-7 rounded-xl shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/35 transition-all flex items-center justify-center gap-2 text-sm">
+                            className="w-full md:w-auto bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-bold py-3.5 px-7 rounded-xl shadow-lg shadow-teal-500/25 hover:shadow-teal-500/35 transition-all flex items-center justify-center gap-2 text-sm">
                             <Plus size={18} strokeWidth={2.5} />
                             Add Engineer
                         </button>
@@ -367,7 +367,7 @@ const StaffManagement = () => {
 
                     <div className="p-5 sm:p-6 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white/40 dark:bg-slate-800/20">
                         <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center">
                                 <Users size={15} className="text-white" />
                             </div>
                             <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">
@@ -375,9 +375,9 @@ const StaffManagement = () => {
                             </span>
                         </div>
                         <div className="relative group w-full sm:w-80">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-indigo-500 dark:group-focus-within:text-indigo-400 transition-colors" size={17} />
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-teal-500 dark:group-focus-within:text-teal-400 transition-colors" size={17} />
                             <input type="text" placeholder="Search by name or email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 outline-none transition-all" />
+                                className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-teal-500 dark:focus:ring-teal-400 outline-none transition-all" />
                         </div>
                     </div>
 
@@ -399,11 +399,11 @@ const StaffManagement = () => {
                         ) : (
                             filteredStaff.map((s, i) => (
                                 <div key={s.id}
-                                    className="grid grid-cols-12 items-center px-5 sm:px-7 py-4 sm:py-5 border-b border-slate-100/70 dark:border-slate-700/30 last:border-b-0 hover:bg-indigo-500/5 dark:hover:bg-indigo-400/5 border-l-2 border-l-transparent hover:border-l-indigo-500 dark:hover:border-l-indigo-400 transition-all group"
+                                    className="grid grid-cols-12 items-center px-5 sm:px-7 py-4 sm:py-5 border-b border-slate-100/70 dark:border-slate-700/30 last:border-b-0 hover:bg-teal-500/5 dark:hover:bg-teal-400/5 border-l-2 border-l-transparent hover:border-l-teal-500 dark:hover:border-l-teal-400 transition-all group"
                                     style={{ animation: `slideUp 0.4s ease-out ${i * 0.06}s both` }}>
 
                                     <div className="col-span-7 sm:col-span-5 flex items-center gap-3 min-w-0">
-                                        <div className="relative w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-base shadow-lg shadow-indigo-500/20 shrink-0">
+                                        <div className="relative w-11 h-11 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-bold text-white text-base shadow-lg shadow-teal-500/20 shrink-0">
                                             {s.initial}
                                         </div>
                                         <div className="min-w-0">
@@ -417,7 +417,7 @@ const StaffManagement = () => {
 
                                     <div className="hidden sm:block sm:col-span-5">
                                         <div className="flex items-center gap-2 mb-1">
-                                            <span className="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
+                                            <span className="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-500/30">
                                                 {s.roleLabel}
                                             </span>
                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${s.status === 'Active' ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30' : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600'}`}>
