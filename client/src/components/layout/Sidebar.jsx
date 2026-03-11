@@ -44,7 +44,7 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
             <div className="fixed top-0 left-0 right-0 z-20 md:hidden bg-white/90 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/60 dark:border-slate-700/60 px-4 py-2.5 flex items-center justify-between transition-colors duration-300">
                 <div className="flex items-center gap-2.5">
                     <div className="w-9 h-9 rounded-full overflow-hidden shrink-0">
-                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.3]" />
+                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.85]" />
                     </div>
                     <div>
                         <h1 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">TranspiraFund</h1>
@@ -85,7 +85,7 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
 
                 <div className="p-6 flex items-center gap-3 border-b border-slate-100 dark:border-slate-800">
                     <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 ring-2 ring-teal-500/20">
-                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.3]" />
+                        <img src={logo} alt="Logo" className="w-full h-full object-cover scale-[1.85]" />
                     </div>
                     <div>
                         <h1 className="font-extrabold text-slate-900 dark:text-white leading-tight tracking-tight">TranspiraFund</h1>
