@@ -252,7 +252,7 @@ const Settings = () => {
     };
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <AdminSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">

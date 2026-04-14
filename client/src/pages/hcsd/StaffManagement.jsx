@@ -2,7 +2,7 @@ import { memo, useState, useMemo, useEffect } from 'react';
 import {
     Plus, Users, X, AlertCircle, Search, HardHat, Mail, Trash2, AlertTriangle, User
 } from 'lucide-react';
-import DepwSidebar from '../../components/layout/DepwSidebar';
+import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import AccountProvisioningService from '../../services/AccountProvisioningService';
 import ConfirmAssignmentModal from '../../components/shared/ConfirmAssignmentModal';
 import SuccessModal from '../../components/shared/SuccessModal';
@@ -334,8 +334,8 @@ const StaffManagement = () => {
     } = useStaffLogic();
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100">
-            <DepwSidebar />
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
+            <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
@@ -362,7 +362,7 @@ const StaffManagement = () => {
                     </div>
                 </div>
 
-                <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden min-h-[600px] flex flex-col"
+                <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
                     <div className="p-5 sm:p-6 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white/40 dark:bg-slate-800/20">
@@ -387,7 +387,7 @@ const StaffManagement = () => {
                         <div className="col-span-5 sm:col-span-2 text-right pr-2">Actions</div>
                     </div>
 
-                    <div className="flex-1 overflow-auto">
+                    <div>
                         {filteredStaff.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-24 text-slate-400 dark:text-slate-600">
                                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4">

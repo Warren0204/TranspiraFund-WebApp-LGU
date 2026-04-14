@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
     Bell, Check, CircleX, CircleCheck, Info, CheckCheck
 } from 'lucide-react';
-import DepwSidebar from '../../components/layout/DepwSidebar';
+import HcsdSidebar from '../../components/layout/HcsdSidebar';
 
 const Notifications = () => {
     const [alerts, setAlerts] = useState([
@@ -68,8 +68,8 @@ const Notifications = () => {
     };
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100">
-            <DepwSidebar />
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
+            <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 

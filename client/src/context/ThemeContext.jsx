@@ -4,7 +4,11 @@ const ThemeContext = createContext({ isDark: false, toggle: () => {} });
 
 export const ThemeProvider = ({ children }) => {
     const [isDark, setIsDark] = useState(() => {
-        try { return localStorage.getItem('depw-theme') === 'dark'; }
+        try {
+            // Read new key first; fall back to legacy 'depw-theme' key for migrating users
+            const val = localStorage.getItem('hcsd-theme') ?? localStorage.getItem('depw-theme');
+            return val === 'dark';
+        }
         catch { return false; }
     });
 
@@ -12,10 +16,10 @@ export const ThemeProvider = ({ children }) => {
         const root = document.documentElement;
         if (isDark) {
             root.classList.add('dark');
-            localStorage.setItem('depw-theme', 'dark');
+            localStorage.setItem('hcsd-theme', 'dark');
         } else {
             root.classList.remove('dark');
-            localStorage.setItem('depw-theme', 'light');
+            localStorage.setItem('hcsd-theme', 'light');
         }
     }, [isDark]);
 

@@ -30,24 +30,59 @@ const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
     lastName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "Last name contains invalid characters"),
-    roleType: z.enum(["MAYOR", "DEPW", "CPDO", "PROJ_ENG"]),
+    roleType: z.enum(["MAYOR", "HCSD", "CPDO", "PROJ_ENG"]),
     department: z.string().max(100).optional(),
 });
 
 const createProjectSchema = z.object({
-    projectTitle: z.string().min(10).max(100).regex(/^[a-zA-Z0-9\s\-_.,()]+$/, "Title contains invalid characters"),
-    location: z.string().min(1).max(200),
-    budget: z.number().min(10000).max(1_000_000_000),
-    description: z.string().min(20).max(500),
-    contractor: z.string().max(100).optional(),
-    engineer: z.string().max(200).optional(),
-    startDate: z.string().min(1),
-    completionDate: z.string().min(1),
-    milestones: z.array(z.object({
-        title: z.string().min(1).max(200),
-        targetDate: z.string().min(1),
-        weight: z.number().min(1).max(100),
-    })).min(1).max(20),
+    // Project Details
+    projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
+    sitioStreet: z.string().max(200).optional(),
+    barangay: z.string().min(1, "Barangay is required").max(100),
+
+    // Account Code & Funding
+    accountCode: z.string().max(100).optional(),
+    fundingSource: z.string().min(1, "Funding source is required").max(100),
+
+    // Contract Amount
+    contractAmount: z.number().min(10000, "Minimum contract amount is ₱10,000").max(1_000_000_000),
+
+    // Contractor
+    contractor: z.string().max(200).optional(),
+
+    // Assigned Personnel
+    projectEngineer: z.string().max(200).optional(),
+    projectInspector: z.string().max(100).optional(),
+    materialInspector: z.string().max(100).optional(),
+    electricalInspector: z.string().max(100).optional(),
+
+    // Project Timeliness
+    ntpReceivedDate: z.string().min(1, "NTP received date is required"),
+    officialDateStarted: z.string().min(1, "Official start date is required"),
+    originalDateCompletion: z.string().min(1, "Original completion date is required"),
+    revisedDate1: z.string().optional(),
+    revisedDate2: z.string().optional(),
+    actualDateCompleted: z.string().optional(),
+
+    // Project Accomplishment (only stored field)
+    actualPercent: z.number().min(0).max(100).optional(),
+
+    // Project Orders (flat fields)
+    resumeOrderNumber: z.string().max(100).optional(),
+    resumeOrderDate: z.string().optional(),
+    timeExtensionOnOrder: z.string().max(100).optional(),
+    validationOrderNumber: z.string().max(100).optional(),
+    validationOrderDate: z.string().optional(),
+    suspensionOrderNumber: z.string().max(100).optional(),
+    suspensionOrderDate: z.string().optional(),
+
+    // Fund Utilization
+    incurredAmount: z.number().min(0).optional(),
+
+    // Remarks & Action
+    remarks: z.string().max(1000).optional(),
+    actionTaken: z.string().max(1000).optional(),
+
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -62,10 +97,10 @@ const generatePassword = (length = 16) => {
     return password;
 };
 
-// Write an audit trail entry — DEPW-scoped
+// Write an audit trail entry — HCSD-scoped
 const logAudit = async (actorUid, actorEmail, action, targetId = null, details = {}) => {
     try {
-        await admin.firestore().collection("depwAuditTrails").add({
+        await admin.firestore().collection("auditTrails").doc("hcsd").collection("entries").add({
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             actorUid,
             actorEmail: actorEmail || null,
@@ -83,7 +118,7 @@ const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status 
     try {
         const actor = { uid: actorUid, email: actorEmail || null };
         if (actorName) actor.name = actorName;
-        await admin.firestore().collection("systemAuditTrails").add({
+        await admin.firestore().collection("auditTrails").doc("mis").collection("entries").add({
             action,
             actor,
             target,
@@ -212,6 +247,19 @@ exports.verifyOtp = onCall(async (request) => {
         otpVerifiedAtAuthTime: authTime,
     });
 
+    // Fetch user role to route login audit to correct trail
+    const userDoc = await admin.firestore().collection("users").doc(uid).get();
+    const userRole = userDoc.exists ? userDoc.data().role : null;
+    const userName = userDoc.exists
+        ? `${userDoc.data().firstName || ""} ${userDoc.data().lastName || ""}`.trim()
+        : null;
+
+    if (userRole === "HCSD") {
+        await logAudit(uid, auth.token.email, "USER_LOGIN", uid, { role: userRole, name: userName });
+    } else {
+        await logSystemAudit(uid, auth.token.email, "USER_LOGIN", { uid, role: userRole, name: userName }, "SUCCESS", userName);
+    }
+
     await logSystemAudit(uid, auth.token.email, "OTP_VERIFIED", {}, "SUCCESS");
     return { success: true };
 });
@@ -225,7 +273,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists) throw new HttpsError("permission-denied", "User profile not found.");
     const callerRole = callerDoc.data().role;
-    if (!["MIS", "DEPW"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to create accounts.");
+    if (!["MIS", "HCSD"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to create accounts.");
 
     // Validate input
     const parsed = createAccountSchema.safeParse(data);
@@ -235,8 +283,8 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     }
     const { email, firstName, lastName, roleType, department } = parsed.data;
 
-    if (callerRole === "DEPW" && roleType !== "PROJ_ENG") {
-        throw new HttpsError("permission-denied", "DEPW can only provision Project Engineers.");
+    if (callerRole === "HCSD" && roleType !== "PROJ_ENG") {
+        throw new HttpsError("permission-denied", "HCSD can only provision Project Engineers.");
     }
 
     const tempPassword = generatePassword();
@@ -320,15 +368,15 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists) throw new HttpsError("permission-denied", "User profile not found.");
     const callerRole = callerDoc.data().role;
-    if (!["MIS", "DEPW"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to delete accounts.");
+    if (!["MIS", "HCSD"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to delete accounts.");
 
     const { uid } = data;
     if (!uid || typeof uid !== "string") throw new HttpsError("invalid-argument", "User UID is required.");
 
-    if (callerRole === "DEPW") {
+    if (callerRole === "HCSD") {
         const targetDoc = await admin.firestore().collection("users").doc(uid).get();
         if (targetDoc.exists && targetDoc.data().role !== "PROJ_ENG") {
-            throw new HttpsError("permission-denied", "DEPW can only revoke Project Engineer access.");
+            throw new HttpsError("permission-denied", "HCSD can only revoke Project Engineer access.");
         }
     }
 
@@ -361,47 +409,40 @@ exports.createProject = onCall(async (request) => {
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to create projects.");
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
-    if (!callerDoc.exists || callerDoc.data().role !== "DEPW") {
-        throw new HttpsError("permission-denied", "Only DEPW personnel can create projects.");
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can create projects.");
     }
 
+    // Firebase callable SDK sends null for absent optional fields; convert null → undefined before validation
+    const sanitized = Object.fromEntries(
+        Object.entries(data || {}).map(([k, v]) => [k, v === null ? undefined : v])
+    );
+
     // Validate project data
-    const parsed = createProjectSchema.safeParse(data);
+    const parsed = createProjectSchema.safeParse(sanitized);
     if (!parsed.success) {
         const msg = parsed.error.errors[0]?.message ?? "Invalid project data.";
         throw new HttpsError("invalid-argument", msg);
     }
-    const { milestones, ...projectFields } = parsed.data;
+    // Strip undefined/null values — Firestore rejects undefined fields
+    const projectFields = Object.fromEntries(
+        Object.entries(parsed.data).filter(([, v]) => v !== undefined && v !== null)
+    );
 
     try {
         const projectRef = await admin.firestore().collection("projects").add({
             ...projectFields,
-            status: "For Mayor",
+            status: "Draft",
             progress: 0,
             createdBy: auth.uid,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-        const batch = admin.firestore().batch();
-        milestones.forEach((milestone, index) => {
-            const milRef = admin.firestore().collection("milestones").doc();
-            batch.set(milRef, {
-                projectId: projectRef.id,
-                title: milestone.title,
-                targetDate: milestone.targetDate,
-                weight: milestone.weight,
-                status: "PENDING",
-                sequence: index + 1,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-        });
-        await batch.commit();
-
         // Audit trail
         await logAudit(auth.uid, auth.token.email, "PROJECT_CREATED", projectRef.id, {
-            projectTitle: projectFields.projectTitle,
-            budget: projectFields.budget,
-            location: projectFields.location,
+            projectName: projectFields.projectName,
+            contractAmount: projectFields.contractAmount,
+            barangay: projectFields.barangay,
         });
 
         return { success: true, projectId: projectRef.id };
@@ -471,7 +512,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
 
     // Rate limiting — consistent for registered and unregistered emails (anti-enumeration)
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
-    const cooldownRef = admin.firestore().collection("passwordResetCooldowns").doc(emailHash);
+    const cooldownRef = admin.firestore().collection("passwordResets").doc(emailHash);
     const cooldownDoc = await cooldownRef.get();
     if (cooldownDoc.exists) {
         const { lastSent } = cooldownDoc.data();
@@ -632,7 +673,7 @@ exports.recalculateStats = onCall(async (request) => {
         const projects = projectsSnapshot.docs.map(d => d.data());
 
         const engineerCount = users.filter(u => u.role === "PROJ_ENG" || u.role === "Project Engineer").length;
-        const DEPT_ROLES = ["MAYOR", "DEPW", "CPDO"];
+        const DEPT_ROLES = ["MAYOR", "HCSD", "CPDO"];
         const rolesPresent = new Set(users.map(u => u.role));
         const departmentCount = DEPT_ROLES.filter(r => rolesPresent.has(r)).length;
         const projectCount = projects.length;
@@ -666,7 +707,7 @@ exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
             u.role === "PROJ_ENG" || u.role === "Project Engineer"
         ).length;
 
-        const DEPT_ROLES = ["MAYOR", "DEPW", "CPDO"];
+        const DEPT_ROLES = ["MAYOR", "HCSD", "CPDO"];
         const rolesPresent = new Set(users.map(u => u.role));
         const departmentCount = DEPT_ROLES.filter(r => rolesPresent.has(r)).length;
 
@@ -728,7 +769,19 @@ exports.updateProfilePhoto = onCall(async (request) => {
     try {
         await userRef.update({ photoURL, photoChangedAt: Date.now() });
         await admin.auth().updateUser(auth.uid, { photoURL });
+
+        const role = userDoc.exists ? userDoc.data().role : null;
+        const userData = userDoc.exists ? userDoc.data() : {};
+        const actorName = [userData.firstName, userData.lastName].filter(Boolean).join(" ") || auth.token.email;
+
+        if (role === "HCSD") {
+            await logAudit(auth.uid, auth.token.email, "PHOTO_UPDATED", auth.uid, {
+                actorName,
+                note: "Profile photo updated",
+            });
+        }
         await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS");
+
         return { success: true };
     } catch (error) {
         logger.error("Error updating profile photo:", error);

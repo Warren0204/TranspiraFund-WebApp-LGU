@@ -12,28 +12,28 @@ import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { accountProvisionSchema } from '../../config/validationSchemas';
 
-const MIS_PROVISIONABLE_ROLES = ['MAYOR', 'DEPW', 'CPDO'];
-const DEPARTMENT_HEAD_ROLES   = ['MIS', 'MAYOR', 'DEPW', 'CPDO'];
+const MIS_PROVISIONABLE_ROLES = ['MAYOR', 'HCSD', 'CPDO'];
+const DEPARTMENT_HEAD_ROLES   = ['MIS', 'MAYOR', 'HCSD', 'CPDO'];
 
-const ROLE_ICONS = { MAYOR: FileText, DEPW: HardHat, CPDO: Map };
+const ROLE_ICONS = { MAYOR: FileText, HCSD: HardHat, CPDO: Map };
 
-const ROLE_SHORT_NAMES = { MAYOR: 'City Mayor', DEPW: 'DEPW Head', CPDO: 'CPDO Head' };
+const ROLE_SHORT_NAMES = { MAYOR: 'City Mayor', HCSD: 'HCSD Head', CPDO: 'CPDO Head' };
 
 const ROLE_DESCRIPTIONS = {
     MAYOR: 'Final approver for infrastructure projects and fund disbursements.',
-    DEPW:  'Manages engineering projects, field engineers, and public works.',
+    HCSD:  'Manages construction services projects, site personnel, and public works milestones.',
     CPDO:  'Oversees city planning, zoning, and development permits.',
 };
 
 const ROLE_PERMISSIONS = {
     MAYOR: ['Approve or reject infrastructure projects', 'Fund disbursement authorization', 'View all project reports'],
-    DEPW:  ['Create and manage projects', 'Provision field engineers', 'Submit milestone reports'],
+    HCSD:  ['Create and manage projects', 'Provision field engineers', 'Submit milestone reports'],
     CPDO:  ['City planning oversight', 'Zoning and permit review', 'Development plan approval'],
 };
 
 const ROLE_GRADIENTS = {
     MAYOR: { gradient: 'from-violet-600 to-purple-500', glow: 'shadow-violet-500/30', ambient: 'bg-violet-500/10' },
-    DEPW:  { gradient: 'from-teal-600 to-emerald-500',  glow: 'shadow-teal-500/30',   ambient: 'bg-teal-500/10'   },
+    HCSD:  { gradient: 'from-teal-600 to-emerald-500',  glow: 'shadow-teal-500/30',   ambient: 'bg-teal-500/10'   },
     CPDO:  { gradient: 'from-blue-600 to-cyan-500',     glow: 'shadow-blue-500/30',   ambient: 'bg-blue-500/10'   },
 };
 
@@ -199,7 +199,7 @@ const useRosterLogic = () => {
 
 const FilledRoleCard = memo(({ slot, onRevoke, index }) => {
     const Icon = slot.icon;
-    const { gradient, glow, ambient } = ROLE_GRADIENTS[slot.roleType] || ROLE_GRADIENTS.DEPW;
+    const { gradient, glow, ambient } = ROLE_GRADIENTS[slot.roleType] || ROLE_GRADIENTS.HCSD;
     return (
         <div
             className="relative overflow-hidden rounded-[24px] p-6 bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 shadow-xl shadow-slate-200/50 dark:shadow-black/20 group"
@@ -295,7 +295,7 @@ const ProvisionModal = memo(({ isOpen, onClose, form, onChange, onSubmit, roleMe
     if (!isOpen || !roleMeta) return null;
 
     const Icon = ROLE_ICONS[form.roleType] || FileText;
-    const { gradient } = ROLE_GRADIENTS[form.roleType] || ROLE_GRADIENTS.DEPW;
+    const { gradient } = ROLE_GRADIENTS[form.roleType] || ROLE_GRADIENTS.HCSD;
 
     const toProper    = (str) => str.replace(/\w\S*/g, txt => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
     const properFirst = form.firstName ? toProper(form.firstName) : '';
@@ -450,7 +450,7 @@ const ReviewProvisionModal = memo(({ data, onBack, onConfirm, isProcessing, erro
     if (!data) return null;
 
     const Icon = ROLE_ICONS[data.roleType] || FileText;
-    const { gradient, glow } = ROLE_GRADIENTS[data.roleType] || ROLE_GRADIENTS.DEPW;
+    const { gradient, glow } = ROLE_GRADIENTS[data.roleType] || ROLE_GRADIENTS.HCSD;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-200 p-4">
@@ -597,7 +597,7 @@ const AccountManagement = () => {
     const activeRoleMeta = useMemo(() => ROLE_METADATA.find(r => r.type === provisionForm.roleType) || null, [provisionForm.roleType]);
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <AdminSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">

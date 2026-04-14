@@ -9,8 +9,8 @@ body {
   @apply bg-slate-50 transition-colors duration-300;
 }
 
-/* ─── Engineering Blueprint Background ─────────────────────────────────── */
-.depw-bg {
+/* ─── HCSD Blueprint Background ────────────────────────────────────────── */
+.hcsd-bg {
   background-color: rgba(248, 250, 252, 0.6);
   background-image:
     linear-gradient(to right, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
@@ -18,7 +18,7 @@ body {
   background-size: 40px 40px;
 }
 
-.dark .depw-bg {
+.dark .hcsd-bg {
   background-color: rgb(2 6 23);
   background-image:
     linear-gradient(to right, rgba(148, 163, 184, 0.04) 1px, transparent 1px),

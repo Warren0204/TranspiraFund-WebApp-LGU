@@ -1,7 +1,7 @@
 
 export const ROLES = {
   MIS: 'MIS',
-  DEPW: 'DEPW',
+  HCSD: 'HCSD',
   MAYOR: 'MAYOR',
   CPDO: 'CPDO',
   PROJECT_ENGINEER: 'PROJ_ENG'
@@ -15,9 +15,9 @@ export const ROLE_METADATA = [
     titlePrefix: 'Hon.'
   },
   {
-    type: ROLES.DEPW,
-    label: 'DEPW Head (Engineering)',
-    dept: 'Department of Engineering and Public Works',
+    type: ROLES.HCSD,
+    label: 'Head of Construction Services Division (HCSD)',
+    dept: 'Construction Services Division, DEPW',
     titlePrefix: 'Engr.'
   },
   {
@@ -29,7 +29,7 @@ export const ROLE_METADATA = [
   {
     type: ROLES.PROJECT_ENGINEER,
     label: 'Project Engineer',
-    dept: 'Department of Engineering and Public Works',
+    dept: 'Construction Services Division, DEPW',
     titlePrefix: 'Engr.'
   }
 ];

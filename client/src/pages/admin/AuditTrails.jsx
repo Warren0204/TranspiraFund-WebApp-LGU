@@ -6,20 +6,21 @@ import AdminSidebar from '../../components/layout/AdminSidebar';
 const PAGE_SIZE = 30;
 
 const ACTION_CONFIG = {
-    ACCOUNT_CREATED:    { label: 'Account Created',  tw: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300',         dot: 'bg-teal-500'    },
-    ACCOUNT_DELETED:    { label: 'Account Revoked',  tw: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',             dot: 'bg-red-500'     },
-    OTP_VERIFIED:       { label: 'OTP Verified',     tw: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300', dot: 'bg-indigo-500'  },
-    PASSWORD_CHANGED:   { label: 'Password Changed', tw: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',     dot: 'bg-amber-500'   },
-    PASSWORD_RESET:     { label: 'Password Reset',   tw: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300', dot: 'bg-orange-500'  },
-    STATS_RECALCULATED: { label: 'Stats Synced',     tw: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300', dot: 'bg-purple-500'  },
-    PROFILE_UPDATED:      { label: 'Profile Updated',    tw: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300',               dot: 'bg-sky-500'     },
-    PROFILE_PHOTO_UPDATED:{ label: 'Photo Updated',      tw: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300',             dot: 'bg-cyan-500'    },
+    USER_LOGIN:         { label: 'User Login',       tw: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300',       dot: 'bg-green-500'   },
+    ACCOUNT_CREATED:    { label: 'Account Created',  tw: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300',           dot: 'bg-teal-500'    },
+    ACCOUNT_DELETED:    { label: 'Account Revoked',  tw: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',               dot: 'bg-red-500'     },
+    OTP_VERIFIED:       { label: 'OTP Verified',     tw: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300',   dot: 'bg-indigo-500'  },
+    PASSWORD_CHANGED:   { label: 'Password Changed', tw: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',       dot: 'bg-amber-500'   },
+    PASSWORD_RESET:     { label: 'Password Reset',   tw: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300',   dot: 'bg-orange-500'  },
+    STATS_RECALCULATED: { label: 'Stats Synced',     tw: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300',   dot: 'bg-purple-500'  },
+    PROFILE_UPDATED:      { label: 'Profile Updated',    tw: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300',           dot: 'bg-sky-500'     },
+    PROFILE_PHOTO_UPDATED:{ label: 'Photo Updated',      tw: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300',       dot: 'bg-cyan-500'    },
 };
 
 const FILTERS = [
     { key: 'ALL',     label: 'All',           actions: null },
     { key: 'ACCOUNT', label: 'Account Events', actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
-    { key: 'AUTH',    label: 'Auth Events',    actions: ['OTP_VERIFIED', 'PASSWORD_CHANGED', 'PASSWORD_RESET', 'PROFILE_UPDATED', 'PROFILE_PHOTO_UPDATED'] },
+    { key: 'AUTH',    label: 'Auth Events',    actions: ['USER_LOGIN', 'OTP_VERIFIED', 'PASSWORD_CHANGED', 'PASSWORD_RESET', 'PROFILE_UPDATED', 'PROFILE_PHOTO_UPDATED'] },
 ];
 
 const fmt = (ts) => {
@@ -33,6 +34,12 @@ const fmt = (ts) => {
 const getDetails = (log) => {
     const t = log.target || {};
     switch (log.action) {
+        case 'USER_LOGIN':
+            return [
+                `Authenticated login via OTP`,
+                t.role  ? `Role: ${t.role}`  : null,
+                t.name  ? `Name: ${t.name}`  : null,
+            ].filter(Boolean);
         case 'ACCOUNT_CREATED':
             return [
                 `Provisioned new ${t.role ?? ''} account`,
@@ -81,13 +88,13 @@ export default function AuditTrails() {
         isLoadMore ? setLoadingMore(true) : setLoading(true);
         try {
             let q = query(
-                collection(db, 'systemAuditTrails'),
+                collection(db, 'auditTrails', 'mis', 'entries'),
                 orderBy('createdAt', 'desc'),
                 limit(PAGE_SIZE)
             );
             if (isLoadMore && lastDoc) {
                 q = query(
-                    collection(db, 'systemAuditTrails'),
+                    collection(db, 'auditTrails', 'mis', 'entries'),
                     orderBy('createdAt', 'desc'),
                     startAfter(lastDoc),
                     limit(PAGE_SIZE)
@@ -113,7 +120,7 @@ export default function AuditTrails() {
         : logs;
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <AdminSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">

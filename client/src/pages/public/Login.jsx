@@ -15,7 +15,8 @@ const useLoginLogic = () => {
     switch (safeRole) {
       case 'MIS': return '/admin/dashboard';
       case 'MAYOR': return '/mayor/dashboard';
-      case 'DEPW': return '/depw/dashboard';
+      case 'HCSD': return '/hcsd/dashboard';
+      case 'DEPW': return '/hcsd/dashboard'; // migration fallback — remove after all users migrated
       case 'CPDO': return '/cpdo/dashboard';
       default: return '/unauthorized';
     }

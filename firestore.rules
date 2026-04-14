@@ -6,8 +6,6 @@ service cloud.firestore {
     //  HELPER FUNCTIONS
     // ════════════════════════════════════════════════════════════════
 
-    // Returns the calling user's role from the users collection.
-    // Returns '' if the user document does not exist.
     function getUserRole() {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid))
         ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
@@ -18,7 +16,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Returns true if the caller has one of the specified roles.
     function hasRole(roles) {
       return isAuthenticated() && getUserRole() in roles;
     }
@@ -28,14 +25,10 @@ service cloud.firestore {
     //  CATEGORY 1 — USER MANAGEMENT
     // ════════════════════════════════════════════════════════════════
 
-    // users/{uid}
-    //   Read:  Own document (any authenticated user) or MIS/DEPW (all docs)
-    //   Write: BLOCKED — Cloud Functions (Admin SDK) only
-
     match /users/{userId} {
       allow read: if isAuthenticated() &&
                      (request.auth.uid == userId ||
-                      hasRole(['MIS', 'DEPW']));
+                      hasRole(['MIS', 'HCSD']));
       allow write: if false;
     }
 
@@ -44,50 +37,50 @@ service cloud.firestore {
     //  CATEGORY 2 — PROJECT DATA
     // ════════════════════════════════════════════════════════════════
 
-    // projects/{projectId}
-    //   Read:  All authenticated roles (dashboards, registries, approvals)
-    //   Write: BLOCKED — createProject Cloud Function via Admin SDK
-
     match /projects/{projectId} {
-      allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
+      allow read: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
       allow create, update, delete: if false;
-    }
 
-    // milestones/{milestoneId}
-    //   Read:  All authenticated roles
-    //   Write: BLOCKED — createProject Cloud Function via Admin SDK
-
-    match /milestones/{milestoneId} {
-      allow read: if hasRole(['MIS', 'MAYOR', 'DEPW', 'CPDO', 'PROJ_ENG']);
-      allow create, update, delete: if false;
+      match /milestones/{milestoneId} {
+        allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
+        allow update: if hasRole(['PROJ_ENG']);
+        allow create, delete: if false;
+      }
     }
 
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 3 — AUDIT TRAILS
-    //  Two separate collections. Each role sees only its own scope.
-    //  All writes are append-only via Admin SDK — clients cannot write.
+    //  Three scoped sub-paths under one parent collection.
+    //  Named after the role that owns each scope.
     // ════════════════════════════════════════════════════════════════
 
-    // systemAuditTrails/{logId}  →  MIS SCOPE ONLY
-    //   Events: OTP_VERIFIED, ACCOUNT_CREATED (by MIS), ACCOUNT_DELETED (by MIS),
-    //           PASSWORD_CHANGED, STATS_RECALCULATED
-    //   Read:  MIS only
-    //   Write: BLOCKED — logSystemAudit() helper in Cloud Functions
+    // auditTrails/mis/entries/{logId}
+    //   MIS-scope events: account provisioning, OTP, password changes, stats
+    //   Read: MIS only | Write: Cloud Functions (Admin SDK) only
 
-    match /systemAuditTrails/{logId} {
+    match /auditTrails/mis/entries/{logId} {
       allow read:  if hasRole(['MIS']);
       allow write: if false;
     }
 
-    // depwAuditTrails/{logId}  →  DEPW SCOPE ONLY
-    //   Events: PROJECT_CREATED, PROJ_ENG ACCOUNT_CREATED/DELETED (by DEPW)
-    //   Read:  DEPW only
-    //   Write: BLOCKED — logAudit() helper in Cloud Functions (Admin SDK)
+    // auditTrails/hcsd/entries/{logId}
+    //   HCSD-scope events: project created, PROJ_ENG account created/deleted
+    //   Read: HCSD only | Write: Cloud Functions (Admin SDK) only
 
-    match /depwAuditTrails/{logId} {
-      allow read:  if hasRole(['DEPW']);
+    match /auditTrails/hcsd/entries/{logId} {
+      allow read:  if hasRole(['HCSD']);
       allow write: if false;
+    }
+
+    // auditTrails/mobile/entries/{logId}
+    //   PROJ_ENG mobile app activity (login, field actions)
+    //   Read: MIS + HCSD for monitoring | Create: PROJ_ENG mobile app only
+
+    match /auditTrails/mobile/entries/{logId} {
+      allow read:   if hasRole(['MIS', 'HCSD', 'PROJ_ENG']);
+      allow create: if hasRole(['PROJ_ENG']);
+      allow update, delete: if false;
     }
 
 
@@ -95,32 +88,29 @@ service cloud.firestore {
     //  CATEGORY 4 — AUTHENTICATION / OTP
     // ════════════════════════════════════════════════════════════════
 
-    // otpCodes/{uid}
-    //   OTP records written and read exclusively via Admin SDK in Cloud Functions.
-    //   The OTP code must NEVER reach the browser — fully blocked to all clients.
-
     match /otpCodes/{uid} {
       allow read, write: if false;
     }
 
-    // passwordResetCooldowns/{emailHash}
-    //   Rate-limit records keyed by SHA-256 hash of the email address.
-    //   Written and read exclusively by the sendPasswordReset Cloud Function (Admin SDK).
-    //   Fully blocked to all clients.
-
-    match /passwordResetCooldowns/{docId} {
+    match /passwordResets/{docId} {
       allow read, write: if false;
     }
 
 
     // ════════════════════════════════════════════════════════════════
-    //  CATEGORY 5 — PUBLIC DATA
+    //  CATEGORY 5 — NOTIFICATIONS
     // ════════════════════════════════════════════════════════════════
 
-    // stats/public
-    //   The ONLY intentionally public read in the entire database.
-    //   Contains pre-computed aggregate counts from Cloud Function triggers.
-    //   Write: BLOCKED — Cloud Function triggers maintain this document.
+    match /notifications/{notifId} {
+      allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
+      allow update: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
+      allow create, delete: if false;
+    }
+
+
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 6 — PUBLIC DATA
+    // ════════════════════════════════════════════════════════════════
 
     match /stats/{docId} {
       allow read:  if docId == 'public';

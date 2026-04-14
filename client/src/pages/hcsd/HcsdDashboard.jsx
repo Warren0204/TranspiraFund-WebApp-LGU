@@ -4,7 +4,7 @@ import {
     Wallet, Users, FolderKanban, ArrowRight,
     AlertTriangle, HardHat, Activity,
 } from 'lucide-react';
-import DepwSidebar from '../../components/layout/DepwSidebar';
+import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useTheme } from '../../context/ThemeContext';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -12,9 +12,9 @@ import { ROLES } from '../../config/roles';
 
 /* ── Status distribution donut ──────────────────────────────────────────── */
 const SEGMENTS = [
-    { label: 'Active',    color: '#14b8a6', dark: '#2dd4bf' },
-    { label: 'For Mayor', color: '#f59e0b', dark: '#fbbf24' },
-    { label: 'Done',      color: '#10b981', dark: '#34d399' },
+    { label: 'Ongoing',   color: '#14b8a6', dark: '#2dd4bf' },
+    { label: 'Returned',  color: '#f43f5e', dark: '#fb7185' },
+    { label: 'Completed', color: '#10b981', dark: '#34d399' },
 ];
 
 const DonutChart = ({ statusDist, total, isDark }) => {
@@ -25,7 +25,7 @@ const DonutChart = ({ statusDist, total, isDark }) => {
     const size = (R + SW) * 2;
     const C = 2 * Math.PI * R;
     const safe = total || 1;
-    const values = [statusDist.active, statusDist.mayor, statusDist.done];
+    const values = [statusDist.ongoing, statusDist.returned, statusDist.done];
     let cum = 0;
 
     return (
@@ -92,21 +92,23 @@ const DonutChart = ({ statusDist, total, isDark }) => {
 /* ── Status badge helper ─────────────────────────────────────────────────── */
 const statusStyle = (status) => {
     const s = (status || '').toUpperCase();
-    if (s === 'COMPLETED' || s.includes('DONE'))
+    if (s === 'COMPLETED')
         return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20';
-    if (s.includes('MAYOR'))
-        return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20';
+    if (s === 'RETURNED')
+        return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20';
+    if (s === 'DRAFT')
+        return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-700/40 dark:text-slate-400 dark:ring-slate-600/40';
     return 'bg-teal-50 text-teal-700 ring-1 ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/20';
 };
 
 /* ── Component ───────────────────────────────────────────────────────────── */
-const DepwDashboard = () => {
+const HcsdDashboard = () => {
     const { isDark } = useTheme();
     const navigate = useNavigate();
 
     const [stats, setStats]           = useState({ budget: 0, engineers: 0, projects: 0 });
     const [recentProjects, setRecent] = useState([]);
-    const [statusDist, setDist]       = useState({ active: 0, mayor: 0, done: 0 });
+    const [statusDist, setDist]       = useState({ ongoing: 0, returned: 0, done: 0 });
 
     useEffect(() => {
         const unsubEng = onSnapshot(
@@ -124,13 +126,13 @@ const DepwDashboard = () => {
             query(collection(db, 'projects'), orderBy('createdAt', 'desc')),
             (snap) => {
                 const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                const budget = data.reduce((a, c) => a + (Number(c.budget) || 0), 0);
-                const dist = { active: 0, mayor: 0, done: 0 };
+                const budget = data.reduce((a, c) => a + (Number(c.contractAmount) || 0), 0);
+                const dist = { ongoing: 0, returned: 0, done: 0 };
                 data.forEach(p => {
                     const s = (p.status || '').toUpperCase();
                     if (s === 'COMPLETED') dist.done++;
-                    else if (s.includes('MAYOR')) dist.mayor++;
-                    else dist.active++;
+                    else if (s === 'RETURNED') dist.returned++;
+                    else dist.ongoing++;
                 });
                 setStats(p => ({ ...p, budget, projects: data.length }));
                 setRecent(data.slice(0, 5));
@@ -155,8 +157,8 @@ const DepwDashboard = () => {
     ];
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
-            <DepwSidebar />
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+            <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-8 pt-20 md:pt-8">
 
@@ -168,11 +170,11 @@ const DepwDashboard = () => {
                                 <Activity size={14} className="text-white" strokeWidth={2.5} />
                             </div>
                             <span className="text-xs font-extrabold uppercase tracking-[0.18em] text-teal-600 dark:text-teal-400">
-                                Engineering Command
+                                Construction Services Division
                             </span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-                            DEPW Dashboard
+                            HCSD Dashboard
                         </h1>
                         <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
                             Real-time infrastructure monitoring and resource allocation.
@@ -181,14 +183,14 @@ const DepwDashboard = () => {
 
                     <div className="flex items-center gap-3 w-full lg:w-auto">
                         <button
-                            onClick={() => navigate('/depw/staff')}
+                            onClick={() => navigate('/hcsd/staff')}
                             className="flex-1 lg:flex-none inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-sm font-semibold py-2.5 px-4 lg:px-5 rounded-xl transition-colors duration-150 whitespace-nowrap"
                         >
                             <Users size={15} className="shrink-0" />
                             Staff Management
                         </button>
                         <button
-                            onClick={() => navigate('/depw/projects')}
+                            onClick={() => navigate('/hcsd/projects')}
                             className="flex-1 lg:flex-none inline-flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold py-2.5 px-4 lg:px-5 rounded-xl transition-colors duration-150 whitespace-nowrap shadow-sm"
                         >
                             <FolderKanban size={15} className="shrink-0" />
@@ -243,7 +245,7 @@ const DepwDashboard = () => {
                                 Active Registry
                             </h3>
                             <button
-                                onClick={() => navigate('/depw/projects')}
+                                onClick={() => navigate('/hcsd/projects')}
                                 className="inline-flex items-center gap-1 text-xs font-semibold text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 transition-colors duration-150"
                             >
                                 View All <ArrowRight size={12} />
@@ -272,10 +274,10 @@ const DepwDashboard = () => {
                                         className="grid grid-cols-12 items-center px-5 sm:px-6 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer group transition-colors duration-150"
                                     >
                                         <div className="col-span-7 sm:col-span-5 text-sm font-semibold text-slate-800 dark:text-slate-200 truncate pr-3 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors duration-150">
-                                            {project.projectTitle || project.name || 'Untitled Project'}
+                                            {project.projectName || 'Untitled Project'}
                                         </div>
                                         <div className="hidden sm:block sm:col-span-3 text-sm text-slate-400 dark:text-slate-500 truncate pr-3">
-                                            {project.location || '—'}
+                                            {project.barangay ? `Brgy. ${project.barangay}` : '—'}
                                         </div>
                                         <div className="col-span-5 sm:col-span-2">
                                             <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${statusStyle(project.status)}`}>
@@ -341,4 +343,4 @@ const DepwDashboard = () => {
     );
 };
 
-export default DepwDashboard;
+export default HcsdDashboard;

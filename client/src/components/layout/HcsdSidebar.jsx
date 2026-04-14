@@ -10,22 +10,22 @@ const NAV_SECTIONS = [
     {
         title: 'Navigation',
         items: [
-            { label: 'Dashboard', path: '/depw/dashboard', icon: LayoutDashboard },
-            { label: 'Staff Management', path: '/depw/staff', icon: Users },
-            { label: 'Manage Projects', path: '/depw/projects', icon: FolderKanban, activeAliases: ['/depw/create-project'] },
+            { label: 'Dashboard', path: '/hcsd/dashboard', icon: LayoutDashboard },
+            { label: 'Staff Management', path: '/hcsd/staff', icon: Users },
+            { label: 'Manage Projects', path: '/hcsd/projects', icon: FolderKanban, activeAliases: ['/hcsd/create-project'] },
         ]
     },
     {
         title: 'Monitoring & Admin',
         items: [
-            { label: 'Audit Trails', path: '/depw/audits', icon: FileBarChart },
-            { label: 'Notifications', path: '/depw/notifications', icon: Bell },
-            { label: 'Settings', path: '/depw/settings', icon: Settings },
+            { label: 'Audit Trails', path: '/hcsd/audits', icon: FileBarChart },
+            { label: 'Notifications', path: '/hcsd/notifications', icon: Bell },
+            { label: 'Settings', path: '/hcsd/settings', icon: Settings },
         ]
     }
 ];
 
-const DepwSidebar = memo(() => {
+const HcsdSidebar = memo(() => {
     const { currentUser } = useAuth();
 
     const userName = currentUser
@@ -34,13 +34,13 @@ const DepwSidebar = memo(() => {
 
     return (
         <Sidebar
-            brandLabel="Department of Engineering and Public Works"
+            brandLabel="Construction Services Division"
             navSections={NAV_SECTIONS}
-            userDisplay={{ name: userName, subtitle: 'Department of Engineering and Public Works' }}
+            userDisplay={{ name: userName, subtitle: 'Construction Services Division, DEPW' }}
             userInitial={currentUser?.firstName?.[0]?.toUpperCase() || '?'}
             userPhotoURL={currentUser?.photoURL || null}
         />
     );
 });
 
-export default DepwSidebar;
+export default HcsdSidebar;

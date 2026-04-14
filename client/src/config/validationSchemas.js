@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const NAME_REGEX = /^[a-zA-Z\s\-']+$/;
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const PROJECT_NAME_REGEX = /^[a-zA-Z0-9\s\-_.,()]+$/;
 
 export const nameSchema = z
     .string()
@@ -28,37 +29,70 @@ export const staffProvisionSchema = z.object({
 });
 
 export const projectSchema = z.object({
-    projectTitle: z.string()
-        .min(10, "Title must be at least 10 characters")
-        .max(100, "Title cannot exceed 100 characters")
-        .regex(/^[a-zA-Z0-9\s\-_.,()]+$/, "Title contains invalid characters"),
+    // Project Details
+    projectName: z.string()
+        .min(10, "Project name must be at least 10 characters")
+        .max(200, "Project name cannot exceed 200 characters")
+        .regex(PROJECT_NAME_REGEX, "Project name contains invalid characters"),
 
-    location: z.string().min(1, "Location is required"),
+    sitioStreet: z.string().max(200, "Sitio/Street cannot exceed 200 characters").optional(),
 
-    budget: z.number({ invalid_type_error: "Budget must be a number" })
-        .min(10000, "Minimum budget is 10,000")
-        .max(1000000000, "Maximum budget exceeded"),
+    barangay: z.string().min(1, "Barangay is required"),
 
-    description: z.string()
-        .min(20, "Description must be at least 20 characters")
-        .max(500, "Description cannot exceed 500 characters"),
+    // Account Code & Funding
+    accountCode: z.string().max(100, "Account code cannot exceed 100 characters").optional(),
 
-    contractor: z.string().max(100, "Contractor name cannot exceed 100 characters").optional(),
-    engineer: z.string().optional(),
+    fundingSource: z.string().min(1, "Funding source is required"),
 
-    startDate: z.string().refine((date) => new Date(date) > new Date(), {
-        message: "Start date must be in the future"
-    }),
+    // Contract Amount
+    contractAmount: z.number({ invalid_type_error: "Contract amount must be a number" })
+        .min(10000, "Minimum contract amount is ₱10,000")
+        .max(1_000_000_000, "Maximum contract amount exceeded"),
 
-    completionDate: z.string().min(1, "Completion date is required")
+    // Contractor
+    contractor: z.string().max(200, "Contractor name cannot exceed 200 characters").optional(),
+
+    // Assigned Personnel
+    projectEngineer: z.string().optional(),
+    projectInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
+    materialInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
+    electricalInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
+
+    // Project Timeliness
+    ntpReceivedDate: z.string().min(1, "NTP received date is required"),
+    officialDateStarted: z.string().min(1, "Official start date is required"),
+    originalDateCompletion: z.string().min(1, "Original completion date is required"),
+    revisedDate1: z.string().optional(),
+    revisedDate2: z.string().optional(),
+    actualDateCompleted: z.string().optional(),
+
+    // Project Accomplishment (only actualPercent stored; others computed)
+    actualPercent: z.number().min(0, "Cannot be less than 0").max(100, "Cannot exceed 100").optional(),
+
+    // Project Orders (flat fields)
+    resumeOrderNumber: z.string().max(100).optional(),
+    resumeOrderDate: z.string().optional(),
+    timeExtensionOnOrder: z.string().max(100).optional(),
+    validationOrderNumber: z.string().max(100).optional(),
+    validationOrderDate: z.string().optional(),
+    suspensionOrderNumber: z.string().max(100).optional(),
+    suspensionOrderDate: z.string().optional(),
+
+    // Fund Utilization
+    incurredAmount: z.number().min(0, "Incurred amount cannot be negative").optional(),
+
+    // Remarks & Action
+    remarks: z.string().max(1000, "Remarks cannot exceed 1000 characters").optional(),
+    actionTaken: z.string().max(1000, "Action taken cannot exceed 1000 characters").optional(),
+
 }).refine((data) => {
-    if (data.startDate && data.completionDate) {
-        return new Date(data.completionDate) > new Date(data.startDate);
+    if (data.officialDateStarted && data.originalDateCompletion) {
+        return new Date(data.originalDateCompletion) > new Date(data.officialDateStarted);
     }
     return true;
 }, {
-    message: "Completion date must be after the start date",
-    path: ["completionDate"]
+    message: "Completion date must be after the official start date",
+    path: ["originalDateCompletion"]
 });
 
 export default {

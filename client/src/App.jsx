@@ -21,13 +21,13 @@ const AccountManagement = lazy(() => import('./pages/admin/AccountManagement'));
 const MisSettings = lazy(() => import('./pages/admin/Settings'));
 const MisAuditTrails = lazy(() => import('./pages/admin/AuditTrails'));
 
-const DepwDashboard = lazy(() => import('./pages/depw/DepwDashboard'));
-const StaffManagement = lazy(() => import('./pages/depw/StaffManagement'));
-const ProjectRegistry = lazy(() => import('./pages/depw/ProjectRegistry'));
-const AuditTrails = lazy(() => import('./pages/depw/AuditTrails'));
-const Notifications = lazy(() => import('./pages/depw/Notifications'));
-const CreateProject = lazy(() => import('./pages/depw/CreateProject'));
-const Settings = lazy(() => import('./pages/depw/Settings'));
+const HcsdDashboard = lazy(() => import('./pages/hcsd/HcsdDashboard'));
+const StaffManagement = lazy(() => import('./pages/hcsd/StaffManagement'));
+const ProjectRegistry = lazy(() => import('./pages/hcsd/ProjectRegistry'));
+const AuditTrails = lazy(() => import('./pages/hcsd/AuditTrails'));
+const Notifications = lazy(() => import('./pages/hcsd/Notifications'));
+const CreateProject = lazy(() => import('./pages/hcsd/CreateProject'));
+const Settings = lazy(() => import('./pages/hcsd/Settings'));
 
 const MayorDashboard = lazy(() => import('./pages/mayor/MayorDashboard'));
 
@@ -57,13 +57,13 @@ function App() {
 
                 <Route path="/mayor/dashboard" element={<RequireAuth allowedRoles={[ROLES.MAYOR]}><MayorDashboard /></RequireAuth>} />
 
-                <Route path="/depw/dashboard" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><DepwDashboard /></RequireAuth>} />
-                <Route path="/depw/staff" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><StaffManagement /></RequireAuth>} />
-                <Route path="/depw/projects" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><ProjectRegistry /></RequireAuth>} />
-                <Route path="/depw/audits" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><AuditTrails /></RequireAuth>} />
-                <Route path="/depw/notifications" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><Notifications /></RequireAuth>} />
-                <Route path="/depw/create-project" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><CreateProject /></RequireAuth>} />
-                <Route path="/depw/settings" element={<RequireAuth allowedRoles={[ROLES.DEPW]}><Settings /></RequireAuth>} />
+                <Route path="/hcsd/dashboard" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><HcsdDashboard /></RequireAuth>} />
+                <Route path="/hcsd/staff" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><StaffManagement /></RequireAuth>} />
+                <Route path="/hcsd/projects" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><ProjectRegistry /></RequireAuth>} />
+                <Route path="/hcsd/audits" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><AuditTrails /></RequireAuth>} />
+                <Route path="/hcsd/notifications" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><Notifications /></RequireAuth>} />
+                <Route path="/hcsd/create-project" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><CreateProject /></RequireAuth>} />
+                <Route path="/hcsd/settings" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><Settings /></RequireAuth>} />
 
                 <Route path="/cpdo/dashboard" element={<RequireAuth allowedRoles={[ROLES.CPDO]}><CpdoDashboard /></RequireAuth>} />
 

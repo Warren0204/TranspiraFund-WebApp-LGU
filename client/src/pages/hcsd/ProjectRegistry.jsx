@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Plus, FolderKanban, Search, Filter, MapPin, Clock, TrendingUp
 } from 'lucide-react';
-import DepwSidebar from '../../components/layout/DepwSidebar';
+import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -23,13 +23,14 @@ const useProjectRegistry = () => {
                 const data = doc.data();
                 return {
                     id: doc.id,
-                    name: data.projectTitle,
-                    location: data.location,
+                    name: data.projectName,
+                    barangay: data.barangay,
                     status: data.status,
                     statusColor: getStatusMeta(data.status),
-                    budget: data.budget,
-                    progress: data.progress || 0,
-                    meta: data.targetDate ? `Due ${new Date(data.targetDate).toLocaleDateString()}` : null
+                    contractAmount: data.contractAmount,
+                    progress: data.actualPercent || data.progress || 0,
+                    contractor: data.contractor || null,
+                    originalDateCompletion: data.originalDateCompletion || null,
                 };
             });
             setProjects(fetchedProjects);
@@ -61,7 +62,8 @@ const useProjectRegistry = () => {
         return projects.filter(project => {
             const matchesSearch =
                 project.name?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-                project.location?.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
+                project.barangay?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+                project.contractor?.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
             const matchesStatus = statusFilter === 'All Status' || project.status === statusFilter;
             return matchesSearch && matchesStatus;
         });
@@ -88,11 +90,11 @@ const ProjectRegistry = () => {
         formatCurrencyShort, navigate
     } = useProjectRegistry();
 
-    const STATUS_OPTIONS = ['All Status', 'Draft', 'For Mayor', 'Ongoing', 'Returned', 'Completed'];
+    const STATUS_OPTIONS = ['All Status', 'Draft', 'Ongoing', 'Returned', 'Completed'];
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100">
-            <DepwSidebar />
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
+            <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
@@ -111,7 +113,7 @@ const ProjectRegistry = () => {
                         </p>
                     </div>
                     <div className="shrink-0">
-                        <button onClick={() => navigate('/depw/create-project')}
+                        <button onClick={() => navigate('/hcsd/create-project')}
                             className="w-full md:w-auto bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-bold py-3.5 px-7 rounded-xl shadow-lg shadow-teal-500/25 hover:shadow-teal-500/35 transition-all flex items-center justify-center gap-2 text-sm">
                             <Plus size={18} strokeWidth={2.5} />
                             Initialize New Project
@@ -119,7 +121,7 @@ const ProjectRegistry = () => {
                     </div>
                 </div>
 
-                <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden min-h-[600px] flex flex-col"
+                <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
                     <div className="p-5 sm:p-6 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white/40 dark:bg-slate-800/20">
@@ -165,11 +167,11 @@ const ProjectRegistry = () => {
                     <div className="hidden md:grid grid-cols-12 px-7 py-3 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/40 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.1em]">
                         <div className="col-span-7 lg:col-span-5">Project Identity</div>
                         <div className="col-span-5 lg:col-span-3">Status</div>
-                        <div className="hidden lg:block lg:col-span-2">Budget</div>
+                        <div className="hidden lg:block lg:col-span-2">Contract Amt</div>
                         <div className="hidden lg:block lg:col-span-2 text-right">Progress</div>
                     </div>
 
-                    <div className="flex-1 overflow-auto p-4 space-y-2">
+                    <div className="p-4 space-y-2">
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-24 text-slate-400">
                                 <LoaderSpinner />
@@ -193,7 +195,7 @@ const ProjectRegistry = () => {
                                         <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 line-clamp-1">{project.name}</h4>
                                         <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-xs">
                                             <MapPin size={11} className="shrink-0 text-teal-400" />
-                                            <span className="truncate">Barangay {project.location}</span>
+                                            <span className="truncate">Barangay {project.barangay}</span>
                                         </div>
                                     </div>
 
@@ -201,16 +203,16 @@ const ProjectRegistry = () => {
                                         <span className={`inline-flex px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border ${project.statusColor.pill}`}>
                                             {project.status}
                                         </span>
-                                        {project.meta && (
+                                        {project.originalDateCompletion && (
                                             <div className="hidden sm:flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium mt-1.5">
                                                 <Clock size={10} />
-                                                {project.meta}
+                                                Due {new Date(project.originalDateCompletion).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                                             </div>
                                         )}
                                     </div>
 
                                     <div className="hidden lg:block lg:col-span-2 font-bold text-slate-700 dark:text-slate-200 text-sm">
-                                        {formatCurrencyShort(project.budget)}
+                                        {formatCurrencyShort(project.contractAmount)}
                                     </div>
 
                                     <div className="hidden lg:block lg:col-span-2">

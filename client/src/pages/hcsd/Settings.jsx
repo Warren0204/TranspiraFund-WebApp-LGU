@@ -3,12 +3,12 @@ import { Sun, Moon, Settings2, KeyRound, Eye, EyeOff, CheckCircle2, AlertCircle,
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import DepwSidebar from '../../components/layout/DepwSidebar';
+import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import app from '../../config/firebase';
 
-const DEPW_PRIVILEGES = [
+const HCSD_PRIVILEGES = [
     'Project Registry',
     'Staff Management',
     'Audit Trails',
@@ -44,8 +44,16 @@ const Settings = () => {
     const { isDark, toggle } = useTheme();
 
     const userName    = currentUser ? `Engr. ${currentUser.firstName} ${currentUser.lastName}` : 'Loading...';
-    const userRole    = currentUser?.role || 'DEPW';
-    const userDept    = currentUser?.department || 'Department of Engineering and Public Works';
+    const userRole    = currentUser?.role || 'HCSD';
+    const userDept    = currentUser?.department || 'Construction Services Division, DEPW';
+    const ROLE_FULL_LABELS = {
+        HCSD:     'Head of Construction Services Division',
+        MIS:      'Management Information Systems',
+        MAYOR:    'Mayor',
+        CPDO:     'City Planning and Development Office',
+        PROJ_ENG: 'Project Engineer',
+    };
+    const userRoleFull = ROLE_FULL_LABELS[userRole] || userRole;
     const userEmail   = currentUser?.email || '—';
     const userInitial = currentUser?.firstName?.charAt(0).toUpperCase() || 'D';
 
@@ -200,8 +208,8 @@ const Settings = () => {
     };
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
-            <DepwSidebar />
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+            <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
@@ -230,7 +238,7 @@ const Settings = () => {
                         {/* Banner */}
                         <div className="relative h-24 bg-gradient-to-r from-teal-600 via-teal-500 to-emerald-400 overflow-hidden">
                             <div className="absolute inset-0 opacity-[0.07]" aria-hidden="true">
-                                <svg className="w-full h-full"><defs><pattern id="depw-grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M 32 0 L 0 0 0 32" fill="none" stroke="white" strokeWidth="0.6"/></pattern></defs><rect width="100%" height="100%" fill="url(#depw-grid)"/></svg>
+                                <svg className="w-full h-full"><defs><pattern id="hcsd-grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M 32 0 L 0 0 0 32" fill="none" stroke="white" strokeWidth="0.6"/></pattern></defs><rect width="100%" height="100%" fill="url(#hcsd-grid)"/></svg>
                             </div>
                             <div className="absolute -top-6 -right-6 w-36 h-36 bg-white/10 rounded-full blur-2xl" />
                             <div className="absolute -bottom-4 left-1/3 w-24 h-24 bg-emerald-300/20 rounded-full blur-xl" />
@@ -315,20 +323,20 @@ const Settings = () => {
                             {/* Name + role */}
                             <div className="mt-3 text-center">
                                 <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">{userName}</h2>
-                                <span className="inline-block mt-1.5 px-3 py-0.5 rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm shadow-teal-500/30">
-                                    {userRole}
+                                <span className="inline-block mt-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-teal-600 to-emerald-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-sm shadow-teal-500/30">
+                                    {userRoleFull}
                                 </span>
                             </div>
 
                             {/* Email + department chips */}
-                            <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
-                                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60">
+                            <div className="mt-4 flex flex-col items-center gap-2 w-full max-w-sm">
+                                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 w-full justify-center">
                                     <Mail size={12} className="text-teal-600 dark:text-teal-400 shrink-0" />
-                                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 max-w-[220px] truncate">{userEmail}</span>
+                                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 truncate">{userEmail}</span>
                                 </div>
-                                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60">
-                                    <Building2 size={12} className="text-teal-600 dark:text-teal-400 shrink-0" />
-                                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 max-w-[220px] truncate">{userDept}</span>
+                                <div className="flex items-start gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 w-full justify-center">
+                                    <Building2 size={12} className="text-teal-600 dark:text-teal-400 shrink-0 mt-0.5" />
+                                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 text-center leading-relaxed">{userDept}</span>
                                 </div>
                             </div>
 
@@ -395,7 +403,7 @@ const Settings = () => {
                                 <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Access Level</span>
                             </div>
                             <div className="p-5 grid grid-cols-2 gap-2.5">
-                                {DEPW_PRIVILEGES.map((p) => (
+                                {HCSD_PRIVILEGES.map((p) => (
                                     <div
                                         key={p}
                                         className="flex items-center justify-center px-3 py-2.5 rounded-xl bg-teal-50 dark:bg-teal-900/25 border border-teal-200 dark:border-teal-500/25 text-xs font-bold text-teal-700 dark:text-teal-300 text-center"

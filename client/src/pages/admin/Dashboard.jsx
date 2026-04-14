@@ -19,7 +19,7 @@ const useDashboardData = () => {
             const users    = snapshot.docs.map(doc => doc.data());
             const find     = (role) => users.find(u => u.role === role);
             const mayorUser = find('MAYOR');
-            const depwUser  = find('DEPW');
+            const hcsdUser  = find('HCSD');
             const cpdoUser  = find('CPDO');
             const engCount  = users.filter(u => u.role === 'PROJ_ENG').length;
 
@@ -31,9 +31,9 @@ const useDashboardData = () => {
                     extra: null,
                 },
                 {
-                    id: 'depw', title: 'Engineering Department', role: 'DEPW',
-                    status: depwUser ? 'Active' : 'Required', isMissing: !depwUser,
-                    person: { label: 'Department Head', name: depwUser ? `${depwUser.firstName} ${depwUser.lastName}` : null },
+                    id: 'hcsd', title: 'Construction Services Division', role: 'HCSD',
+                    status: hcsdUser ? 'Active' : 'Required', isMissing: !hcsdUser,
+                    person: { label: 'Division Head', name: hcsdUser ? `${hcsdUser.firstName} ${hcsdUser.lastName}` : null },
                     extra: { label: 'Field Engineers', value: `${engCount}` },
                 },
                 {
@@ -64,7 +64,7 @@ const getGreeting = () => {
     return 'Good evening';
 };
 
-const DEPT_ICONS = { mayor: FileText, depw: HardHat, cpdo: Map };
+const DEPT_ICONS = { mayor: FileText, hcsd: HardHat, cpdo: Map };
 
 const DepartmentCard = memo(({ data, index }) => {
     const Icon    = DEPT_ICONS[data.id] || FileText;
@@ -212,7 +212,7 @@ const Dashboard = () => {
     });
 
     return (
-        <div className="min-h-screen depw-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+        <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <AdminSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
