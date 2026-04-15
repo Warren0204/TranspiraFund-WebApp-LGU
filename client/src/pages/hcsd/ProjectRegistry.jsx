@@ -25,7 +25,7 @@ const useProjectRegistry = () => {
                     id: doc.id,
                     name: data.projectName,
                     barangay: data.barangay,
-                    status: data.status,
+                    status: normalizeStatus(data.status),
                     statusColor: getStatusMeta(data.status),
                     contractAmount: data.contractAmount,
                     progress: data.actualPercent || data.progress || 0,
@@ -46,14 +46,23 @@ const useProjectRegistry = () => {
         return `₱${amount.toLocaleString('en-PH')}`;
     };
 
+    const normalizeStatus = (status) => {
+        const s = (status || '').toLowerCase();
+        if (s === 'completed') return 'Completed';
+        if (s === 'returned') return 'Returned';
+        if (s === 'ongoing') return 'Ongoing';
+        if (s === 'delayed') return 'Delayed';
+        if (s === 'for mayor' || s === 'draft') return 'Ongoing'; // legacy → Ongoing
+        return 'Delayed';
+    };
+
     const getStatusMeta = (status) => {
-        switch (status?.toLowerCase()) {
+        switch (normalizeStatus(status).toLowerCase()) {
             case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-teal-400' };
-            case 'ongoing': return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30', bar: 'from-teal-500 to-emerald-400' };
-            case 'for mayor': return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-400' };
-            case 'returned': return { pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30', bar: 'from-rose-500 to-red-400' };
-            case 'draft': return { pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600', bar: 'from-slate-400 to-slate-300' };
-            default: return { pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600', bar: 'from-slate-400 to-slate-300' };
+            case 'ongoing':   return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30', bar: 'from-teal-500 to-emerald-400' };
+            case 'delayed':   return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
+            case 'returned':  return { pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30', bar: 'from-rose-500 to-red-400' };
+            default:          return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
         }
     };
 
@@ -90,7 +99,7 @@ const ProjectRegistry = () => {
         formatCurrencyShort, navigate
     } = useProjectRegistry();
 
-    const STATUS_OPTIONS = ['All Status', 'Draft', 'Ongoing', 'Returned', 'Completed'];
+    const STATUS_OPTIONS = ['All Status', 'Delayed', 'Ongoing', 'Returned', 'Completed'];
 
     return (
         <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
@@ -102,8 +111,8 @@ const ProjectRegistry = () => {
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
                         <div className="inline-flex items-center gap-2 bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 dark:border-teal-400/30 rounded-full px-3 py-1 mb-3">
-                            <div className="w-1.5 h-1.5 rounded-full bg-teal-500 dark:bg-teal-400" />
-                            <span className="text-xs font-bold text-teal-700 dark:text-teal-300 uppercase tracking-widest">Infrastructure Mandates</span>
+                            <div className="w-1.5 h-1.5 rounded-full bg-teal-500 dark:bg-teal-400 shrink-0" />
+                            <span className="text-xs font-bold text-teal-700 dark:text-teal-300 uppercase tracking-widest whitespace-nowrap">Infrastructure Mandates</span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                             Project Registry
@@ -124,29 +133,31 @@ const ProjectRegistry = () => {
                 <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
-                    <div className="p-5 sm:p-6 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white/40 dark:bg-slate-800/20">
-                        <div className="flex items-center gap-2.5 font-bold text-slate-700 dark:text-slate-200 shrink-0">
-                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center">
+                    <div className="p-4 sm:p-5 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col gap-3 bg-white/40 dark:bg-slate-800/20">
+                        {/* Row 1: title */}
+                        <div className="flex items-center gap-2.5 font-bold text-slate-700 dark:text-slate-200">
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
                                 <FolderKanban size={15} className="text-white" />
                             </div>
                             Active Projects
                         </div>
 
-                        <div className="flex gap-3 w-full sm:w-auto">
+                        {/* Row 2: filter + search — always full-width row */}
+                        <div className="flex gap-2 w-full">
                             <div className="relative shrink-0">
                                 <button onClick={() => setIsFilterOpen(!isFilterOpen)}
-                                    className="flex items-center gap-2 px-4 py-3 bg-white/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition-all">
+                                    className="flex items-center gap-2 px-3 py-2.5 bg-white/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 transition-all whitespace-nowrap">
                                     <Filter size={15} />
-                                    <span className="hidden sm:inline">{statusFilter}</span>
+                                    <span>{statusFilter}</span>
                                 </button>
                                 {isFilterOpen && (
                                     <>
                                         <div className="fixed inset-0 z-10" onClick={() => setIsFilterOpen(false)} />
-                                        <div className="absolute top-12 left-0 z-20 w-52 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl shadow-2xl py-2 animate-in fade-in zoom-in-95 duration-200">
+                                        <div className="absolute top-11 left-0 z-20 w-48 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl shadow-2xl py-2 animate-in fade-in zoom-in-95 duration-200">
                                             {STATUS_OPTIONS.map(status => (
                                                 <button key={status}
                                                     onClick={() => { setStatusFilter(status); setIsFilterOpen(false); }}
-                                                    className={`w-full text-left px-5 py-2.5 text-sm font-semibold transition-colors ${statusFilter === status ? 'text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}>
+                                                    className={`w-full text-left px-4 py-2.5 text-sm font-semibold transition-colors ${statusFilter === status ? 'text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}>
                                                     {status}
                                                 </button>
                                             ))}
@@ -155,11 +166,11 @@ const ProjectRegistry = () => {
                                 )}
                             </div>
 
-                            <div className="relative group flex-1 sm:w-72 sm:flex-none">
-                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-teal-500 dark:group-focus-within:text-teal-400 transition-colors" size={17} />
+                            <div className="relative group flex-1 min-w-0">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-teal-500 dark:group-focus-within:text-teal-400 transition-colors" size={15} />
                                 <input type="text" placeholder="Search projects or location..." value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
-                                    className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-teal-500 dark:focus:ring-teal-400 outline-none transition-all" />
+                                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-teal-500 dark:focus:ring-teal-400 outline-none transition-all" />
                             </div>
                         </div>
                     </div>

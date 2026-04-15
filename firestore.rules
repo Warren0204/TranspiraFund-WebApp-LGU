@@ -96,6 +96,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /passwordResetOtps/{docId} {
+      allow read, write: if false;
+    }
+
+    match /passwordResetCooldowns/{docId} {
+      allow read, write: if false;
+    }
+
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 5 — NOTIFICATIONS

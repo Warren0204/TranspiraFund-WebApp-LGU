@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, query, orderBy, limit, getDocs, startAfter, doc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, startAfter, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import {
     Shield, Clock, Activity, LogIn,
@@ -156,6 +156,7 @@ export default function AuditTrails() {
     const [loadingMore, setLoadingMore] = useState(false);
     const [filter, setFilter] = useState('ALL');
     const [actorProfiles, setActorProfiles] = useState({});
+    const [refreshKey, setRefreshKey] = useState(0);
     const loadedUids = useRef(new Set());
 
     // ── Batch-load profile photos for any new actor UIDs ─────────────────────
@@ -183,36 +184,51 @@ export default function AuditTrails() {
         setActorProfiles(prev => ({ ...prev, ...updates }));
     }, []);
 
-    // ── Fetch audit log entries ───────────────────────────────────────────────
+    // ── Real-time listener for the first page — re-runs on manual refresh ────
+    useEffect(() => {
+        setLoading(true);
+        setLogs([]);
+        loadedUids.current = new Set();
+        const q = query(
+            collection(db, 'auditTrails', 'hcsd', 'entries'),
+            orderBy('timestamp', 'desc'),
+            limit(PAGE_SIZE)
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setLogs(entries);
+            setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
+            setHasMore(snap.docs.length === PAGE_SIZE);
+            setLoading(false);
+        }, (err) => {
+            console.error('Failed to sync HCSD audit trails:', err);
+            setLoading(false);
+        });
+        return () => unsub();
+    }, [refreshKey]); // re-subscribes when refresh button is clicked
+
+    // ── Load more (older entries, one-time fetch) ─────────────────────────────
     const fetchLogs = useCallback(async (isLoadMore = false) => {
-        isLoadMore ? setLoadingMore(true) : setLoading(true);
+        if (!isLoadMore || !lastDoc) return;
+        setLoadingMore(true);
         try {
-            let q = query(
+            const q = query(
                 collection(db, 'auditTrails', 'hcsd', 'entries'),
                 orderBy('timestamp', 'desc'),
+                startAfter(lastDoc),
                 limit(PAGE_SIZE)
             );
-            if (isLoadMore && lastDoc) {
-                q = query(
-                    collection(db, 'auditTrails', 'hcsd', 'entries'),
-                    orderBy('timestamp', 'desc'),
-                    startAfter(lastDoc),
-                    limit(PAGE_SIZE)
-                );
-            }
             const snap = await getDocs(q);
             const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            setLogs(prev => isLoadMore ? [...prev, ...entries] : entries);
+            setLogs(prev => [...prev, ...entries]);
             setLastDoc(snap.docs[snap.docs.length - 1] ?? null);
             setHasMore(snap.docs.length === PAGE_SIZE);
         } catch (err) {
-            console.error('Failed to fetch HCSD audit trails:', err);
+            console.error('Failed to load more audit trails:', err);
         } finally {
-            isLoadMore ? setLoadingMore(false) : setLoading(false);
+            setLoadingMore(false);
         }
-    }, [lastDoc]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => { fetchLogs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [lastDoc]);
 
     // Load actor profiles whenever logs change
     useEffect(() => {
@@ -267,7 +283,7 @@ export default function AuditTrails() {
                     </div>
 
                     <button
-                        onClick={() => { setLastDoc(null); fetchLogs(); }}
+                        onClick={() => setRefreshKey(k => k + 1)}
                         disabled={loading}
                         className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-500 dark:text-slate-400 bg-white/70 dark:bg-slate-900/50 backdrop-blur border border-white/80 dark:border-white/5 rounded-xl shadow-sm hover:text-teal-600 dark:hover:text-teal-400 transition-colors disabled:opacity-50 shrink-0"
                     >

@@ -106,9 +106,11 @@ Functions use Firebase Secrets (not env vars):
 | `auditTrails/hcsd/entries/{logId}` | HCSD-scope audit trail | HCSD read-only; Cloud Functions write |
 | `auditTrails/mobile/entries/{logId}` | Mobile activity log | PROJ_ENG creates; MIS/HCSD read |
 | `notifications/{notifId}` | App notifications | All roles read/update |
-| `stats/public` | Aggregated public counters | Public read; trigger-maintained |
+| `stats/public` | Aggregated public counters (`totalProjects`, `totalBudget`, `totalEngineers`, `done`, `delayed`, `progress`) | Public read; trigger-maintained |
 | `otpCodes/{uid}` | OTP storage | Cloud Functions only |
-| `passwordResets/{emailHash}` | Password reset rate-limiting | Cloud Functions only |
+| `passwordResets/{emailHash}` | Password reset rate-limiting (legacy) | Cloud Functions only |
+| `passwordResetOtps/{docId}` | Password reset OTP storage | Cloud Functions only; client-blocked in rules |
+| `passwordResetCooldowns/{docId}` | Password reset rate-limiting | Cloud Functions only; client-blocked in rules |
 
 ## Project Schema (Firestore `projects` document)
 All fields stored on the project document:
@@ -121,10 +123,10 @@ All fields stored on the project document:
 - **Project Orders**: `resumeOrderNumber`, `resumeOrderDate`, `timeExtensionOnOrder`, `validationOrderNumber`, `validationOrderDate`, `suspensionOrderNumber`, `suspensionOrderDate`
 - **Fund Utilization**: `incurredAmount`
 - **Notes**: `remarks`, `actionTaken`
-- **System**: `status` ("Draft" on creation), `progress` (0), `createdBy`, `createdAt`
+- **System**: `status` ("Delayed" if no engineer assigned, "Ongoing" if engineer assigned), `progress` (0), `createdBy`, `createdAt`
 
 ## Project Status Workflow
-Valid project statuses (in order): `Draft` → `Ongoing` → `Completed`. `Returned` is used when a project is sent back for revision. The former `"For Mayor"` approval status has been retired from the workflow — it no longer appears in filters, the dashboard donut, or new project creation.
+Valid project statuses: `Delayed` → `Ongoing` → `Completed`. `Returned` is used when a project is sent back for revision. `Delayed` means created but no engineer assigned yet; `Ongoing` means an engineer is assigned and work is active. The former `"Draft"` and `"For Mayor"` statuses are retired — both normalize to `Ongoing` for display. New projects auto-set to `"Delayed"` (no engineer) or `"Ongoing"` (engineer assigned) on creation.
 
 ## Key Conventions
 - Cloud Functions use **v2 API** (`firebase-functions/v2`)

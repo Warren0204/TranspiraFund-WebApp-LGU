@@ -432,7 +432,7 @@ exports.createProject = onCall(async (request) => {
     try {
         const projectRef = await admin.firestore().collection("projects").add({
             ...projectFields,
-            status: "Draft",
+            status: projectFields.projectEngineer ? "Ongoing" : "Delayed",
             progress: 0,
             createdBy: auth.uid,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -677,13 +677,27 @@ exports.recalculateStats = onCall(async (request) => {
         const rolesPresent = new Set(users.map(u => u.role));
         const departmentCount = DEPT_ROLES.filter(r => rolesPresent.has(r)).length;
         const projectCount = projects.length;
-        const totalBudget = projects.reduce((acc, p) => acc + (Number(p.budget) || 0), 0);
+        const totalBudget = projects.reduce((acc, p) => acc + (Number(p.contractAmount) || 0), 0);
+
+        const now = new Date();
+        const done = projects.filter(p => p.status === "Completed").length;
+        const delayed = projects.filter(p => p.status === "Delayed").length;
+        const ongoing = projects.filter(p => p.status === "Ongoing").length;
+        const delay = projects.filter(p => {
+            if (p.status === "Completed") return false;
+            const completionDate = p.originalDateCompletion || p.revisedDate2 || p.revisedDate1;
+            return completionDate ? new Date(completionDate) < now : false;
+        }).length;
 
         await admin.firestore().doc("stats/public").set({
             engineerCount,
             departmentCount,
             projectCount,
             totalBudget,
+            done,
+            delayed,
+            progress: ongoing,
+            delay,
             lastUpdated: new Date().toISOString(),
         });
 
@@ -727,10 +741,20 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
         const projects = projectsSnapshot.docs.map(doc => doc.data());
 
         const projectCount = projects.length;
-        const totalBudget = projects.reduce((acc, p) => acc + (Number(p.budget) || 0), 0);
+        const totalBudget = projects.reduce((acc, p) => acc + (Number(p.contractAmount) || 0), 0);
+
+        const now = new Date();
+        const done = projects.filter(p => p.status === "Completed").length;
+        const delayed = projects.filter(p => p.status === "Delayed").length;
+        const ongoing = projects.filter(p => p.status === "Ongoing").length;
+        const delay = projects.filter(p => {
+            if (p.status === "Completed") return false;
+            const completionDate = p.originalDateCompletion || p.revisedDate2 || p.revisedDate1;
+            return completionDate ? new Date(completionDate) < now : false;
+        }).length;
 
         await admin.firestore().doc("stats/public").set(
-            { projectCount, totalBudget, lastUpdated: new Date().toISOString() },
+            { projectCount, totalBudget, done, delayed, progress: ongoing, delay, lastUpdated: new Date().toISOString() },
             { merge: true }
         );
     } catch (error) {
