@@ -81,14 +81,36 @@ const FILTERS = [
 const getSubject = (log) => {
     const d = log.details || {};
     switch (log.action) {
-        case 'USER_LOGIN': return d.name || log.actorEmail || 'HCSD User';
-        case 'PHOTO_UPDATED': return d.actorName || log.actorEmail || 'HCSD User';
-        case 'PROJECT_CREATED': return d.projectName || log.targetId || 'Untitled Project';
-        case 'ACCOUNT_CREATED': return d.email || log.targetId || 'Unknown Engineer';
-        case 'ACCOUNT_DELETED': return d.deletedEmail || log.targetId || 'Unknown Engineer';
+        case 'USER_LOGIN':     return d.name || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
+        case 'PHOTO_UPDATED':  return d.actorName || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
+        case 'PROJECT_CREATED':return d.projectName || log.targetId || 'Untitled Project';
+        case 'ACCOUNT_CREATED':return d.email || d.newUserEmail || log.targetId || 'Unknown Engineer';
+        case 'ACCOUNT_DELETED':return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
         case 'PHOTO_UPLOADED': return d.projectName || log.targetId || 'Project Photo';
         case 'PROJECT_UPDATE': return d.projectName || log.targetId || 'Project';
-        default: return log.targetId || '—';
+        default:               return log.targetId || log.action?.replace(/_/g, ' ') || '—';
+    }
+};
+
+// ── Secondary descriptor line per event type ─────────────────────────────────
+const getSubjectDetail = (log) => {
+    const d = log.details || {};
+    switch (log.action) {
+        case 'USER_LOGIN':      return 'Authentication via OTP';
+        case 'PHOTO_UPDATED':   return 'Profile photo changed';
+        case 'PROJECT_CREATED': {
+            const amt = d.contractAmount;
+            if (amt) return `Contract: ₱${Number(amt).toLocaleString('en-PH')}`;
+            return d.barangay ? `Barangay ${d.barangay}` : 'New project initialized';
+        }
+        case 'ACCOUNT_CREATED': return `${d.roleType || d.role || 'PROJ_ENG'} · ${d.department || 'CSDD, DEPW'}`;
+        case 'ACCOUNT_DELETED': return 'Account and access permanently removed';
+        case 'PHOTO_UPLOADED':  return 'Progress photo submitted via mobile';
+        case 'PROJECT_UPDATE': {
+            const pct = d.actualPercent ?? d.progress;
+            return pct != null ? `Progress updated to ${pct}%` : 'Project details updated';
+        }
+        default: return null;
     }
 };
 
@@ -150,6 +172,7 @@ const SpinSVG = ({ size = 18 }) => (
 
 export default function AuditTrails() {
     const [logs, setLogs] = useState([]);
+    const [mobileLogs, setMobileLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [lastDoc, setLastDoc] = useState(null);
     const [hasMore, setHasMore] = useState(false);
@@ -184,7 +207,7 @@ export default function AuditTrails() {
         setActorProfiles(prev => ({ ...prev, ...updates }));
     }, []);
 
-    // ── Real-time listener for the first page — re-runs on manual refresh ────
+    // ── Real-time listener: HCSD entries (project/account/auth events) ────────
     useEffect(() => {
         setLoading(true);
         setLogs([]);
@@ -205,7 +228,26 @@ export default function AuditTrails() {
             setLoading(false);
         });
         return () => unsub();
-    }, [refreshKey]); // re-subscribes when refresh button is clicked
+    }, [refreshKey]);
+
+    // ── Real-time listener: mobile entries (PHOTO_UPLOADED, PROJECT_UPDATE) ──
+    // These are written by field engineers via the mobile app to a separate
+    // subcollection. HCSD has read access per Firestore rules.
+    useEffect(() => {
+        setMobileLogs([]);
+        const q = query(
+            collection(db, 'auditTrails', 'mobile', 'entries'),
+            orderBy('timestamp', 'desc'),
+            limit(PAGE_SIZE)
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const entries = snap.docs.map(d => ({ id: `mobile_${d.id}`, ...d.data() }));
+            setMobileLogs(entries);
+        }, () => {
+            // Mobile collection may not exist yet — silently ignore
+        });
+        return () => unsub();
+    }, [refreshKey]);
 
     // ── Load more (older entries, one-time fetch) ─────────────────────────────
     const fetchLogs = useCallback(async (isLoadMore = false) => {
@@ -230,16 +272,24 @@ export default function AuditTrails() {
         }
     }, [lastDoc]);
 
-    // Load actor profiles whenever logs change
+    // Load actor profiles whenever either log set changes
     useEffect(() => {
-        if (logs.length > 0) loadActorProfiles(logs);
-    }, [logs]); // eslint-disable-line react-hooks/exhaustive-deps
+        const combined = [...logs, ...mobileLogs];
+        if (combined.length > 0) loadActorProfiles(combined);
+    }, [logs, mobileLogs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Merge HCSD + mobile logs, sorted newest-first
+    const allLogs = [...logs, ...mobileLogs].sort((a, b) => {
+        const ta = a.timestamp?.toMillis?.() ?? 0;
+        const tb = b.timestamp?.toMillis?.() ?? 0;
+        return tb - ta;
+    });
 
     // Apply filter
     const activeFilter = FILTERS.find(f => f.key === filter);
     const visible = activeFilter?.actions
-        ? logs.filter(l => activeFilter.actions.includes(l.action))
-        : logs;
+        ? allLogs.filter(l => activeFilter.actions.includes(l.action))
+        : allLogs;
 
     return (
         <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
@@ -313,6 +363,7 @@ export default function AuditTrails() {
                         const meta = EVENT_META[log.action] ?? DEFAULT_META;
                         const { Icon } = meta;
                         const subject = getSubject(log);
+                        const detail = getSubjectDetail(log);
                         const actor = log.actorEmail || '—';
                         const initials = emailInitials(log.actorEmail);
                         const { date, time } = fmtDate(log.timestamp);
@@ -330,7 +381,8 @@ export default function AuditTrails() {
                                             {meta.label}
                                         </span>
                                         <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors">{subject}</p>
-                                        <div className="flex items-center gap-1.5 mt-1">
+                                        {detail && <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium truncate mt-0.5">{detail}</p>}
+                                        <div className="flex items-center gap-1.5 mt-1.5">
                                             <ActorAvatar photoURL={photoURL} initials={initials} sizePx={16} />
                                             <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{actor}</span>
                                         </div>
@@ -387,6 +439,7 @@ export default function AuditTrails() {
                             const meta = EVENT_META[log.action] ?? DEFAULT_META;
                             const { Icon } = meta;
                             const subject = getSubject(log);
+                            const detail = getSubjectDetail(log);
                             const actor = log.actorEmail || '—';
                             const initials = emailInitials(log.actorEmail);
                             const { date, time } = fmtDate(log.timestamp);
@@ -406,11 +459,14 @@ export default function AuditTrails() {
                                         </span>
                                     </div>
 
-                                    {/* Col 2 — Subject */}
+                                    {/* Col 2 — Subject + descriptor */}
                                     <div className="col-span-4 pr-4 min-w-0">
                                         <p className="font-bold text-slate-700 dark:text-slate-200 text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors">
                                             {subject}
                                         </p>
+                                        {detail && (
+                                            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium truncate mt-0.5">{detail}</p>
+                                        )}
                                     </div>
 
                                     {/* Col 3 — Actor */}

@@ -198,12 +198,13 @@ const ProjectRegistry = () => {
                             </div>
                         ) : (
                             projects.map((project, i) => (
-                                <div key={project.id}
-                                    className="grid grid-cols-12 items-center px-4 sm:px-6 py-4 sm:py-5 bg-white/60 dark:bg-slate-800/30 border border-white/80 dark:border-slate-700/40 hover:bg-white/90 dark:hover:bg-slate-800/60 hover:border-teal-200 dark:hover:border-teal-500/30 hover:shadow-md rounded-2xl transition-all"
+                                <button key={project.id}
+                                    onClick={() => navigate(`/hcsd/projects/${project.id}`)}
+                                    className="grid grid-cols-12 items-center px-4 sm:px-6 py-4 sm:py-5 bg-white/60 dark:bg-slate-800/30 border border-white/80 dark:border-slate-700/40 hover:bg-white/90 dark:hover:bg-slate-800/60 hover:border-teal-200 dark:hover:border-teal-500/30 hover:shadow-md rounded-2xl transition-all text-left w-full group"
                                     style={{ animation: `slideUp 0.4s ease-out ${i * 0.06}s both` }}>
 
                                     <div className="col-span-8 md:col-span-7 lg:col-span-5 pr-3 min-w-0">
-                                        <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 line-clamp-1">{project.name}</h4>
+                                        <h4 className="font-bold text-slate-800 dark:text-slate-100 group-hover:text-teal-700 dark:group-hover:text-teal-300 text-sm mb-1 line-clamp-1 transition-colors">{project.name}</h4>
                                         <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-xs">
                                             <MapPin size={11} className="shrink-0 text-teal-400" />
                                             <span className="truncate">Barangay {project.barangay}</span>
@@ -239,7 +240,7 @@ const ProjectRegistry = () => {
                                                 style={{ width: `${project.progress}%` }} />
                                         </div>
                                     </div>
-                                </div>
+                                </button>
                             ))
                         )}
                     </div>

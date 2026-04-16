@@ -505,7 +505,7 @@ const CreateProject = () => {
                                                     className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-4 focus:ring-green-100 transition-all appearance-none cursor-pointer"
                                                 >
                                                     <option value="">Select Engineer...</option>
-                                                    {engineers.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
+                                                    {engineers.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                                                 </select>
                                             </div>
                                         )}
@@ -844,7 +844,7 @@ const CreateProject = () => {
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Personnel</p>
                                 <div className="space-y-2 text-sm">
                                     {formData.contractor && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contractor</span><span className="text-slate-800 font-semibold">{formData.contractor}</span></div>}
-                                    {formData.projectEngineer && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Proj. Engineer</span><span className="text-slate-800 font-semibold">{formData.projectEngineer}</span></div>}
+                                    {formData.projectEngineer && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Proj. Engineer</span><span className="text-slate-800 font-semibold">{engineers.find(e => e.id === formData.projectEngineer)?.name || formData.projectEngineer}</span></div>}
                                     {formData.projectInspector && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Proj. Inspector</span><span className="text-slate-800 font-semibold">{formData.projectInspector}</span></div>}
                                     {formData.materialInspector && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Material Inspector</span><span className="text-slate-800 font-semibold">{formData.materialInspector}</span></div>}
                                     {formData.electricalInspector && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Electrical Inspector</span><span className="text-slate-800 font-semibold">{formData.electricalInspector}</span></div>}

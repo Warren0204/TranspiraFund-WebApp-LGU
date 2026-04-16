@@ -1,6 +1,8 @@
 import { memo, useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-    Plus, Users, X, AlertCircle, Search, HardHat, Mail, Trash2, AlertTriangle, User
+    Plus, Users, X, AlertCircle, Search, HardHat, Mail, Trash2, AlertTriangle, User,
+    FolderKanban, MapPin, Clock, ArrowRight, Wallet, MoreVertical
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import AccountProvisioningService from '../../services/AccountProvisioningService';
@@ -13,9 +15,11 @@ import { staffProvisionSchema } from '../../config/validationSchemas';
 import { useDebounce } from '../../hooks/useDebounce';
 
 const useStaffLogic = () => {
+    const navigate = useNavigate();
     const ENGINEER_ROLE = ROLES.PROJECT_ENGINEER;
 
     const [staff, setStaff] = useState([]);
+    const [projectsByEngineer, setProjectsByEngineer] = useState({});
     const [searchTerm, setSearchTerm] = useState('');
 
     useEffect(() => {
@@ -48,15 +52,53 @@ const useStaffLogic = () => {
         return () => unsubscribe();
     }, [ENGINEER_ROLE]);
 
+    // Real-time project workload: keyed by BOTH uid AND name for backward compat
+    // (old projects stored engineer name; new projects store UID after the CreateProject fix)
+    useEffect(() => {
+        const q = query(collection(db, 'projects'), orderBy('createdAt', 'desc'));
+        const unsub = onSnapshot(q, (snap) => {
+            const map = {};
+            snap.docs.forEach(d => {
+                const data = d.data();
+                const eng = data.projectEngineer;
+                if (!eng) return;
+                if (!map[eng]) map[eng] = [];
+                map[eng].push({
+                    id: d.id,
+                    name: data.projectName || 'Untitled Project',
+                    status: data.status || 'Ongoing',
+                    barangay: data.barangay || null,
+                    contractAmount: data.contractAmount || null,
+                    originalDateCompletion: data.originalDateCompletion || null,
+                    actualPercent: data.actualPercent ?? data.progress ?? 0,
+                });
+            });
+            setProjectsByEngineer(map);
+        }, () => {});
+        return () => unsub();
+    }, []);
+
     const debouncedSearchTerm = useDebounce(searchTerm, 300);
     const filteredStaff = useMemo(() => {
-        if (!debouncedSearchTerm.trim()) return staff;
-        const lowerTerm = debouncedSearchTerm.toLowerCase();
-        return staff.filter(s =>
-            s.name.toLowerCase().includes(lowerTerm) ||
-            s.email.toLowerCase().includes(lowerTerm)
-        );
-    }, [staff, debouncedSearchTerm]);
+        const base = !debouncedSearchTerm.trim()
+            ? staff
+            : (() => {
+                const lowerTerm = debouncedSearchTerm.toLowerCase();
+                return staff.filter(s =>
+                    s.name.toLowerCase().includes(lowerTerm) ||
+                    s.email.toLowerCase().includes(lowerTerm)
+                );
+            })();
+        // Match by UID (new data) first, then by display name (legacy data)
+        return base.map(s => {
+            const byUid  = projectsByEngineer[s.id]   || [];
+            const byName = projectsByEngineer[s.name]  || [];
+            // Deduplicate in case a project somehow appears in both
+            const seen = new Set(byUid.map(p => p.id));
+            const merged = [...byUid, ...byName.filter(p => !seen.has(p.id))];
+            return { ...s, projects: merged };
+        });
+    }, [staff, debouncedSearchTerm, projectsByEngineer]);
 
     const [provisionForm, setProvisionForm] = useState({ firstName: '', lastName: '', email: '' });
     const [formErrors, setFormErrors] = useState({});
@@ -145,7 +187,7 @@ const useStaffLogic = () => {
     const handleFormChange = (e) => setProvisionForm({ ...provisionForm, [e.target.name]: e.target.value });
 
     return {
-        filteredStaff, searchTerm, setSearchTerm,
+        filteredStaff, searchTerm, setSearchTerm, navigate,
         provisionForm, handleFormChange, formErrors,
         handleDelete, openProvisionModal, closeProvisionModal, isProvisionModalOpen, handleStageProvision,
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
@@ -323,9 +365,201 @@ const RevokeModal = memo(({ isOpen, onClose, onConfirm, isProcessing, error }) =
     );
 });
 
+/* ── Shared helpers ──────────────────────────────────────────────────────── */
+const projectStatusStyle = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'completed') return { pill: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'bg-emerald-400', accent: 'bg-emerald-400' };
+    if (s === 'delayed')   return { pill: 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',   bar: 'bg-amber-400',   accent: 'bg-amber-400' };
+    if (s === 'returned')  return { pill: 'bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',         bar: 'bg-rose-400',    accent: 'bg-rose-400' };
+    return { pill: 'bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30', bar: 'bg-teal-400', accent: 'bg-teal-400' };
+};
+
+const fmtAmt = (amt) => {
+    if (!amt) return null;
+    if (amt >= 1_000_000) return `₱${(amt / 1_000_000).toFixed(2)}M`;
+    if (amt >= 1_000)     return `₱${(amt / 1_000).toFixed(0)}K`;
+    return `₱${Number(amt).toLocaleString('en-PH')}`;
+};
+
+/* ── Engineer Detail Modal ───────────────────────────────────────────────── */
+const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
+    const [showActions, setShowActions] = useState(false);
+    if (!engineer) return null;
+    return (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={onClose}>
+            <div className="relative bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-white/5 w-full sm:max-w-2xl max-h-[92vh] flex flex-col animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-300 overflow-hidden"
+                onClick={e => e.stopPropagation()}>
+
+                {/* ── X close button — lifted to modal level so overflow-hidden on header never clips it ── */}
+                <button onClick={onClose}
+                    className="absolute top-4 right-4 z-30 w-11 h-11 rounded-full bg-white/20 hover:bg-white/35 active:bg-white/50 flex items-center justify-center text-white transition-all"
+                    aria-label="Close">
+                    <X size={20} strokeWidth={2.5} />
+                </button>
+
+                {/* ── More actions button (⋯) — opens menu containing Revoke ── */}
+                <div className="absolute top-4 right-[60px] z-30">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowActions(v => !v); }}
+                        className="w-11 h-11 rounded-full bg-white/20 hover:bg-white/35 active:bg-white/50 flex items-center justify-center text-white transition-all"
+                        aria-label="More actions">
+                        <MoreVertical size={18} strokeWidth={2.5} />
+                    </button>
+                    {showActions && (
+                        <>
+                            <div className="fixed inset-0 z-10" onClick={() => setShowActions(false)} />
+                            <div className="absolute top-[52px] right-0 z-20 w-56 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                                <div className="px-4 pt-3 pb-2 border-b border-slate-100 dark:border-slate-700/60">
+                                    <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Account Actions</p>
+                                </div>
+                                <button
+                                    onClick={() => { setShowActions(false); onRevoke(engineer.id); onClose(); }}
+                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-sm font-semibold text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                                    <Trash2 size={15} className="shrink-0" />
+                                    Revoke Engineer Access
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {/* ── Header ── */}
+                <div className="relative bg-gradient-to-br from-teal-600 via-teal-500 to-emerald-500 px-7 pt-7 pb-10 shrink-0 overflow-hidden">
+                    <div className="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10 pointer-events-none" />
+                    <div className="absolute -bottom-6 left-10 w-32 h-32 rounded-full bg-emerald-400/20 pointer-events-none" />
+
+                    {/* pr-28 reserves space so engineer name doesn't slide under the two header buttons */}
+                    <div className="relative flex items-center gap-5 pr-28">
+                        <div className="w-20 h-20 rounded-2xl bg-white/25 backdrop-blur-sm flex items-center justify-center font-black text-white text-3xl shadow-xl shrink-0 border border-white/20">
+                            {engineer.initial}
+                        </div>
+                        <div className="min-w-0">
+                            <h2 className="text-2xl font-extrabold text-white tracking-tight leading-tight">{engineer.name}</h2>
+                            <div className="flex items-center gap-2 mt-1.5">
+                                <Mail size={14} className="text-white/60 shrink-0" />
+                                <p className="text-white/80 text-sm font-medium truncate">{engineer.email}</p>
+                            </div>
+                            <p className="text-white/60 text-sm mt-0.5">{engineer.department}</p>
+                        </div>
+                    </div>
+
+                    <div className="relative flex items-center gap-2.5 mt-5">
+                        <span className="inline-flex px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wide bg-white/20 text-white border border-white/25">
+                            {engineer.roleLabel}
+                        </span>
+                        <span className={`inline-flex px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wide border ${engineer.status === 'Active' ? 'bg-emerald-400/25 text-white border-emerald-300/30' : 'bg-white/10 text-white/70 border-white/20'}`}>
+                            ● {engineer.status}
+                        </span>
+                    </div>
+                </div>
+
+                {/* ── Projects header ── */}
+                <div className="shrink-0 px-6 py-4 flex items-center justify-between bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-700/60">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
+                            <FolderKanban size={16} className="text-white" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-extrabold text-slate-700 dark:text-slate-200 uppercase tracking-wider">Assigned Projects</p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                                {engineer.projects.length === 0
+                                    ? 'No projects currently assigned'
+                                    : `${engineer.projects.length} project${engineer.projects.length !== 1 ? 's' : ''} under this engineer`}
+                            </p>
+                        </div>
+                    </div>
+                    <span className={`text-sm font-black w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${engineer.projects.length > 0 ? 'bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                        {engineer.projects.length}
+                    </span>
+                </div>
+
+                {/* ── Project list ── */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                    {engineer.projects.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-14 gap-4">
+                            <div className="w-20 h-20 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                                <FolderKanban size={32} className="text-slate-300 dark:text-slate-600" />
+                            </div>
+                            <div className="text-center">
+                                <p className="text-base font-bold text-slate-500 dark:text-slate-400">No Projects Assigned</p>
+                                <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">When projects are assigned to this engineer, they will appear here.</p>
+                            </div>
+                        </div>
+                    ) : engineer.projects.map((p) => {
+                        const st = projectStatusStyle(p.status);
+                        const due = p.originalDateCompletion
+                            ? new Date(p.originalDateCompletion).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
+                            : null;
+                        return (
+                            <button key={p.id}
+                                onClick={() => { navigate(`/hcsd/projects/${p.id}`); onClose(); }}
+                                className="w-full text-left bg-white dark:bg-slate-800/60 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/60 hover:border-teal-300 dark:hover:border-teal-500/40 hover:shadow-md rounded-2xl overflow-hidden transition-all duration-200 group/card">
+
+                                <div className={`h-1.5 w-full ${st.bar}`} />
+
+                                <div className="p-5">
+                                    <div className="flex items-start justify-between gap-3 mb-3">
+                                        <p className="text-base font-bold text-slate-800 dark:text-slate-100 leading-snug group-hover/card:text-teal-700 dark:group-hover/card:text-teal-300 transition-colors">
+                                            {p.name}
+                                        </p>
+                                        <span className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wide border shrink-0 ${st.pill}`}>
+                                            {p.status}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-x-5 gap-y-2 mb-4">
+                                        {p.barangay && (
+                                            <span className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+                                                <MapPin size={13} className="text-teal-500 shrink-0" />
+                                                Barangay {p.barangay}
+                                            </span>
+                                        )}
+                                        {fmtAmt(p.contractAmount) && (
+                                            <span className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+                                                <Wallet size={13} className="text-teal-500 shrink-0" />
+                                                {fmtAmt(p.contractAmount)}
+                                            </span>
+                                        )}
+                                        {due && (
+                                            <span className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+                                                <Clock size={13} className="text-teal-500 shrink-0" />
+                                                Due {due}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Completion</span>
+                                            <span className="text-sm font-black text-slate-600 dark:text-slate-300 tabular-nums">{p.actualPercent}%</span>
+                                        </div>
+                                        <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                            <div className={`h-full rounded-full transition-all duration-700 ${st.bar}`} style={{ width: `${p.actualPercent}%` }} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* ── Footer — just Close; Revoke is in the ⋯ menu above ── */}
+                <div className="shrink-0 px-6 py-5 border-t border-slate-200 dark:border-slate-700/60 bg-white dark:bg-slate-900">
+                    <button onClick={onClose}
+                        className="w-full py-4 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-base transition-all">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+/* ── Main page ───────────────────────────────────────────────────────────── */
 const StaffManagement = () => {
     const {
-        filteredStaff, searchTerm, setSearchTerm,
+        filteredStaff, searchTerm, setSearchTerm, navigate,
         provisionForm, handleFormChange, formErrors,
         handleDelete, openProvisionModal, closeProvisionModal, isProvisionModalOpen, handleStageProvision,
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
@@ -333,18 +567,29 @@ const StaffManagement = () => {
         provisionError, successEmail
     } = useStaffLogic();
 
+    const [selectedEngineer, setSelectedEngineer] = useState(null);
+
+    // Keep drawer in sync when live data updates (e.g. new project assigned)
+    useEffect(() => {
+        if (selectedEngineer) {
+            const updated = filteredStaff.find(s => s.id === selectedEngineer.id);
+            if (updated) setSelectedEngineer(updated);
+        }
+    }, [filteredStaff]); // eslint-disable-line react-hooks/exhaustive-deps
+
     return (
         <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
             <HcsdSidebar />
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
+                {/* ── Page header ── */}
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
                         <div className="inline-flex items-center gap-2 bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 dark:border-teal-400/30 rounded-full px-3 py-1 mb-3">
                             <div className="w-1.5 h-1.5 rounded-full bg-teal-500 dark:bg-teal-400" />
-                            <span className="text-xs font-bold text-teal-700 dark:text-teal-300 uppercase tracking-widest">Field Personnel</span>
+                            <span className="text-xs font-bold text-teal-700 dark:text-teal-300 uppercase tracking-widest whitespace-nowrap">Field Personnel</span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                             Field Staff Management
@@ -362,84 +607,107 @@ const StaffManagement = () => {
                     </div>
                 </div>
 
+                {/* ── Engineer list ── */}
                 <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
-                    <div className="p-5 sm:p-6 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white/40 dark:bg-slate-800/20">
-                        <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center">
-                                <Users size={15} className="text-white" />
+                    {/* List toolbar */}
+                    <div className="p-4 sm:p-5 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col gap-3 bg-white/40 dark:bg-slate-800/20">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
+                                    <Users size={15} className="text-white" />
+                                </div>
+                                <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">
+                                    {filteredStaff.length} Engineer{filteredStaff.length !== 1 ? 's' : ''} on Roster
+                                </span>
                             </div>
-                            <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">
-                                {filteredStaff.length} Engineer{filteredStaff.length !== 1 ? 's' : ''} on Roster
+                            <span className="text-xs text-slate-400 dark:text-slate-500 hidden sm:block">
+                                Click an engineer to view their projects
                             </span>
                         </div>
-                        <div className="relative group w-full sm:w-80">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-teal-500 dark:group-focus-within:text-teal-400 transition-colors" size={17} />
+                        <div className="relative group">
+                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-teal-500 dark:group-focus-within:text-teal-400 transition-colors" size={15} />
                             <input type="text" placeholder="Search by name or email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-teal-500 dark:focus:ring-teal-400 outline-none transition-all" />
+                                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:ring-2 focus:ring-teal-500 dark:focus:ring-teal-400 outline-none transition-all" />
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-12 px-5 sm:px-7 py-3 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/40 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.1em]">
-                        <div className="col-span-7 sm:col-span-5 pl-2">Engineer Identity</div>
-                        <div className="hidden sm:block sm:col-span-5">Role & Access</div>
-                        <div className="col-span-5 sm:col-span-2 text-right pr-2">Actions</div>
+                    {/* Column headers */}
+                    <div className="grid grid-cols-12 px-5 sm:px-6 py-2.5 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/40 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.1em]">
+                        <div className="col-span-8 sm:col-span-7">Engineer</div>
+                        <div className="hidden sm:block sm:col-span-3">Department</div>
+                        <div className="col-span-4 sm:col-span-2 text-right">Projects</div>
                     </div>
 
-                    <div>
+                    {/* Rows */}
+                    <div className="divide-y divide-slate-100/70 dark:divide-slate-700/30">
                         {filteredStaff.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-24 text-slate-400 dark:text-slate-600">
+                            <div className="flex flex-col items-center justify-center py-24">
                                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4">
                                     <HardHat size={28} className="text-slate-300 dark:text-slate-600" />
                                 </div>
-                                <p className="text-slate-500 dark:text-slate-400 font-semibold text-base">No engineers found</p>
+                                <p className="text-slate-500 dark:text-slate-400 font-semibold">No engineers found</p>
                                 <p className="text-slate-400 dark:text-slate-500 text-sm mt-1">Try adjusting your search term</p>
                             </div>
                         ) : (
                             filteredStaff.map((s, i) => (
-                                <div key={s.id}
-                                    className="grid grid-cols-12 items-center px-5 sm:px-7 py-4 sm:py-5 border-b border-slate-100/70 dark:border-slate-700/30 last:border-b-0 hover:bg-teal-500/5 dark:hover:bg-teal-400/5 border-l-2 border-l-transparent hover:border-l-teal-500 dark:hover:border-l-teal-400 transition-all group"
-                                    style={{ animation: `slideUp 0.4s ease-out ${i * 0.06}s both` }}>
+                                <button key={s.id}
+                                    onClick={() => setSelectedEngineer(s)}
+                                    className="w-full grid grid-cols-12 items-center px-5 sm:px-6 py-4 hover:bg-teal-500/[0.04] dark:hover:bg-teal-400/[0.05] border-l-2 border-transparent hover:border-teal-500 dark:hover:border-teal-400 transition-all duration-150 text-left group"
+                                    style={{ animation: `slideUp 0.4s ease-out ${i * 0.05}s both` }}>
 
-                                    <div className="col-span-7 sm:col-span-5 flex items-center gap-3 min-w-0">
-                                        <div className="relative w-11 h-11 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-bold text-white text-base shadow-lg shadow-teal-500/20 shrink-0">
+                                    {/* Engineer identity */}
+                                    <div className="col-span-8 sm:col-span-7 flex items-center gap-3 min-w-0">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-bold text-white text-sm shadow-md shadow-teal-500/20 shrink-0 group-hover:scale-105 transition-transform duration-150">
                                             {s.initial}
                                         </div>
                                         <div className="min-w-0">
-                                            <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">{s.name}</h4>
-                                            <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 text-xs mt-0.5">
-                                                <Mail size={11} className="shrink-0" />
-                                                <span className="truncate">{s.email}</span>
+                                            <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors">
+                                                {s.name}
+                                            </p>
+                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                <Mail size={10} className="text-slate-400 shrink-0" />
+                                                <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{s.email}</span>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div className="hidden sm:block sm:col-span-5">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="inline-flex px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-500/30">
+                                    {/* Department */}
+                                    <div className="hidden sm:block sm:col-span-3 min-w-0 pr-3">
+                                        <div className="flex items-center gap-1.5 mb-1">
+                                            <span className="inline-flex px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wide bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-500/30">
                                                 {s.roleLabel}
                                             </span>
-                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${s.status === 'Active' ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30' : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600'}`}>
+                                            <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide border ${s.status === 'Active' ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600'}`}>
                                                 {s.status}
                                             </span>
                                         </div>
-                                        <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">{s.department}</p>
+                                        <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">{s.department}</p>
                                     </div>
 
-                                    <div className="col-span-5 sm:col-span-2 flex justify-end">
-                                        <button onClick={() => handleDelete(s.id)}
-                                            className="text-xs font-bold text-red-500 dark:text-red-400 hover:text-white px-3 py-2 rounded-lg border border-red-200 dark:border-red-500/30 hover:bg-red-600 dark:hover:bg-red-600 transition-all flex items-center gap-1.5 lg:opacity-0 lg:group-hover:opacity-100">
-                                            <Trash2 size={13} className="shrink-0" />
-                                            <span className="hidden sm:inline">Revoke</span>
-                                        </button>
+                                    {/* Project count badge */}
+                                    <div className="col-span-4 sm:col-span-2 flex items-center justify-end gap-2">
+                                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-bold text-xs transition-all ${s.projects.length > 0 ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                                            <FolderKanban size={11} />
+                                            <span>{s.projects.length}</span>
+                                        </div>
+                                        <ArrowRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-teal-500 dark:group-hover:text-teal-400 transition-colors shrink-0" />
                                     </div>
-                                </div>
+                                </button>
                             ))
                         )}
                     </div>
                 </div>
             </main>
+
+            {/* ── Engineer detail modal ── */}
+            <EngineerModal
+                engineer={selectedEngineer}
+                onClose={() => setSelectedEngineer(null)}
+                onRevoke={(id) => { handleDelete(id); setSelectedEngineer(null); }}
+                navigate={navigate}
+            />
 
             <ProvisionModal isOpen={isProvisionModalOpen} onClose={closeProvisionModal} form={provisionForm}
                 onChange={handleFormChange} onSubmit={handleStageProvision} errors={formErrors} />
