@@ -8,6 +8,7 @@ import {
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { useUsers } from '../../hooks/useUsers';
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 const fmt = (val) => (val === null || val === undefined || val === '') ? '—' : val;
@@ -100,9 +101,10 @@ const ProjectDetail = () => {
 
     const [project, setProject] = useState(null);
     const [milestones, setMilestones] = useState([]);
-    const [engineerName, setEngineerName] = useState(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+
+    const { usersMap } = useUsers();
 
     // Fetch project doc (one-time snapshot — project writes go through CF anyway)
     useEffect(() => {
@@ -124,24 +126,19 @@ const ProjectDetail = () => {
         return () => unsub();
     }, [id]);
 
-    // Resolve projectEngineer UID → display name
-    useEffect(() => {
-        if (!project?.projectEngineer) return;
-        const pe = project.projectEngineer;
-        // If it looks like a UID (no spaces), fetch from users collection
-        if (!/\s/.test(pe)) {
-            getDoc(doc(db, 'users', pe)).then((snap) => {
-                if (snap.exists()) {
-                    const d = snap.data();
-                    setEngineerName(`Engr. ${d.firstName} ${d.lastName}`);
-                } else {
-                    setEngineerName(pe); // fallback: display raw value
-                }
-            }).catch(() => setEngineerName(pe));
-        } else {
-            setEngineerName(pe); // legacy: already a name string
-        }
-    }, [project?.projectEngineer]);
+    // Resolve projectEngineer UID → {name, photoURL} from the shared users hook
+    const engineer = useMemo(() => {
+        const pe = project?.projectEngineer;
+        if (!pe) return null;
+        const u = usersMap[pe];
+        if (u) return {
+            name: `Engr. ${u.firstName || ''} ${u.lastName || ''}`.trim(),
+            photoURL: u.photoURL || null,
+            email: u.email || null,
+        };
+        // Fallbacks: UID never resolved (deleted user) or legacy name-string
+        return { name: pe, photoURL: null, email: null };
+    }, [project?.projectEngineer, usersMap]);
 
     /* computed accomplishment values */
     const computed = useMemo(() => {
@@ -275,7 +272,26 @@ const ProjectDetail = () => {
                     {/* 3 — Personnel */}
                     <SectionCard icon={Users} title="Assigned Personnel">
                         <FieldGrid cols={2}>
-                            <Field label="Project Engineer" value={engineerName ?? (p.projectEngineer ? '...' : '—')} highlight />
+                            <div>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Project Engineer</p>
+                                {engineer ? (
+                                    <div className="flex items-center gap-2.5">
+                                        {engineer.photoURL ? (
+                                            <img src={engineer.photoURL} alt={engineer.name}
+                                                className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0" />
+                                        ) : (
+                                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center text-white text-[11px] font-bold shrink-0">
+                                                {engineer.name.replace(/^Engr\.\s*/i, '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '—'}
+                                            </div>
+                                        )}
+                                        <p className="text-sm font-semibold text-teal-600 dark:text-teal-400 leading-snug truncate">
+                                            {engineer.name}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm font-medium text-slate-400 dark:text-slate-600">—</p>
+                                )}
+                            </div>
                             <Field label="Project Inspector" value={fmt(p.projectInspector)} />
                             <Field label="Material Inspector" value={fmt(p.materialInspector)} />
                             <Field label="Electrical Inspector" value={fmt(p.electricalInspector)} />

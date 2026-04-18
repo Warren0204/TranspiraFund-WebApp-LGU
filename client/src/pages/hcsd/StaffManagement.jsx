@@ -2,7 +2,7 @@ import { memo, useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Plus, Users, X, AlertCircle, Search, HardHat, Mail, Trash2, AlertTriangle, User,
-    FolderKanban, MapPin, Clock, ArrowRight, Wallet, MoreVertical
+    FolderKanban, MapPin, Clock, ArrowRight, Wallet, MoreVertical, Wrench, CheckCircle2, Loader2
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import AccountProvisioningService from '../../services/AccountProvisioningService';
@@ -10,7 +10,8 @@ import ConfirmAssignmentModal from '../../components/shared/ConfirmAssignmentMod
 import SuccessModal from '../../components/shared/SuccessModal';
 import { ROLES, ROLE_METADATA } from '../../config/roles';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import app, { db } from '../../config/firebase';
 import { staffProvisionSchema } from '../../config/validationSchemas';
 import { useDebounce } from '../../hooks/useDebounce';
 
@@ -36,7 +37,8 @@ const useStaffLogic = () => {
                             department: data.department || 'Unassigned Department',
                             roleLabel: 'Project Engineer',
                             status: data.status || 'Active',
-                            initial: (data.firstName || 'E').charAt(0).toUpperCase(),
+                            initial: ((data.firstName || '').charAt(0) + (data.lastName || '').charAt(0)).toUpperCase() || 'E',
+                            photoURL: data.photoURL || null,
                             _rawRole: data.role
                         };
                     })
@@ -52,8 +54,7 @@ const useStaffLogic = () => {
         return () => unsubscribe();
     }, [ENGINEER_ROLE]);
 
-    // Real-time project workload: keyed by BOTH uid AND name for backward compat
-    // (old projects stored engineer name; new projects store UID after the CreateProject fix)
+    // Real-time project workload, keyed by engineer UID.
     useEffect(() => {
         const q = query(collection(db, 'projects'), orderBy('createdAt', 'desc'));
         const unsub = onSnapshot(q, (snap) => {
@@ -89,15 +90,7 @@ const useStaffLogic = () => {
                     s.email.toLowerCase().includes(lowerTerm)
                 );
             })();
-        // Match by UID (new data) first, then by display name (legacy data)
-        return base.map(s => {
-            const byUid  = projectsByEngineer[s.id]   || [];
-            const byName = projectsByEngineer[s.name]  || [];
-            // Deduplicate in case a project somehow appears in both
-            const seen = new Set(byUid.map(p => p.id));
-            const merged = [...byUid, ...byName.filter(p => !seen.has(p.id))];
-            return { ...s, projects: merged };
-        });
+        return base.map(s => ({ ...s, projects: projectsByEngineer[s.id] || [] }));
     }, [staff, debouncedSearchTerm, projectsByEngineer]);
 
     const [provisionForm, setProvisionForm] = useState({ firstName: '', lastName: '', email: '' });
@@ -110,6 +103,34 @@ const useStaffLogic = () => {
     const [provisionError, setProvisionError] = useState(null);
     const [credentialsSent, setCredentialsSent] = useState(false);
     const [successEmail, setSuccessEmail] = useState('');
+
+    // Legacy data detection: if any key in projectsByEngineer is NOT a known engineer UID,
+    // it's a stale name-keyed entry from the pre-UID era and needs backfilling.
+    const legacyKeyCount = useMemo(() => {
+        if (staff.length === 0) return 0;
+        const uidSet = new Set(staff.map(s => s.id));
+        return Object.keys(projectsByEngineer).filter(k => !uidSet.has(k)).length;
+    }, [staff, projectsByEngineer]);
+
+    const [isBackfilling, setIsBackfilling] = useState(false);
+    const [backfillResult, setBackfillResult] = useState(null);
+    const [backfillError, setBackfillError] = useState('');
+
+    const runBackfill = async () => {
+        if (isBackfilling) return;
+        setIsBackfilling(true);
+        setBackfillError('');
+        try {
+            const fn = httpsCallable(getFunctions(app, 'asia-southeast1'), 'backfillProjectEngineerUids');
+            const res = await fn();
+            setBackfillResult(res.data);
+        } catch (err) {
+            setBackfillError(err.message || 'Backfill failed. Please try again.');
+        } finally {
+            setIsBackfilling(false);
+        }
+    };
+    const dismissBackfillResult = () => { setBackfillResult(null); setBackfillError(''); };
 
     const handleDelete = (id) => setDeleteCandidateId(id);
     const confirmRevoke = async () => {
@@ -153,7 +174,7 @@ const useStaffLogic = () => {
             name: `Engr. ${properFirst} ${properLast}`,
             rawFirstName: properFirst, rawLastName: properLast,
             department: roleMeta.dept, roleType: ENGINEER_ROLE,
-            initial: properFirst.charAt(0).toUpperCase(),
+            initial: (properFirst.charAt(0) + properLast.charAt(0)).toUpperCase(),
             email: provisionForm.email, roleLabel: 'Project Engineer'
         });
         setIsProvisionModalOpen(false);
@@ -192,7 +213,8 @@ const useStaffLogic = () => {
         handleDelete, openProvisionModal, closeProvisionModal, isProvisionModalOpen, handleStageProvision,
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
         confirmingAccount, isSending, credentialsSent, handleGenerateCredentials, handleCloseSuccess, cancelProvision,
-        provisionError, successEmail
+        provisionError, successEmail,
+        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult
     };
 };
 
@@ -431,9 +453,14 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
 
                     {/* pr-28 reserves space so engineer name doesn't slide under the two header buttons */}
                     <div className="relative flex items-center gap-5 pr-28">
-                        <div className="w-20 h-20 rounded-2xl bg-white/25 backdrop-blur-sm flex items-center justify-center font-black text-white text-3xl shadow-xl shrink-0 border border-white/20">
-                            {engineer.initial}
-                        </div>
+                        {engineer.photoURL ? (
+                            <img src={engineer.photoURL} alt={engineer.name}
+                                className="w-20 h-20 rounded-full object-cover shadow-xl shrink-0 border-2 border-white/30" />
+                        ) : (
+                            <div className="w-20 h-20 rounded-full bg-white/25 backdrop-blur-sm flex items-center justify-center font-black text-white text-3xl shadow-xl shrink-0 border border-white/20">
+                                {engineer.initial}
+                            </div>
+                        )}
                         <div className="min-w-0">
                             <h2 className="text-2xl font-extrabold text-white tracking-tight leading-tight">{engineer.name}</h2>
                             <div className="flex items-center gap-2 mt-1.5">
@@ -564,7 +591,8 @@ const StaffManagement = () => {
         handleDelete, openProvisionModal, closeProvisionModal, isProvisionModalOpen, handleStageProvision,
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
         confirmingAccount, isSending, credentialsSent, handleGenerateCredentials, handleCloseSuccess, cancelProvision,
-        provisionError, successEmail
+        provisionError, successEmail,
+        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult
     } = useStaffLogic();
 
     const [selectedEngineer, setSelectedEngineer] = useState(null);
@@ -606,6 +634,74 @@ const StaffManagement = () => {
                         </button>
                     </div>
                 </div>
+
+                {/* ── Legacy-data maintenance banner ── */}
+                {legacyKeyCount > 0 && !backfillResult && (
+                    <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-900/20 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4"
+                        style={{ animation: 'fadeIn 0.4s ease-out both' }}>
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/15 dark:bg-amber-400/20 flex items-center justify-center shrink-0">
+                            <Wrench size={18} className="text-amber-700 dark:text-amber-300" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-amber-900 dark:text-amber-100">
+                                {legacyKeyCount} legacy project assignment{legacyKeyCount !== 1 ? 's' : ''} detected
+                            </p>
+                            <p className="text-xs font-medium text-amber-800/80 dark:text-amber-200/80 mt-0.5">
+                                Older projects still reference engineers by display name instead of UID, so they don't appear on the assigned engineer's mobile app. Run this one-time fix to reconcile them.
+                            </p>
+                            {backfillError && (
+                                <p className="text-xs font-semibold text-red-600 dark:text-red-400 mt-2 flex items-center gap-1.5">
+                                    <AlertCircle size={13} /> {backfillError}
+                                </p>
+                            )}
+                        </div>
+                        <button onClick={runBackfill} disabled={isBackfilling}
+                            className="shrink-0 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition-all flex items-center gap-2 text-sm">
+                            {isBackfilling ? <><Loader2 size={15} className="animate-spin" /> Fixing…</> : <><Wrench size={15} strokeWidth={2.5} /> Fix Now</>}
+                        </button>
+                    </div>
+                )}
+
+                {/* ── Backfill result modal ── */}
+                {backfillResult && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4"
+                        role="dialog" aria-modal="true">
+                        <div className="bg-white dark:bg-slate-900 rounded-[24px] shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-white/5"
+                            style={{ animation: 'zoomIn 0.2s ease-out both' }}>
+                            <div className="flex items-start gap-3 mb-4">
+                                <div className="w-11 h-11 rounded-xl bg-emerald-500/15 dark:bg-emerald-400/20 flex items-center justify-center shrink-0">
+                                    <CheckCircle2 size={20} className="text-emerald-600 dark:text-emerald-400" />
+                                </div>
+                                <div className="min-w-0">
+                                    <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Backfill complete</h3>
+                                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+                                        Scanned {backfillResult.scanned} project{backfillResult.scanned !== 1 ? 's' : ''}.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="space-y-2 text-sm font-semibold">
+                                <div className="flex justify-between px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200">
+                                    <span>Updated to UID</span><span>{backfillResult.updated}</span>
+                                </div>
+                                <div className="flex justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300">
+                                    <span>Already UID-keyed</span><span>{backfillResult.alreadyUid}</span>
+                                </div>
+                                {backfillResult.unresolved?.length > 0 && (
+                                    <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200">
+                                        <div className="flex justify-between"><span>Unresolved</span><span>{backfillResult.unresolved.length}</span></div>
+                                        <p className="text-[11px] font-medium mt-1.5 opacity-80">
+                                            Names didn't match any current engineer — likely deleted accounts. Manual review needed.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                            <button onClick={dismissBackfillResult}
+                                className="mt-5 w-full py-3 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm hover:opacity-90 transition-all">
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* ── Engineer list ── */}
                 <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
@@ -659,9 +755,14 @@ const StaffManagement = () => {
 
                                     {/* Engineer identity */}
                                     <div className="col-span-8 sm:col-span-7 flex items-center gap-3 min-w-0">
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-bold text-white text-sm shadow-md shadow-teal-500/20 shrink-0 group-hover:scale-105 transition-transform duration-150">
-                                            {s.initial}
-                                        </div>
+                                        {s.photoURL ? (
+                                            <img src={s.photoURL} alt={s.name}
+                                                className="w-10 h-10 rounded-full object-cover shadow-md shadow-teal-500/20 shrink-0 group-hover:scale-105 transition-transform duration-150 border border-slate-200 dark:border-slate-700" />
+                                        ) : (
+                                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-bold text-white text-sm shadow-md shadow-teal-500/20 shrink-0 group-hover:scale-105 transition-transform duration-150">
+                                                {s.initial}
+                                            </div>
+                                        )}
                                         <div className="min-w-0">
                                             <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors">
                                                 {s.name}

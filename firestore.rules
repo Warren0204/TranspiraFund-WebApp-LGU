@@ -35,15 +35,26 @@ service cloud.firestore {
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 2 — PROJECT DATA
+    //
+    //  Admin roles (MIS/MAYOR/HCSD/CPDO) see all projects.
+    //  Project Engineers see only projects assigned to them
+    //  (document's `projectEngineer` field == their own UID).
     // ════════════════════════════════════════════════════════════════
 
+    function isAssignedEngineer(projectData) {
+      return hasRole(['PROJ_ENG']) &&
+             projectData.projectEngineer == request.auth.uid;
+    }
+
     match /projects/{projectId} {
-      allow read: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
+      allow read: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO']) ||
+                     isAssignedEngineer(resource.data);
       allow create, update, delete: if false;
 
       match /milestones/{milestoneId} {
-        allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
-        allow update: if hasRole(['PROJ_ENG']);
+        allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO']) ||
+                         isAssignedEngineer(get(/databases/$(database)/documents/projects/$(projectId)).data);
+        allow update: if isAssignedEngineer(get(/databases/$(database)/documents/projects/$(projectId)).data);
         allow create, delete: if false;
       }
     }

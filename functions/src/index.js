@@ -498,6 +498,109 @@ exports.changePassword = onCall(async (request) => {
     }
 });
 
+// ─── CLOUD FUNCTION: Revoke Other Sessions ──────────────────────────────────
+// Invalidates all refresh tokens for the current user. The caller's current
+// session remains active (they keep their ID token until it expires naturally,
+// then their own refresh token is also gone — so they'll be forced to re-auth
+// the next time their token refreshes). All OTHER active sessions across devices
+// will be signed out on their next token refresh (within ~1 hour).
+exports.revokeOtherSessions = onCall(async (request) => {
+    const { auth } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+
+    try {
+        await admin.auth().revokeRefreshTokens(auth.uid);
+        await logSystemAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", {}, "SUCCESS");
+        return { success: true };
+    } catch (error) {
+        logger.error("Error revoking sessions:", error);
+        throw new HttpsError("internal", "Unable to sign out other devices. Please try again.");
+    }
+});
+
+// ─── CLOUD FUNCTION: Backfill projectEngineer field (name → UID) ─────────────
+// One-time maintenance op to convert legacy project docs that stored the
+// engineer's display name in `projectEngineer` over to the engineer's UID,
+// so Firestore rules and the mobile app query (`projectEngineer == uid`) match.
+// HCSD-only. Idempotent — safe to run multiple times.
+exports.backfillProjectEngineerUids = onCall(async (request) => {
+    const { auth } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can run this maintenance task.");
+    }
+
+    const normalize = (s) => (s || "").toString().trim().toLowerCase()
+        .replace(/^engr\.?\s+/i, "")
+        .replace(/\s+/g, " ");
+
+    try {
+        const usersSnap = await admin.firestore().collection("users")
+            .where("role", "==", "PROJ_ENG").get();
+
+        const nameToUid = new Map();
+        const uidSet = new Set();
+        usersSnap.docs.forEach(doc => {
+            const d = doc.data();
+            const full = normalize(`${d.firstName || ""} ${d.lastName || ""}`);
+            if (full) nameToUid.set(full, doc.id);
+            uidSet.add(doc.id);
+        });
+
+        const projSnap = await admin.firestore().collection("projects").get();
+
+        const updates = [];
+        const unresolved = [];
+        let alreadyUid = 0;
+        let empty = 0;
+
+        projSnap.docs.forEach(doc => {
+            const val = doc.data().projectEngineer;
+            if (!val) { empty++; return; }
+            if (uidSet.has(val)) { alreadyUid++; return; }
+
+            const uid = nameToUid.get(normalize(val));
+            if (uid) {
+                updates.push({ projectId: doc.id, projectName: doc.data().projectName || null, oldValue: val, newUid: uid });
+            } else {
+                unresolved.push({ projectId: doc.id, projectName: doc.data().projectName || null, value: val });
+            }
+        });
+
+        // Commit updates in batches of 400 (Firestore batch limit = 500)
+        for (let i = 0; i < updates.length; i += 400) {
+            const chunk = updates.slice(i, i + 400);
+            const batch = admin.firestore().batch();
+            chunk.forEach(u => {
+                batch.update(admin.firestore().collection("projects").doc(u.projectId), { projectEngineer: u.newUid });
+            });
+            await batch.commit();
+        }
+
+        await logAudit(auth.uid, auth.token.email, "PROJECT_ENGINEER_BACKFILL", null, {
+            updated: updates.length,
+            alreadyUid,
+            empty,
+            unresolved: unresolved.length,
+        });
+
+        return {
+            success: true,
+            scanned: projSnap.size,
+            updated: updates.length,
+            alreadyUid,
+            empty,
+            unresolved,
+            updates: updates.map(u => ({ projectName: u.projectName, oldValue: u.oldValue })),
+        };
+    } catch (error) {
+        logger.error("Error in backfillProjectEngineerUids:", error);
+        throw new HttpsError("internal", "Unable to run backfill. Please try again.");
+    }
+});
+
 // ─── CLOUD FUNCTION: Send Password Reset Email ───────────────────────────────
 exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data } = request;

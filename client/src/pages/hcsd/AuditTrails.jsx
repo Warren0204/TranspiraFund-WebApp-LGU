@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, query, orderBy, limit, getDocs, startAfter, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { useState, useEffect, useCallback } from 'react';
+import { collection, query, orderBy, limit, getDocs, startAfter, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import {
     Shield, Clock, Activity, LogIn,
     FolderKanban, UserPlus, UserX, Image, MessageSquare, UserCircle,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
+import { useUsers } from '../../hooks/useUsers';
 
 const PAGE_SIZE = 30;
 
@@ -178,40 +179,16 @@ export default function AuditTrails() {
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [filter, setFilter] = useState('ALL');
-    const [actorProfiles, setActorProfiles] = useState({});
     const [refreshKey, setRefreshKey] = useState(0);
-    const loadedUids = useRef(new Set());
 
-    // ── Batch-load profile photos for any new actor UIDs ─────────────────────
-    const loadActorProfiles = useCallback(async (entries) => {
-        const uids = [...new Set(entries.map(l => l.actorUid).filter(Boolean))];
-        const missing = uids.filter(uid => !loadedUids.current.has(uid));
-        if (missing.length === 0) return;
-
-        missing.forEach(uid => loadedUids.current.add(uid));
-
-        const results = await Promise.allSettled(
-            missing.map(uid => getDoc(doc(db, 'users', uid)))
-        );
-
-        const updates = {};
-        results.forEach((res, i) => {
-            const uid = missing[i];
-            updates[uid] = {
-                photoURL: (res.status === 'fulfilled' && res.value.exists())
-                    ? (res.value.data().photoURL || null)
-                    : null,
-            };
-        });
-
-        setActorProfiles(prev => ({ ...prev, ...updates }));
-    }, []);
+    // Real-time directory — hydrates every actor's current name + photo.
+    // Photo updates propagate instantly (no stale copies in audit entries).
+    const { usersMap, displayName: userDisplayName } = useUsers();
 
     // ── Real-time listener: HCSD entries (project/account/auth events) ────────
     useEffect(() => {
         setLoading(true);
         setLogs([]);
-        loadedUids.current = new Set();
         const q = query(
             collection(db, 'auditTrails', 'hcsd', 'entries'),
             orderBy('timestamp', 'desc'),
@@ -271,12 +248,6 @@ export default function AuditTrails() {
             setLoadingMore(false);
         }
     }, [lastDoc]);
-
-    // Load actor profiles whenever either log set changes
-    useEffect(() => {
-        const combined = [...logs, ...mobileLogs];
-        if (combined.length > 0) loadActorProfiles(combined);
-    }, [logs, mobileLogs]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Merge HCSD + mobile logs, sorted newest-first
     const allLogs = [...logs, ...mobileLogs].sort((a, b) => {
@@ -364,10 +335,13 @@ export default function AuditTrails() {
                         const { Icon } = meta;
                         const subject = getSubject(log);
                         const detail = getSubjectDetail(log);
-                        const actor = log.actorEmail || '—';
-                        const initials = emailInitials(log.actorEmail);
+                        const actorProfile = usersMap[log.actorUid];
+                        const actor = userDisplayName(log.actorUid) || log.actorEmail || '—';
+                        const initials = actorProfile
+                            ? (`${actorProfile.firstName?.[0] ?? ''}${actorProfile.lastName?.[0] ?? ''}`.toUpperCase() || emailInitials(log.actorEmail))
+                            : emailInitials(log.actorEmail);
                         const { date, time } = fmtDate(log.timestamp);
-                        const photoURL = actorProfiles[log.actorUid]?.photoURL ?? null;
+                        const photoURL = actorProfile?.photoURL ?? null;
                         return (
                             <div key={log.id}
                                 className="group bg-white/60 dark:bg-slate-800/30 border border-white/80 dark:border-slate-700/40 hover:bg-white/90 dark:hover:bg-slate-800/60 hover:border-teal-200 dark:hover:border-teal-500/30 hover:shadow-lg rounded-2xl transition-all duration-200"
@@ -440,10 +414,13 @@ export default function AuditTrails() {
                             const { Icon } = meta;
                             const subject = getSubject(log);
                             const detail = getSubjectDetail(log);
-                            const actor = log.actorEmail || '—';
-                            const initials = emailInitials(log.actorEmail);
+                            const actorProfile = usersMap[log.actorUid];
+                            const actor = userDisplayName(log.actorUid) || log.actorEmail || '—';
+                            const initials = actorProfile
+                                ? (`${actorProfile.firstName?.[0] ?? ''}${actorProfile.lastName?.[0] ?? ''}`.toUpperCase() || emailInitials(log.actorEmail))
+                                : emailInitials(log.actorEmail);
                             const { date, time } = fmtDate(log.timestamp);
-                            const photoURL = actorProfiles[log.actorUid]?.photoURL ?? null;
+                            const photoURL = actorProfile?.photoURL ?? null;
                             return (
                                 <div key={log.id}
                                     className="group grid grid-cols-12 items-center px-6 py-4 hover:bg-teal-500/[0.04] dark:hover:bg-teal-500/[0.06] border-l-2 border-transparent hover:border-teal-500 transition-all duration-200"
