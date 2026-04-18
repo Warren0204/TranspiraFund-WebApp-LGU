@@ -6,7 +6,7 @@ import {
     Hash, Banknote, Flag
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
-import { doc, getDoc, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useUsers } from '../../hooks/useUsers';
 
@@ -101,6 +101,7 @@ const ProjectDetail = () => {
 
     const [project, setProject] = useState(null);
     const [milestones, setMilestones] = useState([]);
+    const [draftCount, setDraftCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
 
@@ -116,12 +117,21 @@ const ProjectDetail = () => {
         }).catch(() => { setNotFound(true); setLoading(false); });
     }, [id]);
 
-    // Fetch milestones subcollection (real-time — mobile engineers update them)
+    // Fetch milestones subcollection (real-time — mobile engineers update them).
+    // Split confirmed vs. AI-generated drafts. Mobile treats docs without a
+    // `confirmed` field as already-confirmed (pre-AI-era milestones), so we
+    // only exclude when `confirmed === false`.
     useEffect(() => {
         if (!id) return;
-        const q = query(collection(db, 'projects', id, 'milestones'), orderBy('targetDate', 'asc'));
-        const unsub = onSnapshot(q, (snap) => {
-            setMilestones(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const unsub = onSnapshot(query(collection(db, 'projects', id, 'milestones')), (snap) => {
+            const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            all.sort((a, b) => {
+                if (a.sequence != null && b.sequence != null) return a.sequence - b.sequence;
+                if (a.targetDate && b.targetDate) return new Date(a.targetDate) - new Date(b.targetDate);
+                return 0;
+            });
+            setMilestones(all.filter(m => m.confirmed !== false));
+            setDraftCount(all.filter(m => m.confirmed === false).length);
         }, () => {});
         return () => unsub();
     }, [id]);
@@ -454,6 +464,18 @@ const ProjectDetail = () => {
                         )}
                     </div>
 
+                    {draftCount > 0 && (
+                        <div className="px-6 py-3 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-500/20 flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0">
+                                <Clock size={13} className="text-indigo-600 dark:text-indigo-400" />
+                            </div>
+                            <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 leading-snug">
+                                {draftCount} AI-generated draft{draftCount !== 1 ? 's' : ''} awaiting engineer review
+                                <span className="font-normal text-indigo-600/80 dark:text-indigo-400/80"> · hidden until confirmed on mobile</span>
+                            </p>
+                        </div>
+                    )}
+
                     <div className="p-5">
                         {milestones.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-12 gap-3">
@@ -468,8 +490,16 @@ const ProjectDetail = () => {
                         ) : (
                             <div className="space-y-3">
                                 {milestones.map((m, i) => {
-                                    const isComplete = (m.actualPercent ?? 0) >= (m.weight ?? 100);
-                                    const isLate = m.targetDate && new Date(m.targetDate) < new Date() && !isComplete;
+                                    const weight = m.weightPercentage ?? m.weight;
+                                    // Source of truth: mobile writes `status` on each milestone.
+                                    // Display the Firebase value verbatim; only override with "Late"
+                                    // when a targetDate exists and is past due.
+                                    const rawStatus = (m.status || 'Pending').toString();
+                                    const statusLower = rawStatus.toLowerCase();
+                                    const isComplete = ['done', 'complete', 'completed'].includes(statusLower)
+                                        || (m.actualPercent != null && weight != null && m.actualPercent >= weight);
+                                    const isLate = !isComplete && m.targetDate && new Date(m.targetDate) < new Date();
+                                    const pillLabel = isLate ? 'Late' : (isComplete ? 'Done' : rawStatus);
                                     return (
                                         <div key={m.id}
                                             className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${isComplete ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-500/30' : isLate ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-500/30' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/50'}`}
@@ -479,27 +509,41 @@ const ProjectDetail = () => {
                                                     ? <CheckCircle2 size={16} className="text-white" />
                                                     : isLate
                                                         ? <AlertTriangle size={14} className="text-white" />
-                                                        : <span className="text-[11px] font-black text-white">{i + 1}</span>
+                                                        : <span className="text-[11px] font-black text-white">{m.sequence ?? i + 1}</span>
                                                 }
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-start justify-between gap-2 mb-1">
                                                     <p className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-snug">{m.title}</p>
                                                     <div className="flex items-center gap-2 shrink-0">
-                                                        {m.weight != null && (
+                                                        {weight != null && (
                                                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400">
-                                                                {m.weight}%
+                                                                {weight}%
                                                             </span>
                                                         )}
                                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${isComplete ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30' : isLate ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30' : 'bg-slate-100 dark:bg-slate-700/60 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600'}`}>
-                                                            {isComplete ? 'Done' : isLate ? 'Late' : 'Pending'}
+                                                            {pillLabel}
                                                         </span>
                                                     </div>
                                                 </div>
-                                                {m.targetDate && (
+                                                {m.description && (
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-2">{m.description}</p>
+                                                )}
+                                                {m.targetDate ? (
                                                     <div className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 mb-2">
                                                         <Clock size={11} />
                                                         Target: {fmtDate(m.targetDate)}
+                                                    </div>
+                                                ) : m.suggestedDurationDays != null ? (
+                                                    <div className="flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 mb-2">
+                                                        <Clock size={11} />
+                                                        Suggested duration: {m.suggestedDurationDays} day{m.suggestedDurationDays !== 1 ? 's' : ''}
+                                                    </div>
+                                                ) : null}
+                                                {(Array.isArray(m.proofs) && m.proofs.length > 0) && (
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-teal-600 dark:text-teal-400 font-semibold mb-2">
+                                                        <CheckCircle2 size={11} />
+                                                        {m.proofs.length} proof photo{m.proofs.length !== 1 ? 's' : ''} submitted
                                                     </div>
                                                 )}
                                                 {m.actualPercent != null && (

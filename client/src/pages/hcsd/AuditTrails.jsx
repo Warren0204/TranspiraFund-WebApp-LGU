@@ -4,6 +4,7 @@ import { db } from '../../config/firebase';
 import {
     Shield, Clock, Activity, LogIn,
     FolderKanban, UserPlus, UserX, Image, MessageSquare, UserCircle,
+    Sparkles, ClipboardCheck, Trash2,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useUsers } from '../../hooks/useUsers';
@@ -61,6 +62,30 @@ const EVENT_META = {
         iconBg: 'from-amber-500 to-orange-400',
         role: 'PROJ_ENG',
     },
+    // Mobile-originated milestone events. Keys use the exact strings the mobile
+    // app writes (Title Case with spaces) — Firestore lookups are case-sensitive,
+    // so do not normalize without coordinating a mobile deploy.
+    'Milestones Drafted': {
+        label: 'Milestones Drafted',
+        pill: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
+        Icon: Sparkles,
+        iconBg: 'from-indigo-500 to-violet-400',
+        role: 'PROJ_ENG',
+    },
+    'Milestones Confirmed': {
+        label: 'Milestones Confirmed',
+        pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
+        Icon: ClipboardCheck,
+        iconBg: 'from-emerald-500 to-teal-400',
+        role: 'PROJ_ENG',
+    },
+    'Milestone Draft Removed': {
+        label: 'Milestone Draft Removed',
+        pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
+        Icon: Trash2,
+        iconBg: 'from-slate-400 to-slate-500',
+        role: 'PROJ_ENG',
+    },
 };
 
 const DEFAULT_META = {
@@ -76,6 +101,7 @@ const FILTERS = [
     { key: 'AUTH', label: 'Auth Events', actions: ['USER_LOGIN', 'PHOTO_UPDATED'] },
     { key: 'PROJECT', label: 'Project Events', actions: ['PROJECT_CREATED', 'PROJECT_UPDATE', 'PHOTO_UPLOADED'] },
     { key: 'STAFF', label: 'Staff Events', actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
+    { key: 'MILESTONE', label: 'Milestone Events', actions: ['Milestones Drafted', 'Milestones Confirmed', 'Milestone Draft Removed'] },
 ];
 
 // ── Derive the "subject / entity" for a log entry ────────────────────────────
@@ -89,6 +115,10 @@ const getSubject = (log) => {
         case 'ACCOUNT_DELETED':return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
         case 'PHOTO_UPLOADED': return d.projectName || log.targetId || 'Project Photo';
         case 'PROJECT_UPDATE': return d.projectName || log.targetId || 'Project';
+        case 'Milestones Drafted':
+        case 'Milestones Confirmed':
+        case 'Milestone Draft Removed':
+            return d.projectName || log.target?.split('|')[0]?.replace(/^Project:\s*/i, '').trim() || log.targetId || 'Project';
         default:               return log.targetId || log.action?.replace(/_/g, ' ') || '—';
     }
 };
@@ -111,6 +141,16 @@ const getSubjectDetail = (log) => {
             const pct = d.actualPercent ?? d.progress;
             return pct != null ? `Progress updated to ${pct}%` : 'Project details updated';
         }
+        case 'Milestones Drafted': {
+            const count = d.count ?? (log.target?.match(/Count:\s*(\d+)/i)?.[1]);
+            return count ? `AI generated ${count} draft milestones` : 'AI milestone draft generated';
+        }
+        case 'Milestones Confirmed': {
+            const count = d.count ?? (log.target?.match(/Count:\s*(\d+)/i)?.[1]);
+            return count ? `Engineer locked in ${count} phases` : 'Engineer finished milestone review';
+        }
+        case 'Milestone Draft Removed':
+            return d.title ? `Draft removed: ${d.title}` : 'Draft milestone discarded';
         default: return null;
     }
 };

@@ -1,4 +1,4 @@
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+﻿const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { defineSecret } = require("firebase-functions/params");
@@ -12,11 +12,11 @@ const { z } = require("zod");
 admin.initializeApp();
 setGlobalOptions({ region: "asia-southeast1" });
 
-// ─── Secrets ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Secrets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const gmailUser = defineSecret("GMAIL_USER");
 const gmailAppPassword = defineSecret("GMAIL_APP_PASSWORD");
 
-// ─── Email Transport ────────────────────────────────────────────────────────
+// â”€â”€â”€ Email Transport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const createTransporter = () => nodemailer.createTransport({
     service: "gmail",
     auth: {
@@ -25,7 +25,7 @@ const createTransporter = () => nodemailer.createTransport({
     },
 });
 
-// ─── Zod validation schemas ─────────────────────────────────────────────────
+// â”€â”€â”€ Zod validation schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
@@ -45,7 +45,7 @@ const createProjectSchema = z.object({
     fundingSource: z.string().min(1, "Funding source is required").max(100),
 
     // Contract Amount
-    contractAmount: z.number().min(10000, "Minimum contract amount is ₱10,000").max(1_000_000_000),
+    contractAmount: z.number().min(10000, "Minimum contract amount is â‚±10,000").max(1_000_000_000),
 
     // Contractor
     contractor: z.string().max(200).optional(),
@@ -85,7 +85,7 @@ const createProjectSchema = z.object({
 
 });
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Cryptographically secure password generator
 const generatePassword = (length = 16) => {
@@ -97,7 +97,7 @@ const generatePassword = (length = 16) => {
     return password;
 };
 
-// Write an audit trail entry — HCSD-scoped
+// Write an audit trail entry â€” HCSD-scoped
 const logAudit = async (actorUid, actorEmail, action, targetId = null, details = {}) => {
     try {
         await admin.firestore().collection("auditTrails").doc("hcsd").collection("entries").add({
@@ -113,7 +113,7 @@ const logAudit = async (actorUid, actorEmail, action, targetId = null, details =
     }
 };
 
-// Write a system-level audit trail entry — MIS-scoped, append-only
+// Write a system-level audit trail entry â€” MIS-scoped, append-only
 const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status = "SUCCESS", actorName = null) => {
     try {
         const actor = { uid: actorUid, email: actorEmail || null };
@@ -130,7 +130,7 @@ const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status 
     }
 };
 
-// ─── CLOUD FUNCTION: Send OTP ───────────────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Send OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to request a verification code.");
@@ -174,7 +174,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: userEmail,
-            subject: "TranspiraFund — Your Verification Code",
+            subject: "TranspiraFund â€” Your Verification Code",
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
                     <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Identity Verification</h2>
@@ -195,7 +195,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Verify OTP ─────────────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Verify OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.verifyOtp = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to verify a code.");
@@ -264,7 +264,7 @@ exports.verifyOtp = onCall(async (request) => {
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Create Official Account ────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Create Official Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
@@ -321,7 +321,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: email,
-            subject: "TranspiraFund — Your Account Has Been Created",
+            subject: "TranspiraFund â€” Your Account Has Been Created",
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
                     <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Welcome, ${firstName}!</h2>
@@ -337,7 +337,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             `,
         });
 
-        // Audit trail — route by caller role
+        // Audit trail â€” route by caller role
         const callerName = `${callerDoc.data().firstName} ${callerDoc.data().lastName}`;
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_CREATED",
@@ -360,7 +360,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     }
 });
 
-// ─── CLOUD FUNCTION: Delete Official Account ────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Delete Official Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.deleteOfficialAccount = onCall(async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to delete accounts.");
@@ -388,7 +388,7 @@ exports.deleteOfficialAccount = onCall(async (request) => {
         await admin.auth().deleteUser(uid);
         await admin.firestore().collection("users").doc(uid).delete();
 
-        // Audit trail — route by caller role
+        // Audit trail â€” route by caller role
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED",
                 { uid, email: targetEmail, role: targetRole }, "SUCCESS");
@@ -403,7 +403,7 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Create Project ─────────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Create Project â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.createProject = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to create projects.");
@@ -413,7 +413,7 @@ exports.createProject = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Only HCSD personnel can create projects.");
     }
 
-    // Firebase callable SDK sends null for absent optional fields; convert null → undefined before validation
+    // Firebase callable SDK sends null for absent optional fields; convert null â†’ undefined before validation
     const sanitized = Object.fromEntries(
         Object.entries(data || {}).map(([k, v]) => [k, v === null ? undefined : v])
     );
@@ -424,7 +424,7 @@ exports.createProject = onCall(async (request) => {
         const msg = parsed.error.errors[0]?.message ?? "Invalid project data.";
         throw new HttpsError("invalid-argument", msg);
     }
-    // Strip undefined/null values — Firestore rejects undefined fields
+    // Strip undefined/null values â€” Firestore rejects undefined fields
     const projectFields = Object.fromEntries(
         Object.entries(parsed.data).filter(([, v]) => v !== undefined && v !== null)
     );
@@ -452,7 +452,7 @@ exports.createProject = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Change Password ────────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Change Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.changePassword = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to change password.");
@@ -498,10 +498,10 @@ exports.changePassword = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Revoke Other Sessions ──────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Revoke Other Sessions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Invalidates all refresh tokens for the current user. The caller's current
 // session remains active (they keep their ID token until it expires naturally,
-// then their own refresh token is also gone — so they'll be forced to re-auth
+// then their own refresh token is also gone â€” so they'll be forced to re-auth
 // the next time their token refreshes). All OTHER active sessions across devices
 // will be signed out on their next token refresh (within ~1 hour).
 exports.revokeOtherSessions = onCall(async (request) => {
@@ -518,11 +518,11 @@ exports.revokeOtherSessions = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Backfill projectEngineer field (name → UID) ─────────────
+// â”€â”€â”€ CLOUD FUNCTION: Backfill projectEngineer field (name â†’ UID) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // One-time maintenance op to convert legacy project docs that stored the
 // engineer's display name in `projectEngineer` over to the engineer's UID,
 // so Firestore rules and the mobile app query (`projectEngineer == uid`) match.
-// HCSD-only. Idempotent — safe to run multiple times.
+// HCSD-only. Idempotent â€” safe to run multiple times.
 exports.backfillProjectEngineerUids = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -601,7 +601,7 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Send Password Reset Email ───────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Send Password Reset Email â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data } = request;
     const { email } = data;
@@ -613,7 +613,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     const cleanEmail = email.trim().toLowerCase();
     const RESET_BASE = "https://transpirafund-webapp.web.app/reset-password";
 
-    // Rate limiting — consistent for registered and unregistered emails (anti-enumeration)
+    // Rate limiting â€” consistent for registered and unregistered emails (anti-enumeration)
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
     const cooldownRef = admin.firestore().collection("passwordResets").doc(emailHash);
     const cooldownDoc = await cooldownRef.get();
@@ -645,7 +645,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: cleanEmail,
-            subject: "TranspiraFund — Password Reset Request",
+            subject: "TranspiraFund â€” Password Reset Request",
             html: `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F8FAFC;">
@@ -684,11 +684,11 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
         }
     }
 
-    // Always return success — never reveal whether the email exists
+    // Always return success â€” never reveal whether the email exists
     return { success: true };
 });
 
-// ─── CLOUD FUNCTION: Reset Password ─────────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Reset Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.resetPassword = onCall(async (request) => {
     const { data } = request;
     const { oobCode, newPassword } = data;
@@ -743,7 +743,7 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to reset password. Please try again.");
     }
 
-    // Audit trail — non-blocking
+    // Audit trail â€” non-blocking
     const email = resetResult?.email;
     if (email) {
         try {
@@ -814,7 +814,7 @@ exports.recalculateStats = onCall(async (request) => {
     }
 });
 
-// ─── TRIGGER: Recompute public stats on user writes ─────────────────────────
+// â”€â”€â”€ TRIGGER: Recompute public stats on user writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     try {
         const usersSnapshot = await admin.firestore().collection("users").get();
@@ -837,7 +837,7 @@ exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     }
 });
 
-// ─── TRIGGER: Recompute public stats on project writes ──────────────────────
+// â”€â”€â”€ TRIGGER: Recompute public stats on project writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () => {
     try {
         const projectsSnapshot = await admin.firestore().collection("projects").get();
@@ -865,7 +865,7 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
     }
 });
 
-// ─── CLOUD FUNCTION: Update Profile Photo ────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Update Profile Photo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updateProfilePhoto = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile photo.");
@@ -916,7 +916,7 @@ exports.updateProfilePhoto = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Update Profile Name ─────────────────────────────────────
+// â”€â”€â”€ CLOUD FUNCTION: Update Profile Name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updateProfile = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile.");
@@ -955,7 +955,7 @@ exports.updateProfile = onCall(async (request) => {
         await admin.auth().updateUser(auth.uid, { displayName: `${firstName} ${lastName}` });
         await logSystemAudit(
             auth.uid, auth.token.email, "PROFILE_UPDATED",
-            { oldName: oldName ?? "—", newName: `${firstName} ${lastName}` },
+            { oldName: oldName ?? "â€”", newName: `${firstName} ${lastName}` },
             "SUCCESS", `${firstName} ${lastName}`
         );
         return { success: true };
@@ -964,3 +964,367 @@ exports.updateProfile = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to update name. Please try again.");
     }
 });
+
+// â”€â”€â”€ AI-Assisted Milestone Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Generates milestones using Anthropic Claude Haiku 4.5, constrained by a
+// tool-use schema. The assigned Project Engineer reviews and adjusts these
+// suggestions before monitoring begins. Writes to the
+// projects/{projectId}/milestones subcollection.
+
+const Anthropic = require("@anthropic-ai/sdk").default;
+const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
+
+const MILESTONE_SYSTEM_PROMPT = `You are a senior construction planning assistant for the Construction Services Division of the Cebu City Department of Engineering and Public Works (DEPW). Your role is to generate standardized physical construction milestones for city-funded barangay-level infrastructure projects that have already completed procurement under Republic Act No. 12009 (New Government Procurement Act) and have received the Notice to Proceed.
+
+## Institutional Context
+
+The Construction Services Division supervises the post-bidding implementation phase of barangay-level infrastructure projects across Cebu City. A Project Engineer is assigned to each project by the Head of Construction Services. The Project Engineer encodes project details and uses your generated milestones as a standardized starting point, then reviews and adjusts them before monitoring begins. Your output is a draft for Project Engineer review, not a final plan.
+
+## Milestone Design Principles
+
+1. Each milestone must represent a verifiable, on-site physical deliverable that can be evidenced by a geotagged photograph. Do not generate administrative tasks (permits, meetings, documentation submission) as milestones, because compliance is tracked separately through the NTP verification workflow.
+
+2. Milestone count ranges from 5 to 12 depending on project complexity and duration. Projects of 30 to 60 days typically have 5 to 7 milestones. Projects of 61 to 120 days typically have 7 to 10 milestones. Projects of 121 days or more may reach 10 to 12 milestones.
+
+3. Weight percentages reflect relative physical effort and material cost share, not calendar time. Concrete pouring phases typically carry the heaviest weight. Mobilization and site clearing phases typically carry the lightest. All weights must sum to exactly 100.
+
+4. Suggested durations must fit within the overall project timeline provided. Use calendar days. Account for typical Philippine weather variability by assuming 15 to 20 percent of calendar days may be non-workable during rainy months (June to November). Do not exceed the total project duration in the sum of suggested durations; milestones may overlap in real execution.
+
+5. The first milestone should always cover site preparation or mobilization. The final milestone should always cover final inspection, cleanup, and turnover readiness.
+
+6. Use clear, specific milestone titles that a Project Engineer would recognize from standard DEPW field practice. Avoid generic titles like "Construction Phase 1" or "Work Progress 50%."
+
+## Project Type Reference Examples
+
+The examples below illustrate validated phasing patterns for each project type. Match the closest project type to the input, then adapt the pattern to the specific project's scope, duration, and contract amount. Do not copy example values literally; generate values that fit the specific project being described.
+
+### ROAD_CONCRETING
+
+Example A: Concreting of a 150-meter by 6-meter barangay access road, 90-day duration, PHP 1,500,000 contract amount.
+1. Mobilization, site clearing, and traffic management setup (8%, 7 days)
+2. Excavation and removal of existing pavement or subgrade (10%, 10 days)
+3. Subgrade preparation, compaction, and aggregate base course installation (15%, 12 days)
+4. Formworks installation and steel reinforcement placement (12%, 10 days)
+5. Concrete pouring and screeding, first half (22%, 14 days)
+6. Concrete pouring and screeding, second half (22%, 14 days)
+7. Concrete curing with surface protection and joint cutting (6%, 14 days)
+8. Pavement markings, signage installation, and final cleanup (5%, 9 days)
+
+Example B: Concreting of a 75-meter by 4-meter barangay interior road, 45-day duration, PHP 600,000 contract amount.
+1. Site clearing and excavation (15%, 6 days)
+2. Subgrade preparation and base course (20%, 8 days)
+3. Formworks and reinforcement (15%, 7 days)
+4. Concrete pouring and finishing (35%, 10 days)
+5. Curing and joint sealing (10%, 10 days)
+6. Cleanup and turnover readiness (5%, 4 days)
+
+### DRAINAGE_CONSTRUCTION
+
+Example A: Construction of a 200-meter reinforced concrete canal with side walls, 75-day duration, PHP 950,000 contract amount.
+1. Mobilization, survey, and canal alignment staking (7%, 5 days)
+2. Excavation of canal trench to design depth (14%, 12 days)
+3. Subbase preparation and leveling course (10%, 8 days)
+4. Formworks for canal floor and walls (13%, 10 days)
+5. Steel reinforcement installation for floor and walls (13%, 10 days)
+6. Concrete pouring for canal floor (15%, 10 days)
+7. Concrete pouring for canal side walls (15%, 12 days)
+8. Installation of grating covers and inlet structures (8%, 5 days)
+9. Backfilling, site restoration, and flow testing (5%, 3 days)
+
+Example B: Construction of a 100-meter reinforced concrete pipe drainage line, 50-day duration, PHP 500,000 contract amount.
+1. Site clearing and trench excavation (18%, 10 days)
+2. Subbase preparation (10%, 5 days)
+3. Installation of reinforced concrete pipes with jointing (30%, 15 days)
+4. Construction of catch basins and manholes (22%, 10 days)
+5. Backfilling and compaction (15%, 8 days)
+6. Site restoration and turnover readiness (5%, 2 days)
+
+### MULTI_PURPOSE_BUILDING
+
+Example A: Construction of a single-story 12-meter by 10-meter multi-purpose covered court with stage, 150-day duration, PHP 2,800,000 contract amount.
+1. Mobilization, site clearing, and layout staking (5%, 7 days)
+2. Excavation for footings and foundations (7%, 10 days)
+3. Pouring of footings, column bases, and tie beams (12%, 15 days)
+4. Erection of columns, roof trusses, and purlins (18%, 25 days)
+5. Installation of roofing sheets, gutters, and flashing (15%, 18 days)
+6. Concrete flooring with steel reinforcement (14%, 20 days)
+7. Construction of stage platform and perimeter low walls (10%, 15 days)
+8. Electrical roughing-in and lighting fixture installation (8%, 15 days)
+9. Painting of steel members, trimmings, and surfaces (6%, 12 days)
+10. Final cleanup, electrical testing, and turnover readiness (5%, 13 days)
+
+Example B: Construction of a 6-meter by 8-meter barangay day care center, one story, 120-day duration, PHP 1,800,000 contract amount.
+1. Site clearing, excavation, and foundation layout (7%, 10 days)
+2. Footings, column footings, and ground beam pouring (12%, 14 days)
+3. Masonry works for exterior and interior walls (20%, 25 days)
+4. Roof framing and installation of roofing system (15%, 18 days)
+5. Concrete slab flooring with finishing (12%, 14 days)
+6. Plastering of walls and installation of doors and windows (14%, 16 days)
+7. Plumbing fixtures and electrical wiring installation (10%, 12 days)
+8. Tiling, painting, and interior finishing (7%, 8 days)
+9. Final inspection, cleanup, and turnover readiness (3%, 3 days)
+
+### SLOPE_PROTECTION
+
+Example A: Construction of a 50-meter riprap slope protection along a barangay waterway, 60-day duration, PHP 750,000 contract amount.
+1. Mobilization and site clearing along the slope alignment (8%, 5 days)
+2. Excavation and slope trimming to design profile (15%, 10 days)
+3. Foundation trench excavation and leveling (12%, 7 days)
+4. Foundation concrete pouring for toe wall (15%, 8 days)
+5. Placement of filter fabric or bedding material (10%, 6 days)
+6. Riprap boulder placement and interlocking (25%, 15 days)
+7. Grouting of riprap voids where specified (10%, 6 days)
+8. Final trimming, cleanup, and turnover readiness (5%, 3 days)
+
+Example B: Construction of a 30-meter reinforced concrete slope protection wall, 75-day duration, PHP 900,000 contract amount.
+1. Site clearing and excavation of wall footprint (10%, 8 days)
+2. Foundation excavation and rebar preparation (12%, 10 days)
+3. Foundation concrete pouring (15%, 8 days)
+4. Wall formworks and reinforcement installation (18%, 12 days)
+5. Wall concrete pouring in lifts (25%, 15 days)
+6. Weep hole installation and drainage provisions (8%, 6 days)
+7. Backfilling and slope restoration behind the wall (7%, 10 days)
+8. Final cleanup and turnover readiness (5%, 6 days)
+
+### WATERWORKS
+
+Example A: Installation of a 300-meter barangay water distribution pipeline with tapping stands, 70-day duration, PHP 680,000 contract amount.
+1. Mobilization, route survey, and coordination with the barangay (6%, 5 days)
+2. Trench excavation along the pipeline route (18%, 12 days)
+3. Pipe bedding preparation with sand or gravel (10%, 6 days)
+4. Laying and jointing of distribution pipes (22%, 15 days)
+5. Installation of valves, fittings, and tapping stands (15%, 10 days)
+6. Pressure testing and leak checking (8%, 5 days)
+7. Backfilling and compaction over the pipeline (12%, 10 days)
+8. Surface restoration at excavated crossings (6%, 5 days)
+9. Commissioning and turnover readiness (3%, 2 days)
+
+Example B: Construction of a 10-cubic-meter elevated water storage tank with distribution connection, 90-day duration, PHP 1,100,000 contract amount.
+1. Site preparation and foundation excavation (8%, 8 days)
+2. Foundation and column footing concrete works (14%, 14 days)
+3. Erection of elevated tank support columns and cross bracing (18%, 18 days)
+4. Tank fabrication or installation on the support structure (22%, 16 days)
+5. Inlet, outlet, and overflow piping installation (12%, 10 days)
+6. Ladder, railing, and safety appurtenances (8%, 8 days)
+7. Waterproofing and interior tank cleaning (8%, 7 days)
+8. Pressure testing, disinfection, and commissioning (7%, 6 days)
+9. Cleanup and turnover readiness (3%, 3 days)
+
+### ELECTRIFICATION
+
+Example A: Installation of 500 meters of barangay streetlight line with 15 LED fixtures, 45-day duration, PHP 420,000 contract amount.
+1. Mobilization, route survey, and coordination with VECO or distribution utility (8%, 4 days)
+2. Excavation for pole foundations (10%, 5 days)
+3. Pole foundation concrete pouring and curing (12%, 6 days)
+4. Erection and alignment of streetlight poles (15%, 6 days)
+5. Overhead or underground wiring installation (22%, 10 days)
+6. Installation of LED fixtures and connections (15%, 6 days)
+7. Grounding system installation (8%, 4 days)
+8. Energization testing and commissioning with utility coordination (7%, 3 days)
+9. Cleanup and turnover readiness (3%, 1 day)
+
+Example B: Electrical roughing-in and finishing for a newly constructed barangay day care center, 30-day duration, PHP 180,000 contract amount.
+1. Mobilization and coordination with general contractor (10%, 3 days)
+2. Conduit roughing-in and box installation (22%, 7 days)
+3. Wire pulling through conduits (18%, 6 days)
+4. Panel board installation and circuit terminations (20%, 5 days)
+5. Installation of switches, outlets, and lighting fixtures (15%, 5 days)
+6. Grounding and bonding works (8%, 2 days)
+7. Energization, circuit testing, and commissioning (5%, 1 day)
+8. Final labeling, cleanup, and turnover readiness (2%, 1 day)
+
+### OTHER
+
+When the project does not match any of the above categories, infer the closest construction discipline from the project name and generate 6 to 10 milestones that cover mobilization, primary construction phases, secondary works, testing or inspection, and turnover. Maintain all other design principles above.
+
+## Output Constraints
+
+You must output your response exclusively through the generate_project_milestones tool. Do not produce any plain text response. Do not explain your reasoning. Do not apologize or add disclaimers. The Project Engineer will see your milestones in a structured review interface and will adjust any that do not match field realities.
+
+Now, generate milestones for the project described in the next message.`;
+
+const milestoneTool = {
+  name: "generate_project_milestones",
+  description:
+    "Generates standardized construction milestones for a city-funded barangay-level infrastructure project. Weight percentages must sum to exactly 100.",
+  input_schema: {
+    type: "object",
+    properties: {
+      project_type: {
+        type: "string",
+        enum: [
+          "road_concreting",
+          "drainage_construction",
+          "multi_purpose_building",
+          "slope_protection",
+          "waterworks",
+          "electrification",
+          "other",
+        ],
+      },
+      milestones: {
+        type: "array",
+        minItems: 5,
+        maxItems: 12,
+        items: {
+          type: "object",
+          properties: {
+            sequence: { type: "integer" },
+            title: { type: "string" },
+            description: { type: "string" },
+            weight_percentage: { type: "number" },
+            suggested_duration_days: { type: "integer" },
+          },
+          required: [
+            "sequence",
+            "title",
+            "description",
+            "weight_percentage",
+            "suggested_duration_days",
+          ],
+        },
+      },
+    },
+    required: ["project_type", "milestones"],
+  },
+};
+
+exports.generateMilestones = onCall(
+  { secrets: [anthropicApiKey], timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const { projectId } = request.data || {};
+    if (!projectId) {
+      throw new HttpsError("invalid-argument", "projectId is required.");
+    }
+
+    const projectRef = admin.firestore().doc(`projects/${projectId}`);
+    const projectSnap = await projectRef.get();
+    if (!projectSnap.exists) {
+      throw new HttpsError("not-found", "Project not found.");
+    }
+    const project = projectSnap.data();
+
+    if (project.projectEngineer !== request.auth.uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "Only the assigned Project Engineer can generate milestones for this project."
+      );
+    }
+
+    const existingSnap = await admin
+      .firestore()
+      .collection(`projects/${projectId}/milestones`)
+      .limit(1)
+      .get();
+    if (!existingSnap.empty) {
+      throw new HttpsError(
+        "already-exists",
+        "Milestones already exist for this project."
+      );
+    }
+
+    const userMessage = `Generate milestones for the following project:
+
+Project Name: ${project.projectName || "Unknown"}
+Barangay: ${project.barangay || "Unknown"}
+Sitio/Street: ${project.sitioStreet || "N/A"}
+Contract Amount (for reference only): PHP ${project.contractAmount || "N/A"}
+Contractor: ${project.contractor || "N/A"}
+NTP Received Date: ${project.ntpReceivedDate || "N/A"}
+Official Start Date: ${project.officialDateStarted || "N/A"}
+Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
+
+    const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+
+    let response;
+    try {
+      response = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2048,
+        system: MILESTONE_SYSTEM_PROMPT,
+        tools: [milestoneTool],
+        tool_choice: { type: "tool", name: "generate_project_milestones" },
+        messages: [{ role: "user", content: userMessage }],
+      });
+    } catch (error) {
+      logger.error("Anthropic API error:", error);
+      throw new HttpsError(
+        "internal",
+        "Failed to generate milestones. You can create milestones manually."
+      );
+    }
+
+    const toolUseBlock = response.content.find(
+      (block) => block.type === "tool_use"
+    );
+    if (!toolUseBlock) {
+      throw new HttpsError(
+        "internal",
+        "No structured milestone output was returned."
+      );
+    }
+
+    const { project_type, milestones } = toolUseBlock.input;
+
+    const totalWeight = milestones.reduce(
+      (sum, m) => sum + m.weight_percentage,
+      0
+    );
+    if (Math.abs(totalWeight - 100) > 0.5) {
+      throw new HttpsError(
+        "internal",
+        `Milestone weights did not sum to 100 (got ${totalWeight}). Please try again or create manually.`
+      );
+    }
+
+    const batch = admin.firestore().batch();
+    const msCollection = admin
+      .firestore()
+      .collection(`projects/${projectId}/milestones`);
+
+    milestones
+      .sort((a, b) => a.sequence - b.sequence)
+      .forEach((m) => {
+        const docRef = msCollection.doc();
+        batch.set(docRef, {
+          title: m.title,
+          description: m.description,
+          sequence: m.sequence,
+          weightPercentage: m.weight_percentage,
+          suggestedDurationDays: m.suggested_duration_days,
+          status: "Pending",
+          proofs: [],
+          generatedBy: "claude-haiku-4-5",
+          confirmed: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+
+    await batch.commit();
+
+    await admin
+      .firestore()
+      .collection("auditTrails")
+      .doc("mobile")
+      .collection("entries")
+      .add({
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        actorUid: request.auth.uid,
+        actorEmail: request.auth.token.email || null,
+        action: "Milestones Generated (AI-Assisted)",
+        target: `Project: ${projectId} | Type: ${project_type} | Count: ${milestones.length}`,
+        success: true,
+      });
+
+    return {
+      success: true,
+      count: milestones.length,
+      projectType: project_type,
+    };
+  }
+);
+
