@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
-    Hash, Banknote, Flag, Tag, ExternalLink
+    Hash, Banknote, Flag, ExternalLink
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
@@ -239,12 +239,6 @@ const ProjectDetail = () => {
                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
                                     <MapPin size={11} className="text-teal-500" />
                                     Barangay {p.barangay}
-                                </span>
-                            )}
-                            {p.projectType && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30">
-                                    <Tag size={10} />
-                                    {p.projectType}
                                 </span>
                             )}
                             {computed.durationDays && (

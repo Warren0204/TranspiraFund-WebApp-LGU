@@ -34,24 +34,11 @@ const createAccountSchema = z.object({
     department: z.string().max(100).optional(),
 });
 
-const PROJECT_TYPES = [
-    "Building Construction",
-    "Roads & Pavement",
-    "Drainage & Flood Control",
-    "Water Supply",
-    "Electrical & Lighting",
-    "Public Facility Rehabilitation",
-    "Other",
-];
-
 const createProjectSchema = z.object({
     // Project Details
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
     sitioStreet: z.string().max(200).optional(),
     barangay: z.string().min(1, "Barangay is required").max(100),
-
-    // Classification
-    projectType: z.enum(PROJECT_TYPES, { errorMap: () => ({ message: "Project type is required" }) }),
 
     // Account Code & Funding
     accountCode: z.string().max(100).optional(),
@@ -542,7 +529,6 @@ exports.createProject = onCall(async (request) => {
             projectName: projectFields.projectName,
             contractAmount: projectFields.contractAmount,
             barangay: projectFields.barangay,
-            projectType: projectFields.projectType,
         });
 
         // Notify assigned Project Engineer (if any)
@@ -552,10 +538,9 @@ exports.createProject = onCall(async (request) => {
                 action: "PROJECT_ASSIGNED",
                 severity: "info",
                 title: "New project assigned",
-                body: `${projectFields.projectName} â€” ${projectFields.barangay}`,
+                body: `${projectFields.projectName}, ${projectFields.barangay}`,
                 targetType: "project",
                 targetId: projectRef.id,
-                metadata: { projectType: projectFields.projectType },
             });
         }
 
@@ -1470,7 +1455,6 @@ Barangay: ${project.barangay || "Unknown"}
 Sitio/Street: ${project.sitioStreet || "N/A"}
 Contract Amount (for reference only): PHP ${project.contractAmount || "N/A"}
 Contractor: ${project.contractor || "N/A"}
-NTP Received Date: ${project.ntpReceivedDate || "N/A"}
 Official Start Date: ${project.officialDateStarted || "N/A"}
 Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
 
@@ -1504,7 +1488,7 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
       );
     }
 
-    const { project_type, milestones } = toolUseBlock.input;
+    const { milestones } = toolUseBlock.input;
 
     const totalWeight = milestones.reduce(
       (sum, m) => sum + m.weight_percentage,
@@ -1552,14 +1536,13 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
         actorUid: request.auth.uid,
         actorEmail: request.auth.token.email || null,
         action: "Milestones Generated (AI-Assisted)",
-        target: `Project: ${projectId} | Type: ${project_type} | Count: ${milestones.length}`,
+        target: `Milestones Generated for ${projectId} | Count: ${milestones.length}`,
         success: true,
       });
 
     return {
       success: true,
       count: milestones.length,
-      projectType: project_type,
     };
   }
 );

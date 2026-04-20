@@ -116,7 +116,6 @@ Functions use Firebase Secrets (not env vars):
 ## Project Schema (Firestore `projects` document)
 All fields stored on the project document:
 - **Project Details**: `projectName`, `sitioStreet`, `barangay`
-- **Classification**: `projectType` (enum — see `client/src/config/projectTypes.js`; mirrored in `functions/src/index.js`)
 - **NTP Document**: `ntpFileUrl`, `ntpFileName`, `ntpUploadedAt`, `ntpUploadedBy` (populated by the `attachNtp` Cloud Function after the HCSD client uploads to Storage at `projects/{projectId}/ntp/{fileName}`)
 - **Account/Funding**: `accountCode`, `fundingSource`
 - **Contract**: `contractAmount`, `contractor`

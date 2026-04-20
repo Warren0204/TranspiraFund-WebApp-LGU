@@ -5,12 +5,11 @@ import {
     HardHat, LayoutDashboard, AlertCircle,
     CheckCircle, X, FileText, DollarSign,
     Clock, TrendingDown, Users, ClipboardList, Banknote,
-    Tag, Upload
+    Upload
 } from 'lucide-react';
 import { z } from 'zod';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { ROLES } from '../../config/roles';
-import { PROJECT_TYPES } from '../../config/projectTypes';
 import { collection, query, getDocs } from 'firebase/firestore';
 import { db, storage } from '../../config/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -56,7 +55,6 @@ const parseFormattedNumber = (value) => {
 const projectSchema = z.object({
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
     barangay: z.string().min(1, "Barangay is required"),
-    projectType: z.enum(PROJECT_TYPES, { errorMap: () => ({ message: "Project type is required" }) }),
     fundingSource: z.string().min(1, "Funding source is required"),
     contractAmount: z.number({ invalid_type_error: "Contract amount must be a number" })
         .min(10000, "Minimum contract amount is ₱10,000")
@@ -81,7 +79,6 @@ const useCreateProject = () => {
         projectName: '',
         sitioStreet: '',
         barangay: '',
-        projectType: '',
         accountCode: '',
         fundingSource: 'City-Funded',
         contractAmount: '',
@@ -215,7 +212,6 @@ const useCreateProject = () => {
     const isFormComplete = Boolean(
         formData.projectName &&
         formData.barangay &&
-        formData.projectType &&
         formData.fundingSource &&
         formData.contractAmount &&
         formData.ntpReceivedDate &&
@@ -237,7 +233,6 @@ const useCreateProject = () => {
             projectSchema.parse({
                 projectName: formData.projectName,
                 barangay: formData.barangay,
-                projectType: formData.projectType,
                 fundingSource: formData.fundingSource,
                 contractAmount: Number(formData.contractAmount),
                 ntpReceivedDate: formData.ntpReceivedDate,
@@ -268,7 +263,6 @@ const useCreateProject = () => {
                 projectName: formData.projectName,
                 sitioStreet: formData.sitioStreet || undefined,
                 barangay: formData.barangay,
-                projectType: formData.projectType,
                 accountCode: formData.accountCode || undefined,
                 fundingSource: formData.fundingSource,
                 contractAmount: Number(formData.contractAmount),
@@ -465,22 +459,6 @@ const CreateProject = () => {
                                     </div>
                                     <FieldError msg={errors.barangay} />
                                 </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className={labelCls}>Project Type <span className="text-red-400">*</span></label>
-                                <div className="relative">
-                                    <Tag className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                    <select
-                                        value={formData.projectType}
-                                        onChange={(e) => handleChange('projectType', e.target.value)}
-                                        className={`w-full pl-12 pr-4 py-4 bg-slate-50 border ${errors.projectType ? 'border-red-300' : 'border-slate-200'} rounded-xl font-semibold text-slate-700 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100 transition-all appearance-none cursor-pointer`}
-                                    >
-                                        <option value="">Select Project Type...</option>
-                                        {PROJECT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                </div>
-                                <FieldError msg={errors.projectType} />
                             </div>
 
                             {/* Contract Duration (computed) */}
@@ -924,7 +902,6 @@ const CreateProject = () => {
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Name</span><span className="text-slate-800 font-semibold">{formData.projectName}</span></div>
                                     {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Barangay</span><span className="text-slate-800 font-semibold">{formData.barangay}</span></div>
-                                    <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Type</span><span className="text-slate-800 font-semibold">{formData.projectType}</span></div>
                                     {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} days</span></div>}
                                 </div>
                             </div>

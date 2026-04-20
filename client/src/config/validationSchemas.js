@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { PROJECT_TYPES } from './projectTypes';
 
 const NAME_REGEX = /^[a-zA-Z\s\-']+$/;
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -39,9 +38,6 @@ export const projectSchema = z.object({
     sitioStreet: z.string().max(200, "Sitio/Street cannot exceed 200 characters").optional(),
 
     barangay: z.string().min(1, "Barangay is required"),
-
-    // Classification
-    projectType: z.enum(PROJECT_TYPES, { errorMap: () => ({ message: "Project type is required" }) }),
 
     // Account Code & Funding
     accountCode: z.string().max(100, "Account code cannot exceed 100 characters").optional(),
