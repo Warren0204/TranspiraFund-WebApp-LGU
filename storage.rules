@@ -28,6 +28,22 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Web (HCSD): Notice-to-Proceed document per project.
+    // One NTP per project, overwrite permitted. Uploaded from CreateProject
+    // as part of the three-step submit flow (createProject -> Storage write
+    // -> attachNtp callable). Readable by any signed-in user so the assigned
+    // PE and audit roles can view it.
+    match /projects/{projectId}/ntp/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && firestore.get(
+                        /databases/(default)/documents/users/$(request.auth.uid)
+                      ).data.role == 'HCSD'
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
+      allow delete: if false;
+    }
+
     // Catch-all: signed-in reads, all other client writes blocked.
     match /{allPaths=**} {
       allow read:  if request.auth != null;

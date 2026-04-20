@@ -34,11 +34,24 @@ const createAccountSchema = z.object({
     department: z.string().max(100).optional(),
 });
 
+const PROJECT_TYPES = [
+    "Building Construction",
+    "Roads & Pavement",
+    "Drainage & Flood Control",
+    "Water Supply",
+    "Electrical & Lighting",
+    "Public Facility Rehabilitation",
+    "Other",
+];
+
 const createProjectSchema = z.object({
     // Project Details
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
     sitioStreet: z.string().max(200).optional(),
     barangay: z.string().min(1, "Barangay is required").max(100),
+
+    // Classification
+    projectType: z.enum(PROJECT_TYPES, { errorMap: () => ({ message: "Project type is required" }) }),
 
     // Account Code & Funding
     accountCode: z.string().max(100).optional(),
@@ -128,6 +141,92 @@ const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status 
     } catch (err) {
         logger.error("System audit trail write failed:", err);
     }
+};
+
+// Write a user-facing notification document. Narrow payload on purpose â€”
+// recipientUid is queried by the client; severity drives the visual variant;
+// isRead/dismissedAt are the only fields the client may mutate (rules enforced).
+const createNotification = async ({
+    recipientUid,
+    action,
+    severity = "info",
+    title,
+    body,
+    targetType = null,
+    targetId = null,
+    metadata = {},
+}) => {
+    try {
+        if (!recipientUid) return;
+        await admin.firestore().collection("notifications").add({
+            recipientUid,
+            action,
+            severity,
+            title,
+            body,
+            targetType,
+            targetId,
+            metadata,
+            isRead: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } catch (err) {
+        logger.error("Notification write failed:", err);
+    }
+};
+
+// Server-side filename hardening for NTP uploads. Client sanitization is a UX
+// nicety; this is the security control. Returns null on pass, or an error msg.
+const validateNtpFilename = (name) => {
+    if (!name || typeof name !== "string" || name.length < 1 || name.length > 255) {
+        return "Invalid filename length";
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+        return "Filename contains disallowed characters";
+    }
+    if (name.startsWith(".") || name.includes("..")) {
+        return "Invalid filename";
+    }
+    if (/\.(exe|bat|cmd|sh|ps1|js|jar|php|html?)\./i.test(name)) {
+        return "Suspicious double extension";
+    }
+    if (!/\.(pdf|jpe?g|png)$/i.test(name)) {
+        return "Unsupported file extension";
+    }
+    return null;
+};
+
+// Enforce a per-user rolling-hour cap on attachNtp calls. Guards against a
+// compromised HCSD account or malicious insider. 20 uploads/hr is generous for
+// realistic workload (a few projects/day) but caps abuse blast radius.
+const NTP_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const NTP_RATE_LIMIT_MAX = 20;
+const enforceNtpRateLimit = async (uid) => {
+    const rlRef = admin.firestore().doc(`ntpRateLimits/${uid}`);
+    await admin.firestore().runTransaction(async (tx) => {
+        const snap = await tx.get(rlRef);
+        const now = Date.now();
+        if (!snap.exists) {
+            tx.set(rlRef, {
+                count: 1,
+                windowStartAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            return;
+        }
+        const data = snap.data();
+        const windowStart = data.windowStartAt?.toMillis?.() ?? 0;
+        if (now - windowStart > NTP_RATE_LIMIT_WINDOW_MS) {
+            tx.set(rlRef, {
+                count: 1,
+                windowStartAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            return;
+        }
+        if ((data.count || 0) >= NTP_RATE_LIMIT_MAX) {
+            throw new HttpsError("resource-exhausted", "Too many NTP uploads. Try again in an hour.");
+        }
+        tx.update(rlRef, { count: admin.firestore.FieldValue.increment(1) });
+    });
 };
 
 // â”€â”€â”€ CLOUD FUNCTION: Send OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -443,12 +542,149 @@ exports.createProject = onCall(async (request) => {
             projectName: projectFields.projectName,
             contractAmount: projectFields.contractAmount,
             barangay: projectFields.barangay,
+            projectType: projectFields.projectType,
         });
+
+        // Notify assigned Project Engineer (if any)
+        if (projectFields.projectEngineer) {
+            await createNotification({
+                recipientUid: projectFields.projectEngineer,
+                action: "PROJECT_ASSIGNED",
+                severity: "info",
+                title: "New project assigned",
+                body: `${projectFields.projectName} â€” ${projectFields.barangay}`,
+                targetType: "project",
+                targetId: projectRef.id,
+                metadata: { projectType: projectFields.projectType },
+            });
+        }
 
         return { success: true, projectId: projectRef.id };
     } catch (error) {
         logger.error("Error creating project:", error);
         throw new HttpsError("internal", "Unable to create project. Please try again.");
+    }
+});
+
+// â”€â”€â”€ CLOUD FUNCTION: Attach NTP document to a project â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// HCSD uploads the NTP file to Storage at projects/{projectId}/ntp/{fileName}
+// first, then calls this to persist the metadata on the project doc, log the
+// audit entry, and notify the assigned PE.
+const NTP_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+const NTP_MAX_BYTES = 10 * 1024 * 1024;
+const NTP_MIN_BYTES = 1024;
+
+const NTP_MAGIC_BYTES = {
+    "application/pdf": Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2D]),
+    "image/jpeg": Buffer.from([0xFF, 0xD8, 0xFF]),
+    "image/png": Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+};
+
+const attachNtpSchema = z.object({
+    projectId: z.string().min(1).max(128),
+    fileName: z.string().min(1).max(255),
+    fileUrl: z.string().url(),
+    sizeBytes: z.number().int().min(NTP_MIN_BYTES).max(NTP_MAX_BYTES),
+    contentType: z.enum(NTP_ALLOWED_CONTENT_TYPES),
+});
+
+exports.attachNtp = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to attach NTP.");
+
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can attach NTP documents.");
+    }
+
+    // Cheap abuse reject before we touch Zod / Storage.
+    await enforceNtpRateLimit(auth.uid);
+
+    const parsed = attachNtpSchema.safeParse(data || {});
+    if (!parsed.success) {
+        const msg = parsed.error.errors[0]?.message ?? "Invalid NTP payload.";
+        throw new HttpsError("invalid-argument", msg);
+    }
+    const { projectId, fileName, fileUrl, sizeBytes, contentType } = parsed.data;
+
+    const filenameErr = validateNtpFilename(fileName);
+    if (filenameErr) {
+        await logAudit(auth.uid, auth.token.email, "NTP_REJECTED", projectId, {
+            fileName,
+            reason: "filename_violation",
+            detail: filenameErr,
+        });
+        throw new HttpsError("invalid-argument", filenameErr);
+    }
+
+    const projectRef = admin.firestore().collection("projects").doc(projectId);
+    const projectSnap = await projectRef.get();
+    if (!projectSnap.exists) {
+        throw new HttpsError("not-found", "Project not found.");
+    }
+    const projectData = projectSnap.data();
+
+    // Magic-byte verification â€” the only check that actually sees the bytes.
+    // Client-reported contentType and file extension are both spoofable; this
+    // proves the uploaded object is plausibly what it claims to be.
+    const objectPath = `projects/${projectId}/ntp/${fileName}`;
+    const storageFile = admin.storage().bucket().file(objectPath);
+    let header;
+    try {
+        const [buf] = await storageFile.download({ start: 0, end: 15 });
+        header = buf;
+    } catch (err) {
+        logger.error("NTP header read failed:", err);
+        throw new HttpsError("not-found", "Uploaded file not found in storage.");
+    }
+
+    const expected = NTP_MAGIC_BYTES[contentType];
+    const magicOk = expected && header.length >= expected.length &&
+        header.slice(0, expected.length).equals(expected);
+
+    if (!magicOk) {
+        try { await storageFile.delete(); } catch (e) { logger.error("NTP cleanup delete failed:", e); }
+        await logAudit(auth.uid, auth.token.email, "NTP_REJECTED", projectId, {
+            projectName: projectData.projectName,
+            fileName,
+            reason: "magic_byte_mismatch",
+            declaredType: contentType,
+        });
+        throw new HttpsError("invalid-argument", "File content does not match declared type.");
+    }
+
+    try {
+        await projectRef.update({
+            ntpFileUrl: fileUrl,
+            ntpFileName: fileName,
+            ntpUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+            ntpUploadedBy: auth.uid,
+        });
+
+        await logAudit(auth.uid, auth.token.email, "NTP_ATTACHED", projectId, {
+            projectName: projectData.projectName,
+            fileName,
+            sizeBytes,
+            contentType,
+        });
+
+        if (projectData.projectEngineer) {
+            await createNotification({
+                recipientUid: projectData.projectEngineer,
+                action: "NTP_ATTACHED",
+                severity: "success",
+                title: "NTP document uploaded",
+                body: `NTP is now available for ${projectData.projectName}`,
+                targetType: "project",
+                targetId: projectId,
+                metadata: { fileName },
+            });
+        }
+
+        return { success: true };
+    } catch (error) {
+        logger.error("Error attaching NTP:", error);
+        throw new HttpsError("internal", "Unable to attach NTP. Please try again.");
     }
 });
 

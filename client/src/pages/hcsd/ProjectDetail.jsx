@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
-    Hash, Banknote, Flag
+    Hash, Banknote, Flag, Tag, ExternalLink
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
@@ -241,6 +241,12 @@ const ProjectDetail = () => {
                                     Barangay {p.barangay}
                                 </span>
                             )}
+                            {p.projectType && (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30">
+                                    <Tag size={10} />
+                                    {p.projectType}
+                                </span>
+                            )}
                             {computed.durationDays && (
                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 dark:text-slate-500">
                                     <Clock size={11} />
@@ -318,6 +324,20 @@ const ProjectDetail = () => {
                             {p.revisedDate2 && <Field label="Revised Date 2" value={fmtDate(p.revisedDate2)} />}
                             {p.actualDateCompleted && <Field label="Actual Completion" value={fmtDate(p.actualDateCompleted)} />}
                         </FieldGrid>
+
+                        <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-700/50">
+                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">NTP Document</p>
+                            {p.ntpFileUrl ? (
+                                <a href={p.ntpFileUrl} target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-300 text-sm font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors">
+                                    <FileText size={14} />
+                                    <span className="truncate max-w-[220px]">{p.ntpFileName || 'View NTP'}</span>
+                                    <ExternalLink size={12} className="shrink-0" />
+                                </a>
+                            ) : (
+                                <p className="text-sm font-medium text-slate-400 dark:text-slate-600">No NTP on file</p>
+                            )}
+                        </div>
                     </SectionCard>
 
                     {/* 5 — Accomplishment — full width */}

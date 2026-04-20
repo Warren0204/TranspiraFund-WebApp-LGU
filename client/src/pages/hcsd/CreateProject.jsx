@@ -4,15 +4,21 @@ import {
     ArrowLeft, Building2, MapPin, Calendar,
     HardHat, LayoutDashboard, AlertCircle,
     CheckCircle, X, FileText, DollarSign,
-    Clock, TrendingDown, Users, ClipboardList, Banknote
+    Clock, TrendingDown, Users, ClipboardList, Banknote,
+    Tag, Upload
 } from 'lucide-react';
 import { z } from 'zod';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { ROLES } from '../../config/roles';
+import { PROJECT_TYPES } from '../../config/projectTypes';
 import { collection, query, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { db, storage } from '../../config/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app from '../../config/firebase';
+
+const NTP_ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+const NTP_MAX_BYTES = 10 * 1024 * 1024;
 
 const CEBU_CITY_BARANGAYS = [
     "Adlaon", "Agsungot", "Apas", "Babag", "Bacayan", "Banilad",
@@ -50,6 +56,7 @@ const parseFormattedNumber = (value) => {
 const projectSchema = z.object({
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
     barangay: z.string().min(1, "Barangay is required"),
+    projectType: z.enum(PROJECT_TYPES, { errorMap: () => ({ message: "Project type is required" }) }),
     fundingSource: z.string().min(1, "Funding source is required"),
     contractAmount: z.number({ invalid_type_error: "Contract amount must be a number" })
         .min(10000, "Minimum contract amount is ₱10,000")
@@ -67,10 +74,14 @@ const projectSchema = z.object({
 const useCreateProject = () => {
     const navigate = useNavigate();
 
+    const [ntpFile, setNtpFile] = useState(null);
+    const [ntpFileError, setNtpFileError] = useState('');
+
     const [formData, setFormData] = useState({
         projectName: '',
         sitioStreet: '',
         barangay: '',
+        projectType: '',
         accountCode: '',
         fundingSource: 'City-Funded',
         contractAmount: '',
@@ -181,10 +192,30 @@ const useCreateProject = () => {
         if (errors.officialDateStarted) setErrors(prev => { const e = { ...prev }; delete e.officialDateStarted; return e; });
     };
 
+    const handleNtpFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) { setNtpFile(null); setNtpFileError(''); return; }
+        if (!NTP_ACCEPTED_TYPES.includes(file.type)) {
+            setNtpFile(null);
+            setNtpFileError('Unsupported file type. Upload a PDF, JPEG, or PNG.');
+            return;
+        }
+        if (file.size > NTP_MAX_BYTES) {
+            setNtpFile(null);
+            setNtpFileError('File too large. Maximum size is 10 MB.');
+            return;
+        }
+        setNtpFile(file);
+        setNtpFileError('');
+    };
+
+    const handleClearNtpFile = () => { setNtpFile(null); setNtpFileError(''); };
+
     // ── Validation guards ────────────────────────────────────────────────────────
     const isFormComplete = Boolean(
         formData.projectName &&
         formData.barangay &&
+        formData.projectType &&
         formData.fundingSource &&
         formData.contractAmount &&
         formData.ntpReceivedDate &&
@@ -206,6 +237,7 @@ const useCreateProject = () => {
             projectSchema.parse({
                 projectName: formData.projectName,
                 barangay: formData.barangay,
+                projectType: formData.projectType,
                 fundingSource: formData.fundingSource,
                 contractAmount: Number(formData.contractAmount),
                 ntpReceivedDate: formData.ntpReceivedDate,
@@ -232,10 +264,11 @@ const useCreateProject = () => {
             const functions = getFunctions(app, 'asia-southeast1');
             const createProjectFn = httpsCallable(functions, 'createProject');
 
-            await createProjectFn({
+            const result = await createProjectFn({
                 projectName: formData.projectName,
                 sitioStreet: formData.sitioStreet || undefined,
                 barangay: formData.barangay,
+                projectType: formData.projectType,
                 accountCode: formData.accountCode || undefined,
                 fundingSource: formData.fundingSource,
                 contractAmount: Number(formData.contractAmount),
@@ -263,6 +296,30 @@ const useCreateProject = () => {
                 actionTaken: formData.actionTaken || undefined,
             });
 
+            const projectId = result?.data?.projectId;
+
+            if (ntpFile && projectId) {
+                try {
+                    const safeName = ntpFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                    const objectRef = storageRef(storage, `projects/${projectId}/ntp/${safeName}`);
+                    await uploadBytes(objectRef, ntpFile, { contentType: ntpFile.type });
+                    const fileUrl = await getDownloadURL(objectRef);
+
+                    const attachNtpFn = httpsCallable(functions, 'attachNtp');
+                    await attachNtpFn({
+                        projectId,
+                        fileName: safeName,
+                        fileUrl,
+                        sizeBytes: ntpFile.size,
+                        contentType: ntpFile.type,
+                    });
+                } catch (uploadErr) {
+                    setErrors(prev => ({ ...prev, global: `Project created, but NTP upload failed: ${uploadErr.message || 'Unknown error'}. You can attach it later from the project page.` }));
+                    setIsSubmitting(false);
+                    return;
+                }
+            }
+
             navigate('/hcsd/projects');
         } catch (err) {
             setErrors(prev => ({ ...prev, global: err.message || "Failed to submit project. Please try again." }));
@@ -273,6 +330,7 @@ const useCreateProject = () => {
     return {
         formData, errors, isSubmitting,
         engineers, loadingEngineers,
+        ntpFile, ntpFileError, handleNtpFileChange, handleClearNtpFile,
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
@@ -325,6 +383,7 @@ const CreateProject = () => {
     const {
         formData, errors, isSubmitting,
         engineers, loadingEngineers,
+        ntpFile, ntpFileError, handleNtpFileChange, handleClearNtpFile,
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
@@ -406,6 +465,22 @@ const CreateProject = () => {
                                     </div>
                                     <FieldError msg={errors.barangay} />
                                 </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className={labelCls}>Project Type <span className="text-red-400">*</span></label>
+                                <div className="relative">
+                                    <Tag className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                    <select
+                                        value={formData.projectType}
+                                        onChange={(e) => handleChange('projectType', e.target.value)}
+                                        className={`w-full pl-12 pr-4 py-4 bg-slate-50 border ${errors.projectType ? 'border-red-300' : 'border-slate-200'} rounded-xl font-semibold text-slate-700 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100 transition-all appearance-none cursor-pointer`}
+                                    >
+                                        <option value="">Select Project Type...</option>
+                                        {PROJECT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                </div>
+                                <FieldError msg={errors.projectType} />
                             </div>
 
                             {/* Contract Duration (computed) */}
@@ -572,6 +647,34 @@ const CreateProject = () => {
                                         className={`w-full p-3 bg-slate-50 border ${errors.officialDateStarted ? 'border-red-300' : 'border-slate-200'} rounded-xl font-medium text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all`}
                                     />
                                     <FieldError msg={errors.officialDateStarted} />
+                                </div>
+
+                                <div className="space-y-1 md:col-span-2">
+                                    <label className={labelCls}>NTP Document <span className="text-slate-400 normal-case font-semibold tracking-normal">(optional — PDF, JPEG, PNG · max 10 MB)</span></label>
+                                    {!ntpFile ? (
+                                        <label className="flex items-center gap-3 p-4 bg-slate-50 border border-dashed border-slate-300 rounded-xl cursor-pointer hover:bg-slate-100 hover:border-blue-300 transition-all">
+                                            <Upload className="text-slate-400" size={18} />
+                                            <span className="text-sm font-semibold text-slate-500">Choose a file to upload…</span>
+                                            <input
+                                                type="file"
+                                                accept="application/pdf,image/jpeg,image/png"
+                                                onChange={handleNtpFileChange}
+                                                className="hidden"
+                                            />
+                                        </label>
+                                    ) : (
+                                        <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                                            <FileText className="text-blue-600 shrink-0" size={18} />
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-bold text-slate-800 truncate">{ntpFile.name}</p>
+                                                <p className="text-xs text-slate-500">{(ntpFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                                            </div>
+                                            <button type="button" onClick={handleClearNtpFile} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-white transition-colors">
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+                                    )}
+                                    {ntpFileError && <FieldError msg={ntpFileError} />}
                                 </div>
                             </div>
 
@@ -821,6 +924,7 @@ const CreateProject = () => {
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Name</span><span className="text-slate-800 font-semibold">{formData.projectName}</span></div>
                                     {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Barangay</span><span className="text-slate-800 font-semibold">{formData.barangay}</span></div>
+                                    <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Type</span><span className="text-slate-800 font-semibold">{formData.projectType}</span></div>
                                     {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} days</span></div>}
                                 </div>
                             </div>
@@ -858,6 +962,7 @@ const CreateProject = () => {
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Timeliness</p>
                                 <div className="space-y-2 text-sm">
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">NTP Received</span><span className="text-slate-800 font-semibold">{formData.ntpReceivedDate}</span></div>
+                                    <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">NTP Document</span><span className="text-slate-800 font-semibold">{ntpFile ? ntpFile.name : <em className="text-slate-400 font-medium">None attached</em>}</span></div>
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Date Started</span><span className="text-slate-800 font-semibold">{formData.officialDateStarted}</span></div>
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Date Completion</span><span className="text-slate-800 font-semibold">{formData.originalDateCompletion}</span></div>
                                 </div>

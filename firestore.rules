@@ -121,14 +121,26 @@ service cloud.firestore {
     // ════════════════════════════════════════════════════════════════
 
     match /notifications/{notifId} {
-      allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
-      allow update: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO', 'PROJ_ENG']);
+      allow read:   if isAuthenticated() && resource.data.recipientUid == request.auth.uid;
+      allow update: if isAuthenticated()
+                    && resource.data.recipientUid == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['isRead', 'dismissedAt']);
       allow create, delete: if false;
     }
 
 
     // ════════════════════════════════════════════════════════════════
-    //  CATEGORY 6 — PUBLIC DATA
+    //  CATEGORY 6 — RATE LIMITS (Cloud Functions bookkeeping)
+    // ════════════════════════════════════════════════════════════════
+
+    match /ntpRateLimits/{uid} {
+      allow read, write: if false;
+    }
+
+
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 7 — PUBLIC DATA
     // ════════════════════════════════════════════════════════════════
 
     match /stats/{docId} {

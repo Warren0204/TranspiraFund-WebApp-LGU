@@ -105,16 +105,19 @@ Functions use Firebase Secrets (not env vars):
 | `auditTrails/mis/entries/{logId}` | MIS-scope audit trail | MIS read-only; Cloud Functions write |
 | `auditTrails/hcsd/entries/{logId}` | HCSD-scope audit trail | HCSD read-only; Cloud Functions write |
 | `auditTrails/mobile/entries/{logId}` | Mobile activity log | PROJ_ENG creates; MIS/HCSD read |
-| `notifications/{notifId}` | App notifications | All roles read/update |
+| `notifications/{notifId}` | App notifications | Recipient-only read/update (isRead + dismissedAt). Writes via Cloud Functions |
 | `stats/public` | Aggregated public counters (`totalProjects`, `totalBudget`, `totalEngineers`, `done`, `delayed`, `progress`) | Public read; trigger-maintained |
 | `otpCodes/{uid}` | OTP storage | Cloud Functions only |
 | `passwordResets/{emailHash}` | Password reset rate-limiting (legacy) | Cloud Functions only |
 | `passwordResetOtps/{docId}` | Password reset OTP storage | Cloud Functions only; client-blocked in rules |
 | `passwordResetCooldowns/{docId}` | Password reset rate-limiting | Cloud Functions only; client-blocked in rules |
+| `ntpRateLimits/{uid}` | Per-user rolling-hour counter for `attachNtp` calls (max 20/hr) | Cloud Functions only; client-blocked in rules |
 
 ## Project Schema (Firestore `projects` document)
 All fields stored on the project document:
 - **Project Details**: `projectName`, `sitioStreet`, `barangay`
+- **Classification**: `projectType` (enum — see `client/src/config/projectTypes.js`; mirrored in `functions/src/index.js`)
+- **NTP Document**: `ntpFileUrl`, `ntpFileName`, `ntpUploadedAt`, `ntpUploadedBy` (populated by the `attachNtp` Cloud Function after the HCSD client uploads to Storage at `projects/{projectId}/ntp/{fileName}`)
 - **Account/Funding**: `accountCode`, `fundingSource`
 - **Contract**: `contractAmount`, `contractor`
 - **Personnel**: `projectEngineer`, `projectInspector`, `materialInspector`, `electricalInspector`
@@ -143,6 +146,8 @@ Valid project statuses: `Delayed` → `Ongoing` → `Completed`. `Returned` is u
 |---|---|---|
 | `USER_LOGIN` | OTP verification success | Actor name |
 | `PROJECT_CREATED` | `createProject` Cloud Function | Project name |
+| `NTP_ATTACHED` | `attachNtp` Cloud Function | Project name |
+| `NTP_REJECTED` | `attachNtp` Cloud Function (filename violation or magic-byte mismatch) | Project name |
 | `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email |
 | `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email |
 | `PHOTO_UPDATED` | `updateProfilePhoto` Cloud Function (HCSD only) | Actor name |
