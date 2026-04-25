@@ -30,7 +30,7 @@ const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
     lastName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "Last name contains invalid characters"),
-    roleType: z.enum(["MAYOR", "HCSD", "CPDO", "PROJ_ENG"]),
+    roleType: z.enum(["HCSD", "PROJ_ENG"]),
     department: z.string().max(100).optional(),
 });
 
@@ -85,6 +85,29 @@ const createProjectSchema = z.object({
 
 });
 
+// Tenant provisioning input. tenantId format is {lgu-slug}-{psgc-10-digit},
+// e.g. "cebu-city-0730600000". The slug must be lowercase alphanumeric with
+// hyphens (no leading/trailing hyphen). The 10-digit PSGC code is per PSGC
+// Revision 1, PSA Board Resolution No. 07 Series of 2021. classification
+// must be one of the four LGU classifications recognized by DILG.
+const provisionTenantSchema = z.object({
+    tenantId: z.string().min(12).max(100).regex(
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-\d{10}$/,
+        "tenantId must be {lgu-slug}-{psgc-10-digit}, e.g. cebu-city-0730600000",
+    ),
+    lguName: z.string().min(2).max(100),
+    province: z.string().min(2).max(100),
+    region: z.string().min(2).max(100),
+    classification: z.enum([
+        "Highly Urbanized City",
+        "Independent Component City",
+        "Component City",
+        "Municipality",
+    ]),
+    contractReference: z.string().min(1).max(100),
+    firstMisAdminEmail: z.string().email().max(100),
+});
+
 // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Cryptographically secure password generator
@@ -97,36 +120,92 @@ const generatePassword = (length = 16) => {
     return password;
 };
 
-// Write an audit trail entry â€” HCSD-scoped
-const logAudit = async (actorUid, actorEmail, action, targetId = null, details = {}) => {
+// Tenant-claim guard. Every authenticated callable that touches Firestore
+// must pass through this so a missing tenantId fails loudly instead of
+// silently writing an unscoped document. Returns the tenantId on success.
+const requireTenantClaim = (auth) => {
+    const tenantId = auth?.token?.tenantId;
+    if (!tenantId || typeof tenantId !== "string") {
+        throw new HttpsError(
+            "failed-precondition",
+            "Account is not assigned to a tenant. Contact your administrator.",
+        );
+    }
+    return tenantId;
+};
+
+// Platform-admin guard for tenant provisioning / lifecycle ops. The
+// platformAdmin claim is granted via scripts/grant-platform-admin.js and
+// never set by any callable, so it cannot be self-elevated.
+const requirePlatformAdmin = (auth) => {
+    if (!auth || auth.token?.platformAdmin !== true) {
+        throw new HttpsError(
+            "permission-denied",
+            "This action requires platform administrator privileges.",
+        );
+    }
+};
+
+// Write an audit trail entry, HCSD-scoped. tenantId is required so the
+// document carries the same tenant stamp the read-side rules check against.
+const logAudit = async (actorUid, actorEmail, action, targetId, details, tenantId) => {
     try {
+        if (!tenantId) {
+            logger.error(`logAudit called without tenantId for action=${action}; refusing to write unscoped doc`);
+            return;
+        }
         await admin.firestore().collection("auditTrails").doc("hcsd").collection("entries").add({
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             actorUid,
             actorEmail: actorEmail || null,
             action,
-            targetId,
-            details,
+            targetId: targetId ?? null,
+            details: details ?? {},
+            tenantId,
         });
     } catch (err) {
         logger.error("Audit trail write failed:", err);
     }
 };
 
-// Write a system-level audit trail entry â€” MIS-scoped, append-only
-const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status = "SUCCESS", actorName = null) => {
+// Write a system-level audit trail entry, MIS-scoped, append-only. tenantId
+// is required.
+const logSystemAudit = async (actorUid, actorEmail, action, target, status, actorName, tenantId) => {
     try {
+        if (!tenantId) {
+            logger.error(`logSystemAudit called without tenantId for action=${action}; refusing to write unscoped doc`);
+            return;
+        }
         const actor = { uid: actorUid, email: actorEmail || null };
         if (actorName) actor.name = actorName;
         await admin.firestore().collection("auditTrails").doc("mis").collection("entries").add({
             action,
             actor,
-            target,
-            status,
+            target: target ?? {},
+            status: status ?? "SUCCESS",
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            tenantId,
         });
     } catch (err) {
         logger.error("System audit trail write failed:", err);
+    }
+};
+
+// Write a platform-scope audit entry. Used only by tenant provisioning /
+// lifecycle ops. tenantId here is the SUBJECT tenant (the one being
+// provisioned), not the actor's tenant (platform admins have no tenant).
+const logPlatformAudit = async (actorUid, actorEmail, action, target, status, tenantId) => {
+    try {
+        await admin.firestore().collection("auditTrails").doc("_platform").collection("entries").add({
+            action,
+            actor: { uid: actorUid, email: actorEmail || null },
+            target: target ?? {},
+            status: status ?? "SUCCESS",
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            tenantId: tenantId ?? null,
+        });
+    } catch (err) {
+        logger.error("Platform audit trail write failed:", err);
     }
 };
 
@@ -150,9 +229,14 @@ const createNotification = async ({
     targetType = null,
     targetId = null,
     metadata = {},
+    tenantId,
 }) => {
     try {
         if (!recipientUid) return;
+        if (!tenantId) {
+            logger.error("createNotification called without tenantId; refusing to write unscoped doc");
+            return;
+        }
         await admin.firestore().collection("notifications").add({
             recipientUid,
             action,
@@ -165,6 +249,7 @@ const createNotification = async ({
             metadata,
             isRead: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            tenantId,
         });
     } catch (err) {
         logger.error("Notification write failed:", err);
@@ -194,9 +279,12 @@ const validateNtpFilename = (name) => {
 
 // Per-user rolling-hour rate limit. Guards against compromised or abusive
 // accounts by capping the blast radius of sensitive callables (NTP uploads,
-// project creation). Each collection holds { count, windowStartAt } per uid.
+// project creation). Each collection holds { count, windowStartAt, tenantId,
+// uid } per uid. tenantId is stamped on the doc so rules can scope reads
+// (clients are blocked from these collections anyway, but the field keeps
+// the document model consistent and allows tenant-scoped maintenance ops).
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-const enforceRateLimit = async (collection, uid, max, errorMsg) => {
+const enforceRateLimit = async (collection, uid, max, errorMsg, tenantId) => {
     const rlRef = admin.firestore().doc(`${collection}/${uid}`);
     await admin.firestore().runTransaction(async (tx) => {
         const snap = await tx.get(rlRef);
@@ -205,6 +293,8 @@ const enforceRateLimit = async (collection, uid, max, errorMsg) => {
             tx.set(rlRef, {
                 count: 1,
                 windowStartAt: admin.firestore.FieldValue.serverTimestamp(),
+                uid,
+                tenantId: tenantId ?? null,
             });
             return;
         }
@@ -214,6 +304,8 @@ const enforceRateLimit = async (collection, uid, max, errorMsg) => {
             tx.set(rlRef, {
                 count: 1,
                 windowStartAt: admin.firestore.FieldValue.serverTimestamp(),
+                uid,
+                tenantId: tenantId ?? null,
             });
             return;
         }
@@ -224,11 +316,11 @@ const enforceRateLimit = async (collection, uid, max, errorMsg) => {
     });
 };
 
-const enforceNtpRateLimit = (uid) =>
-    enforceRateLimit("ntpRateLimits", uid, 20, "Too many NTP uploads. Try again in an hour.");
+const enforceNtpRateLimit = (uid, tenantId) =>
+    enforceRateLimit("ntpRateLimits", uid, 20, "Too many NTP uploads. Try again in an hour.", tenantId);
 
-const enforceCreateProjectRateLimit = (uid) =>
-    enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.");
+const enforceCreateProjectRateLimit = (uid, tenantId) =>
+    enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.", tenantId);
 
 // â”€â”€â”€ CLOUD FUNCTION: Send OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
@@ -254,6 +346,14 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     const sentAt = Date.now();
     const expiresAt = sentAt + 5 * 60 * 1000;
 
+    // Derive tenantId for the otpCodes doc stamp. Claim is the primary
+    // source; userDoc is a fallback for accounts whose claim was wiped by
+    // pre-refactor OTP code. New accounts always have the claim.
+    const sendOtpUserDoc = await admin.firestore().collection("users").doc(uid).get();
+    const sendOtpTenantId = auth.token?.tenantId
+        || (sendOtpUserDoc.exists ? sendOtpUserDoc.data().tenantId : null)
+        || null;
+
     await admin.firestore().collection("otpCodes").doc(uid).set({
         code: otpCode,
         email: userEmail,
@@ -261,16 +361,17 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
         expiresAt,
         attempts: 0,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        tenantId: sendOtpTenantId,
     });
 
-    // Additive claim update: preserve all existing claims, only reset the OTP
-    // fields. Restore role from Firestore only if it's missing from claims
-    // (covers legacy accounts whose role got wiped by older OTP code).
+    // Additive claim update: preserve all existing claims (including
+    // tenantId), only reset the OTP fields. Restore role from Firestore
+    // only if it's missing from claims (covers legacy accounts whose role
+    // got wiped by older OTP code).
     const sendOtpUser = await admin.auth().getUser(uid);
     const sendOtpExisting = sendOtpUser.customClaims || {};
     let sendOtpRole = sendOtpExisting.role;
     if (!sendOtpRole) {
-        const sendOtpUserDoc = await admin.firestore().collection("users").doc(uid).get();
         sendOtpRole = sendOtpUserDoc.exists ? sendOtpUserDoc.data().role : undefined;
     }
     const sendOtpNextClaims = { ...sendOtpExisting, otpVerified: false, otpVerifiedAtAuthTime: 0 };
@@ -348,14 +449,19 @@ exports.verifyOtp = onCall(async (request) => {
 
     await otpRef.delete();
 
-    // Additive claim update: preserve all existing claims, only set the OTP
-    // verification fields. Restore role from Firestore only if it's missing
-    // from claims (covers legacy accounts whose role got wiped).
+    // Additive claim update: preserve all existing claims (including
+    // tenantId), only set the OTP verification fields. Restore role from
+    // Firestore only if it's missing from claims (covers legacy accounts
+    // whose role got wiped).
     const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userRole = userDoc.exists ? userDoc.data().role : null;
     const userName = userDoc.exists
         ? `${userDoc.data().firstName || ""} ${userDoc.data().lastName || ""}`.trim()
         : null;
+    // Tenant resolution: claim first, userDoc fallback for legacy accounts.
+    const userTenantId = auth.token?.tenantId
+        || (userDoc.exists ? userDoc.data().tenantId : null)
+        || null;
 
     const authTime = auth.token.auth_time;
     const verifyOtpUser = await admin.auth().getUser(uid);
@@ -365,12 +471,12 @@ exports.verifyOtp = onCall(async (request) => {
     await admin.auth().setCustomUserClaims(uid, verifyOtpNextClaims);
 
     if (userRole === "HCSD") {
-        await logAudit(uid, auth.token.email, "USER_LOGIN", uid, { role: userRole, name: userName });
+        await logAudit(uid, auth.token.email, "USER_LOGIN", uid, { role: userRole, name: userName }, userTenantId);
     } else {
-        await logSystemAudit(uid, auth.token.email, "USER_LOGIN", { uid, role: userRole, name: userName }, "SUCCESS", userName);
+        await logSystemAudit(uid, auth.token.email, "USER_LOGIN", { uid, role: userRole, name: userName }, "SUCCESS", userName, userTenantId);
     }
 
-    await logSystemAudit(uid, auth.token.email, "OTP_VERIFIED", {}, "SUCCESS");
+    await logSystemAudit(uid, auth.token.email, "OTP_VERIFIED", {}, "SUCCESS", null, userTenantId);
     return { success: true };
 });
 
@@ -378,6 +484,9 @@ exports.verifyOtp = onCall(async (request) => {
 exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
+
+    // Caller must have a tenantId claim. The new account inherits it.
+    const callerTenantId = requireTenantClaim(auth);
 
     // RBAC check
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
@@ -406,9 +515,16 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             displayName: `${firstName} ${lastName}`,
         });
 
-        // Set role as custom claim
+        // Additive claim merge. Brand-new users have no existing claims, but
+        // the pattern matches sendOtp / verifyOtp so any future claim added
+        // outside this callable will not get clobbered. tenantId is set here
+        // and never rewritten anywhere else.
+        const newUserRecord = await admin.auth().getUser(userRecord.uid);
+        const existingClaims = newUserRecord.customClaims || {};
         await admin.auth().setCustomUserClaims(userRecord.uid, {
+            ...existingClaims,
             role: roleType,
+            tenantId: callerTenantId,
             otpVerified: false,
             otpVerifiedAtAuthTime: 0,
         });
@@ -419,6 +535,7 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             firstName,
             lastName,
             role: roleType,
+            tenantId: callerTenantId,
             department: department || "",
             status: "Active",
             mustChangePassword: true,
@@ -452,11 +569,11 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_CREATED",
                 { email, role: roleType, department: department || "" },
-                "SUCCESS", callerName);
+                "SUCCESS", callerName, callerTenantId);
         } else {
             await logAudit(auth.uid, auth.token.email, "ACCOUNT_CREATED", userRecord.uid, {
                 email, roleType, department: department || "",
-            });
+            }, callerTenantId);
         }
 
         return { success: true, message: "Account provisioned. Credentials sent to the registered email." };
@@ -470,10 +587,148 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     }
 });
 
+// ─── CLOUD FUNCTION: Provision Tenant ─────────────────────────────────────
+// Platform-admin-only. Creates a new tenant document and the first MIS Admin
+// account for that tenant. The platform admin's own session does NOT need a
+// tenantId claim (super-admins have no tenant); the new tenant's id is the
+// one passed in the payload, which is then stamped on the new MIS account's
+// claims and Firestore docs. Bootstrap a platform admin via:
+//   node scripts/grant-platform-admin.js <uid>
+exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
+    const { data, auth } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    requirePlatformAdmin(auth);
+
+    const parsed = provisionTenantSchema.safeParse(data);
+    if (!parsed.success) {
+        const msg = parsed.error.errors[0]?.message ?? "Invalid input.";
+        throw new HttpsError("invalid-argument", msg);
+    }
+    const {
+        tenantId, lguName, province, region, classification,
+        contractReference, firstMisAdminEmail,
+    } = parsed.data;
+
+    // Reject if tenant already exists. Idempotency is intentionally not
+    // baked in: a duplicate provision is a mistake worth surfacing.
+    const tenantRef = admin.firestore().collection("tenants").doc(tenantId);
+    const tenantSnap = await tenantRef.get();
+    if (tenantSnap.exists) {
+        throw new HttpsError("already-exists", `Tenant '${tenantId}' is already provisioned.`);
+    }
+
+    const tempPassword = generatePassword();
+    let userRecord;
+
+    try {
+        userRecord = await admin.auth().createUser({
+            email: firstMisAdminEmail,
+            password: tempPassword,
+            displayName: `${lguName} MIS Admin`,
+        });
+    } catch (error) {
+        logger.error("provisionTenant: createUser failed:", error);
+        if (error.code === "auth/email-already-exists") {
+            throw new HttpsError("already-exists", "An account with this email already exists.");
+        }
+        throw new HttpsError("internal", "Unable to create the MIS admin account.");
+    }
+
+    try {
+        // Tenant doc first so the new user's tenantId stamp points at a
+        // real, queryable tenant. Status seeds to "active"; lifecycle ops
+        // (suspend / archive) belong to a separate v2 callable.
+        await tenantRef.set({
+            tenantId,
+            lguName,
+            province,
+            region,
+            classification,
+            status: "active",
+            dateOnboarded: admin.firestore.FieldValue.serverTimestamp(),
+            contractReference,
+        });
+
+        // Additive claim merge (matches sendOtp / verifyOtp / createOfficialAccount).
+        const newUserRecord = await admin.auth().getUser(userRecord.uid);
+        const existingClaims = newUserRecord.customClaims || {};
+        await admin.auth().setCustomUserClaims(userRecord.uid, {
+            ...existingClaims,
+            role: "MIS",
+            tenantId,
+            otpVerified: false,
+            otpVerifiedAtAuthTime: 0,
+        });
+
+        await admin.firestore().collection("users").doc(userRecord.uid).set({
+            uid: userRecord.uid,
+            email: firstMisAdminEmail,
+            firstName: "MIS",
+            lastName: "Admin",
+            role: "MIS",
+            tenantId,
+            department: "Management Information Systems",
+            status: "Active",
+            mustChangePassword: true,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: auth.uid,
+        });
+
+        const transporter = createTransporter();
+        await transporter.sendMail({
+            from: `"TranspiraFund Platform" <${gmailUser.value()}>`,
+            to: firstMisAdminEmail,
+            subject: `TranspiraFund — ${lguName} has been onboarded`,
+            html: `
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
+                    <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Welcome to TranspiraFund</h2>
+                    <p style="color:#475569;font-size:15px;margin-bottom:8px;">${lguName} has been onboarded as an LGU on TranspiraFund. You have been provisioned as the first MIS Administrator for this tenant.</p>
+                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:24px 0;">
+                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Login Email</p>
+                        <p style="margin:0 0 16px;color:#1e293b;font-size:15px;font-weight:600;">${firstMisAdminEmail}</p>
+                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Temporary Password</p>
+                        <p style="margin:0;color:#1e293b;font-size:18px;font-weight:bold;letter-spacing:2px;font-family:monospace;">${tempPassword}</p>
+                    </div>
+                    <p style="color:#dc2626;font-size:13px;font-weight:600;">You will be required to change your password on first login. Do not share this email with anyone.</p>
+                </div>
+            `,
+        });
+
+        await logPlatformAudit(
+            auth.uid, auth.token.email, "TENANT_PROVISIONED",
+            { tenantId, lguName, classification, contractReference, firstMisAdminUid: userRecord.uid, firstMisAdminEmail },
+            "SUCCESS", tenantId,
+        );
+
+        return {
+            success: true,
+            tenantId,
+            firstMisAdminUid: userRecord.uid,
+            message: `${lguName} provisioned. Credentials sent to ${firstMisAdminEmail}.`,
+        };
+    } catch (error) {
+        // Best-effort rollback so a half-provisioned tenant does not linger.
+        // We only delete the Auth user we created in this invocation; the
+        // tenant doc is removed first since it has no foreign-key tail.
+        logger.error("provisionTenant: post-createUser step failed, rolling back:", error);
+        try { await tenantRef.delete(); } catch (e) { logger.error("Rollback: tenant doc delete failed:", e); }
+        try { await admin.firestore().collection("users").doc(userRecord.uid).delete(); } catch (e) { logger.error("Rollback: user doc delete failed:", e); }
+        try { await admin.auth().deleteUser(userRecord.uid); } catch (e) { logger.error("Rollback: auth user delete failed:", e); }
+
+        await logPlatformAudit(
+            auth.uid, auth.token.email, "TENANT_PROVISION_FAILED",
+            { tenantId, lguName, error: error.message ?? String(error) },
+            "FAILURE", tenantId,
+        );
+        throw new HttpsError("internal", "Tenant provisioning failed and was rolled back. Please try again.");
+    }
+});
+
 // â”€â”€â”€ CLOUD FUNCTION: Delete Official Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.deleteOfficialAccount = onCall(async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to delete accounts.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists) throw new HttpsError("permission-denied", "User profile not found.");
@@ -483,17 +738,24 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     const { uid } = data;
     if (!uid || typeof uid !== "string") throw new HttpsError("invalid-argument", "User UID is required.");
 
-    if (callerRole === "HCSD") {
-        const targetDoc = await admin.firestore().collection("users").doc(uid).get();
-        if (targetDoc.exists && targetDoc.data().role !== "PROJ_ENG") {
-            throw new HttpsError("permission-denied", "HCSD can only revoke Project Engineer access.");
-        }
+    // Single read of the target. We need both the role-class check (HCSD may
+    // only delete PROJ_ENG) and the tenant check (no caller may delete
+    // accounts outside their own tenant, even with the role check intact).
+    const targetDoc = await admin.firestore().collection("users").doc(uid).get();
+    if (!targetDoc.exists) {
+        throw new HttpsError("not-found", "Target account not found.");
+    }
+    const targetData = targetDoc.data();
+    if (targetData.tenantId !== callerTenantId) {
+        throw new HttpsError("permission-denied", "Cannot delete an account from another tenant.");
+    }
+    if (callerRole === "HCSD" && targetData.role !== "PROJ_ENG") {
+        throw new HttpsError("permission-denied", "HCSD can only revoke Project Engineer access.");
     }
 
     try {
-        const targetDoc = await admin.firestore().collection("users").doc(uid).get();
-        const targetEmail = targetDoc.exists ? targetDoc.data().email : null;
-        const targetRole = targetDoc.exists ? targetDoc.data().role : null;
+        const targetEmail = targetData.email ?? null;
+        const targetRole = targetData.role ?? null;
 
         await admin.auth().deleteUser(uid);
         await admin.firestore().collection("users").doc(uid).delete();
@@ -501,9 +763,9 @@ exports.deleteOfficialAccount = onCall(async (request) => {
         // Audit trail â€” route by caller role
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED",
-                { uid, email: targetEmail, role: targetRole }, "SUCCESS");
+                { uid, email: targetEmail, role: targetRole }, "SUCCESS", null, callerTenantId);
         } else {
-            await logAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED", uid, { deletedEmail: targetEmail });
+            await logAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED", uid, { deletedEmail: targetEmail }, callerTenantId);
         }
 
         return { success: true, message: "Account deleted successfully." };
@@ -517,13 +779,14 @@ exports.deleteOfficialAccount = onCall(async (request) => {
 exports.createProject = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to create projects.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
         throw new HttpsError("permission-denied", "Only HCSD personnel can create projects.");
     }
 
-    await enforceCreateProjectRateLimit(auth.uid);
+    await enforceCreateProjectRateLimit(auth.uid, callerTenantId);
 
     // Firebase callable SDK sends null for absent optional fields; convert null â†’ undefined before validation
     const sanitized = Object.fromEntries(
@@ -541,6 +804,15 @@ exports.createProject = onCall(async (request) => {
         Object.entries(parsed.data).filter(([, v]) => v !== undefined && v !== null)
     );
 
+    // Cross-tenant assignment guard: HCSD can pass any UID for projectEngineer
+    // via the form, but we must reject anyone not in the same tenant.
+    if (projectFields.projectEngineer) {
+        const peDoc = await admin.firestore().collection("users").doc(projectFields.projectEngineer).get();
+        if (!peDoc.exists || peDoc.data().tenantId !== callerTenantId) {
+            throw new HttpsError("permission-denied", "Assigned project engineer is not in your tenant.");
+        }
+    }
+
     try {
         const projectRef = await admin.firestore().collection("projects").add({
             ...projectFields,
@@ -548,6 +820,7 @@ exports.createProject = onCall(async (request) => {
             progress: 0,
             createdBy: auth.uid,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            tenantId: callerTenantId,
         });
 
         // Audit trail
@@ -555,7 +828,7 @@ exports.createProject = onCall(async (request) => {
             projectName: projectFields.projectName,
             contractAmount: projectFields.contractAmount,
             barangay: projectFields.barangay,
-        });
+        }, callerTenantId);
 
         // Notify assigned Project Engineer (if any)
         if (projectFields.projectEngineer) {
@@ -567,6 +840,7 @@ exports.createProject = onCall(async (request) => {
                 body: `${projectFields.projectName}, ${projectFields.barangay}`,
                 targetType: "project",
                 targetId: projectRef.id,
+                tenantId: callerTenantId,
             });
         }
 
@@ -602,6 +876,7 @@ const attachNtpSchema = z.object({
 exports.attachNtp = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to attach NTP.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
@@ -609,7 +884,7 @@ exports.attachNtp = onCall(async (request) => {
     }
 
     // Cheap abuse reject before we touch Zod / Storage.
-    await enforceNtpRateLimit(auth.uid);
+    await enforceNtpRateLimit(auth.uid, callerTenantId);
 
     const parsed = attachNtpSchema.safeParse(data || {});
     if (!parsed.success) {
@@ -624,7 +899,7 @@ exports.attachNtp = onCall(async (request) => {
             fileName,
             reason: "filename_violation",
             detail: filenameErr,
-        });
+        }, callerTenantId);
         throw new HttpsError("invalid-argument", filenameErr);
     }
 
@@ -634,6 +909,9 @@ exports.attachNtp = onCall(async (request) => {
         throw new HttpsError("not-found", "Project not found.");
     }
     const projectData = projectSnap.data();
+    if (projectData.tenantId !== callerTenantId) {
+        throw new HttpsError("permission-denied", "Cannot attach NTP to a project in another tenant.");
+    }
 
     // Magic-byte verification â€” the only check that actually sees the bytes.
     // Client-reported contentType and file extension are both spoofable; this
@@ -660,7 +938,7 @@ exports.attachNtp = onCall(async (request) => {
             fileName,
             reason: "magic_byte_mismatch",
             declaredType: contentType,
-        });
+        }, callerTenantId);
         throw new HttpsError("invalid-argument", "File content does not match declared type.");
     }
 
@@ -688,6 +966,7 @@ exports.attachNtp = onCall(async (request) => {
 exports.changePassword = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to change password.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const { newPassword } = data;
 
@@ -722,12 +1001,12 @@ exports.changePassword = onCall(async (request) => {
         });
 
         // Audit trail — MIS scope always; HCSD scope only when the actor is HCSD.
-        await logSystemAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", {}, "SUCCESS");
+        await logSystemAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", {}, "SUCCESS", null, callerTenantId);
         const userDoc = await userRef.get();
         if (userDoc.exists && userDoc.data().role === "HCSD") {
             const d = userDoc.data();
             const actorName = [d.firstName, d.lastName].filter(Boolean).join(" ") || auth.token.email;
-            await logAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", auth.uid, { actorName });
+            await logAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", auth.uid, { actorName }, callerTenantId);
         }
 
         return { success: true };
@@ -746,15 +1025,16 @@ exports.changePassword = onCall(async (request) => {
 exports.revokeOtherSessions = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
 
     try {
         await admin.auth().revokeRefreshTokens(auth.uid);
-        await logSystemAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", {}, "SUCCESS");
+        await logSystemAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", {}, "SUCCESS", null, callerTenantId);
         const userDoc = await admin.firestore().collection("users").doc(auth.uid).get();
         if (userDoc.exists && userDoc.data().role === "HCSD") {
             const d = userDoc.data();
             const actorName = [d.firstName, d.lastName].filter(Boolean).join(" ") || auth.token.email;
-            await logAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", auth.uid, { actorName });
+            await logAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", auth.uid, { actorName }, callerTenantId);
         }
         return { success: true };
     } catch (error) {
@@ -773,14 +1053,19 @@ exports.logUserLogout = onCall(async (request) => {
     const { auth } = request;
     if (!auth) return { success: false };
     try {
+        // Best-effort tenant resolution: prefer the claim, fall back to the
+        // user doc. We never reject a logout for a missing claim because the
+        // user signs out either way; the only consequence is the audit row
+        // is skipped (the helpers refuse to write without a tenantId).
         const userDoc = await admin.firestore().collection("users").doc(auth.uid).get();
         const role = userDoc.exists ? userDoc.data().role : null;
+        const tenantId = auth.token?.tenantId || (userDoc.exists ? userDoc.data().tenantId : null);
         const actorName = userDoc.exists
             ? [userDoc.data().firstName, userDoc.data().lastName].filter(Boolean).join(" ") || auth.token.email
             : auth.token.email;
-        await logSystemAudit(auth.uid, auth.token.email, "USER_LOGOUT", {}, "SUCCESS", actorName);
+        await logSystemAudit(auth.uid, auth.token.email, "USER_LOGOUT", {}, "SUCCESS", actorName, tenantId);
         if (role === "HCSD") {
-            await logAudit(auth.uid, auth.token.email, "USER_LOGOUT", auth.uid, { actorName });
+            await logAudit(auth.uid, auth.token.email, "USER_LOGOUT", auth.uid, { actorName }, tenantId);
         }
         return { success: true };
     } catch (err) {
@@ -797,6 +1082,7 @@ exports.logUserLogout = onCall(async (request) => {
 exports.backfillProjectEngineerUids = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
@@ -808,8 +1094,14 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
         .replace(/\s+/g, " ");
 
     try {
+        // Tenant-scoped scans: HCSD-A may only resolve names against PROJ_ENGs
+        // in tenant A, and may only update projects in tenant A. The composite
+        // (role + tenantId) read requires a Firestore index; if it errors,
+        // fall back to filtering in memory after the role-only query.
         const usersSnap = await admin.firestore().collection("users")
-            .where("role", "==", "PROJ_ENG").get();
+            .where("role", "==", "PROJ_ENG")
+            .where("tenantId", "==", callerTenantId)
+            .get();
 
         const nameToUid = new Map();
         const uidSet = new Set();
@@ -820,7 +1112,8 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
             uidSet.add(doc.id);
         });
 
-        const projSnap = await admin.firestore().collection("projects").get();
+        const projSnap = await admin.firestore().collection("projects")
+            .where("tenantId", "==", callerTenantId).get();
 
         const updates = [];
         const unresolved = [];
@@ -879,6 +1172,21 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     const cleanEmail = email.trim().toLowerCase();
     const RESET_BASE = "https://transpirafund-webapp.web.app/reset-password";
 
+    // Anti-enumeration tenant lookup: try to resolve email to a tenantId
+    // server-side. If the account does not exist, tenantId stays null and
+    // the cooldown doc is still written so the response timing matches a
+    // hit. The caller never sees the result of this lookup.
+    let tenantId = null;
+    try {
+        const userRecord = await admin.auth().getUserByEmail(cleanEmail);
+        const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
+        if (userDoc.exists) tenantId = userDoc.data().tenantId || null;
+    } catch (lookupErr) {
+        // Swallow auth/user-not-found; do not let any other error change
+        // the response shape (the next call to generatePasswordResetLink
+        // will hit the same condition and be silently absorbed below).
+    }
+
     // Rate limiting â€” consistent for registered and unregistered emails (anti-enumeration)
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
     const cooldownRef = admin.firestore().collection("passwordResets").doc(emailHash);
@@ -894,6 +1202,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     await cooldownRef.set({
         lastSent: Date.now(),
         expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+        tenantId,
     });
 
     try {
@@ -1009,12 +1318,15 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to reset password. Please try again.");
     }
 
-    // Audit trail â€” non-blocking
+    // Audit trail â€” non-blocking. Tenant resolved server-side from the
+    // post-reset email; client never sees or supplies a tenantId.
     const email = resetResult?.email;
     if (email) {
         try {
             const userRecord = await admin.auth().getUserByEmail(email);
-            await logSystemAudit(userRecord.uid, email, "PASSWORD_RESET", {}, "SUCCESS");
+            const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
+            const tenantId = userDoc.exists ? (userDoc.data().tenantId || null) : null;
+            await logSystemAudit(userRecord.uid, email, "PASSWORD_RESET", {}, "SUCCESS", null, tenantId);
         } catch (auditErr) {
             logger.warn("Audit trail write failed for PASSWORD_RESET:", auditErr);
         }
@@ -1026,6 +1338,7 @@ exports.resetPassword = onCall(async (request) => {
 exports.recalculateStats = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "MIS") {
@@ -1033,16 +1346,19 @@ exports.recalculateStats = onCall(async (request) => {
     }
 
     try {
+        // Per-tenant aggregates land on the tenant document. The global
+        // stats/public counter is maintained separately by onUserWritten /
+        // onProjectWritten triggers and remains cross-tenant by design.
         const [usersSnapshot, projectsSnapshot] = await Promise.all([
-            admin.firestore().collection("users").get(),
-            admin.firestore().collection("projects").get(),
+            admin.firestore().collection("users").where("tenantId", "==", callerTenantId).get(),
+            admin.firestore().collection("projects").where("tenantId", "==", callerTenantId).get(),
         ]);
 
         const users = usersSnapshot.docs.map(d => d.data());
         const projects = projectsSnapshot.docs.map(d => d.data());
 
         const engineerCount = users.filter(u => u.role === "PROJ_ENG" || u.role === "Project Engineer").length;
-        const DEPT_ROLES = ["MAYOR", "HCSD", "CPDO"];
+        const DEPT_ROLES = ["HCSD"];
         const rolesPresent = new Set(users.map(u => u.role));
         const departmentCount = DEPT_ROLES.filter(r => rolesPresent.has(r)).length;
         const projectCount = projects.length;
@@ -1058,20 +1374,22 @@ exports.recalculateStats = onCall(async (request) => {
             return completionDate ? new Date(completionDate) < now : false;
         }).length;
 
-        await admin.firestore().doc("stats/public").set({
-            engineerCount,
-            departmentCount,
-            projectCount,
-            totalBudget,
-            done,
-            delayed,
-            progress: ongoing,
-            delay,
-            lastUpdated: new Date().toISOString(),
+        await admin.firestore().collection("tenants").doc(callerTenantId).update({
+            stats: {
+                engineerCount,
+                departmentCount,
+                projectCount,
+                totalBudget,
+                done,
+                delayed,
+                progress: ongoing,
+                delay,
+                lastUpdated: new Date().toISOString(),
+            },
         });
 
         await logSystemAudit(auth.uid, auth.token.email, "STATS_RECALCULATED",
-            { engineerCount, departmentCount, projectCount, totalBudget }, "SUCCESS");
+            { engineerCount, departmentCount, projectCount, totalBudget }, "SUCCESS", null, callerTenantId);
 
         return { success: true, engineerCount, departmentCount, projectCount, totalBudget };
     } catch (error) {
@@ -1090,6 +1408,7 @@ exports.recalculateStats = onCall(async (request) => {
 exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
@@ -1106,9 +1425,14 @@ exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
     ];
 
     try {
+        // Tenant-scoped query: HCSD-A only purges stray rows from their own
+        // tenant. Legacy rows without a tenantId field will not match this
+        // query and remain stranded; that's acceptable for the v1 wipe-and-
+        // reseed migration path.
         const snap = await admin.firestore()
             .collection("auditTrails").doc("hcsd").collection("entries")
             .where("action", "in", MOBILE_ORIGIN_ACTIONS)
+            .where("tenantId", "==", callerTenantId)
             .get();
 
         if (snap.empty) return { success: true, deleted: 0 };
@@ -1134,6 +1458,10 @@ exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
 // â”€â”€â”€ TRIGGER: Recompute public stats on user writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     try {
+        // Cross-tenant scan: stats/public is intentionally global by spec.
+        // Scaling note: every user write in any tenant triggers a full table
+        // scan. Acceptable for v1; v2 should switch to scheduled per-tenant
+        // aggregation if tenant count grows past a few dozen.
         const usersSnapshot = await admin.firestore().collection("users").get();
         const users = usersSnapshot.docs.map(doc => doc.data());
 
@@ -1141,7 +1469,7 @@ exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
             u.role === "PROJ_ENG" || u.role === "Project Engineer"
         ).length;
 
-        const DEPT_ROLES = ["MAYOR", "HCSD", "CPDO"];
+        const DEPT_ROLES = ["HCSD"];
         const rolesPresent = new Set(users.map(u => u.role));
         const departmentCount = DEPT_ROLES.filter(r => rolesPresent.has(r)).length;
 
@@ -1313,6 +1641,22 @@ exports.onMobileAuditCreated = onDocumentCreated(
             const project = projectSnap.data();
             const projectName = project.projectName || detailsObj.projectName || "Project";
 
+            // Tenant cross-check. Mobile stamps tenantId on every audit
+            // entry post-refactor; if the entry's tenantId disagrees with
+            // the resolved project's tenantId, refuse to fan out (cannot
+            // happen under correct mobile but worth catching defensively).
+            // The notification stamp uses the project's tenantId as the
+            // source of truth.
+            const projectTenantId = project.tenantId || null;
+            if (entry.tenantId && projectTenantId && entry.tenantId !== projectTenantId) {
+                logger.warn(`[onMobileAuditCreated] Tenant mismatch on ${entry.action}: entry=${entry.tenantId} project=${projectTenantId}`);
+                return;
+            }
+            if (!projectTenantId) {
+                logger.warn(`[onMobileAuditCreated] Skipping ${entry.action}: project ${projectId} has no tenantId (pre-migration doc)`);
+                return;
+            }
+
             // Deliver to the HCSD who created the project. If missing
             // (legacy docs), silently skip — no broadcast to every HCSD.
             const recipientUid = project.createdBy;
@@ -1352,6 +1696,7 @@ exports.onMobileAuditCreated = onDocumentCreated(
                     milestoneSequence: milestoneDoc?.sequence ?? null,
                     sourceAuditLogId: event.params.logId,
                 },
+                tenantId: projectTenantId,
             });
 
             // Server-side synthesis: after a phase is marked complete, check
@@ -1381,6 +1726,7 @@ exports.onMobileAuditCreated = onDocumentCreated(
                             totalMilestones: total,
                             sourceAuditLogId: event.params.logId,
                         },
+                        tenantId: projectTenantId,
                     });
                 }
             }
@@ -1397,6 +1743,12 @@ exports.onMobileAuditCreated = onDocumentCreated(
 // Registry) can render progress without an N+1 subcollection read. This
 // trigger keeps that field fresh. Weighted by weightPercentage and
 // normalized to 100 to handle legacy weights that don't sum exactly.
+//
+// Tenant immutability: this trigger only writes `actualPercent`. It never
+// reads, writes, or echoes back the project's tenantId, so the field
+// cannot be rewritten via a milestone update. The Firestore rules also
+// reject any update that changes tenantId, but this function is the
+// internal write path that needs to be careful by construction.
 exports.recomputeProjectActualPercent = onDocumentWritten(
     "projects/{projectId}/milestones/{milestoneId}",
     async (event) => {
@@ -1448,6 +1800,7 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
 exports.updateProfilePhoto = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile photo.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const { photoURL } = data;
     if (!photoURL || typeof photoURL !== "string") {
@@ -1484,9 +1837,9 @@ exports.updateProfilePhoto = onCall(async (request) => {
             await logAudit(auth.uid, auth.token.email, "PHOTO_UPDATED", auth.uid, {
                 actorName,
                 note: "Profile photo updated",
-            });
+            }, callerTenantId);
         }
-        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS");
+        await logSystemAudit(auth.uid, auth.token.email, "PROFILE_PHOTO_UPDATED", {}, "SUCCESS", null, callerTenantId);
 
         return { success: true };
     } catch (error) {
@@ -1499,6 +1852,7 @@ exports.updateProfilePhoto = onCall(async (request) => {
 exports.updateProfile = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile.");
+    const callerTenantId = requireTenantClaim(auth);
 
     const nameSchema = z.object({
         firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters."),
@@ -1539,7 +1893,7 @@ exports.updateProfile = onCall(async (request) => {
         await logSystemAudit(
             auth.uid, auth.token.email, "PROFILE_UPDATED",
             { oldName: oldName ?? "â€”", newName },
-            "SUCCESS", newName
+            "SUCCESS", newName, callerTenantId,
         );
         return { success: true };
     } catch (error) {
@@ -1778,6 +2132,7 @@ exports.generateMilestones = onCall(
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Authentication required.");
     }
+    const callerTenantId = requireTenantClaim(request.auth);
 
     const { projectId } = request.data || {};
     if (!projectId) {
@@ -1790,6 +2145,12 @@ exports.generateMilestones = onCall(
       throw new HttpsError("not-found", "Project not found.");
     }
     const project = projectSnap.data();
+    if (project.tenantId !== callerTenantId) {
+      throw new HttpsError(
+        "permission-denied",
+        "Cannot generate milestones for a project in another tenant."
+      );
+    }
 
     if (project.projectEngineer !== request.auth.uid) {
       throw new HttpsError(
@@ -1883,6 +2244,7 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
           generatedBy: "claude-haiku-4-5",
           confirmed: false,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          tenantId: callerTenantId,
         });
       });
 
@@ -1900,6 +2262,7 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
         action: "Milestones Generated (AI-Assisted)",
         target: `Milestones Generated for ${projectId} | Count: ${milestones.length}`,
         success: true,
+        tenantId: callerTenantId,
       });
 
     return {

@@ -4,31 +4,81 @@ service cloud.firestore {
 
     // ════════════════════════════════════════════════════════════════
     //  HELPER FUNCTIONS
+    //
+    //  Role and tenant checks read from request.auth.token (custom
+    //  claims), not from a firestore.get() on the user doc. The
+    //  createOfficialAccount and provisionTenant Cloud Functions both
+    //  set { role, tenantId } at account creation, and sendOtp /
+    //  verifyOtp use additive claim merge so those values survive a
+    //  full login cycle.
     // ════════════════════════════════════════════════════════════════
-
-    function getUserRole() {
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-        : '';
-    }
 
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    function userRole() {
+      return request.auth.token.role;
+    }
+
+    function userTenantId() {
+      return request.auth.token.tenantId;
+    }
+
+    function tenantClaim() {
+      return isAuthenticated() && userTenantId() != null;
+    }
+
     function hasRole(roles) {
-      return isAuthenticated() && getUserRole() in roles;
+      return isAuthenticated() && userRole() in roles;
+    }
+
+    function sameTenant(data) {
+      return tenantClaim() && data.tenantId == userTenantId();
+    }
+
+    function isPlatformAdmin() {
+      return isAuthenticated() && request.auth.token.platformAdmin == true;
+    }
+
+    function tenantImmutable() {
+      return request.resource.data.tenantId == resource.data.tenantId;
+    }
+
+    function isAssignedEngineer(projectData) {
+      return hasRole(['PROJ_ENG']) &&
+             projectData.projectEngineer == request.auth.uid;
+    }
+
+
+    // ════════════════════════════════════════════════════════════════
+    //  CATEGORY 0 — TENANTS (one new top-level collection)
+    //
+    //  Doc ID equals the tenantId value. A user may read their own
+    //  tenant doc to render the LGU name in the sidebar. Platform
+    //  admins (super-admins) may read any tenant. Writes go through
+    //  the provisionTenant Cloud Function only.
+    // ════════════════════════════════════════════════════════════════
+
+    match /tenants/{tenantId} {
+      allow read:  if (isAuthenticated() && tenantId == userTenantId())
+                   || isPlatformAdmin();
+      allow write: if false;
     }
 
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 1 — USER MANAGEMENT
+    //
+    //  A user can always read their own doc by uid (needed before the
+    //  tenantId claim is fully wired in the client). Cross-user reads
+    //  require both same tenant AND elevated role.
     // ════════════════════════════════════════════════════════════════
 
     match /users/{userId} {
-      allow read: if isAuthenticated() &&
-                     (request.auth.uid == userId ||
-                      hasRole(['MIS', 'HCSD']));
+      allow read:  if isAuthenticated() &&
+                      (request.auth.uid == userId ||
+                       (hasRole(['MIS', 'HCSD']) && sameTenant(resource.data)));
       allow write: if false;
     }
 
@@ -36,25 +86,28 @@ service cloud.firestore {
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 2 — PROJECT DATA
     //
-    //  Admin roles (MIS/MAYOR/HCSD/CPDO) see all projects.
-    //  Project Engineers see only projects assigned to them
-    //  (document's `projectEngineer` field == their own UID).
+    //  Same-tenant gate first; then either an HCSD/MIS reader or the
+    //  assigned PROJ_ENG. Milestone read/update inherits the parent
+    //  project's tenantId via firestore.get on the parent.
     // ════════════════════════════════════════════════════════════════
 
-    function isAssignedEngineer(projectData) {
-      return hasRole(['PROJ_ENG']) &&
-             projectData.projectEngineer == request.auth.uid;
-    }
-
     match /projects/{projectId} {
-      allow read: if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO']) ||
-                     isAssignedEngineer(resource.data);
+      allow read: if sameTenant(resource.data) &&
+                     (hasRole(['MIS', 'HCSD']) || isAssignedEngineer(resource.data));
       allow create, update, delete: if false;
 
       match /milestones/{milestoneId} {
-        allow read:   if hasRole(['MIS', 'MAYOR', 'HCSD', 'CPDO']) ||
+        // Milestone-tenant equals parent-project-tenant by Cloud Function
+        // invariant (generateMilestones stamps tenantId from the project).
+        // Defense in depth: check the milestone's own tenantId against the
+        // caller, and only fall back to the parent lookup for the engineer
+        // assignment check.
+        allow read:   if sameTenant(resource.data) &&
+                         (hasRole(['MIS', 'HCSD']) ||
+                          isAssignedEngineer(get(/databases/$(database)/documents/projects/$(projectId)).data));
+        allow update: if sameTenant(resource.data) &&
+                         tenantImmutable() &&
                          isAssignedEngineer(get(/databases/$(database)/documents/projects/$(projectId)).data);
-        allow update: if isAssignedEngineer(get(/databases/$(database)/documents/projects/$(projectId)).data);
         allow create, delete: if false;
       }
     }
@@ -62,45 +115,48 @@ service cloud.firestore {
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 3 — AUDIT TRAILS
-    //  Three scoped sub-paths under one parent collection.
-    //  Named after the role that owns each scope.
+    //
+    //  Same paths as before; tenantId is a field on every entry. Each
+    //  scope still gates by role, plus same-tenant.
     // ════════════════════════════════════════════════════════════════
 
-    // auditTrails/mis/entries/{logId}
-    //   MIS-scope events: account provisioning, OTP, password changes, stats
-    //   Read: MIS only | Write: Cloud Functions (Admin SDK) only
-
     match /auditTrails/mis/entries/{logId} {
-      allow read:  if hasRole(['MIS']);
+      allow read:  if hasRole(['MIS']) && sameTenant(resource.data);
       allow write: if false;
     }
-
-    // auditTrails/hcsd/entries/{logId}
-    //   HCSD-scope events: project created, PROJ_ENG account created/deleted
-    //   Read: HCSD only | Write: Cloud Functions (Admin SDK) only
 
     match /auditTrails/hcsd/entries/{logId} {
-      allow read:  if hasRole(['HCSD']);
+      allow read:  if hasRole(['HCSD']) && sameTenant(resource.data);
       allow write: if false;
     }
 
-    // auditTrails/mobile/entries/{logId}
-    //   PROJ_ENG mobile self-audit. The web side never reads this. Mobile
-    //   activity surfaces to HCSD only via notifications (category: "field"),
-    //   fanned out by the onMobileAuditCreated trigger. This keeps the web
-    //   audit trail strictly "actions this account performed" and routes
-    //   field activity through the Notifications page instead.
-    //   Read/Create: PROJ_ENG only.
-
+    // PROJ_ENG mobile self-audit. The web side never reads this; mobile
+    // activity surfaces to HCSD only via notifications (category: "field"),
+    // fanned out by the onMobileAuditCreated trigger. Tenant scope is
+    // enforced both on read (resource.data.tenantId) and on create
+    // (request.resource.data.tenantId must match the caller's claim).
     match /auditTrails/mobile/entries/{logId} {
-      allow read:   if hasRole(['PROJ_ENG']);
-      allow create: if hasRole(['PROJ_ENG']);
+      allow read:   if hasRole(['PROJ_ENG']) && sameTenant(resource.data);
+      allow create: if hasRole(['PROJ_ENG']) &&
+                       tenantClaim() &&
+                       request.resource.data.tenantId == userTenantId();
       allow update, delete: if false;
     }
 
+    // Platform-scope audit. Records super-admin actions (tenant
+    // provisioning, lifecycle ops). Only platform admins may read.
+    match /auditTrails/_platform/entries/{logId} {
+      allow read:  if isPlatformAdmin();
+      allow write: if false;
+    }
+
 
     // ════════════════════════════════════════════════════════════════
-    //  CATEGORY 4 — AUTHENTICATION / OTP
+    //  CATEGORY 4 — AUTHENTICATION / OTP / PASSWORD-RESET BOOKKEEPING
+    //
+    //  All Cloud-Function-only collections. Even though tenantId is
+    //  stamped on these docs (sendOtp, sendPasswordReset, etc.), no
+    //  client read or write is ever permitted.
     // ════════════════════════════════════════════════════════════════
 
     match /otpCodes/{uid} {
@@ -122,14 +178,23 @@ service cloud.firestore {
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 5 — NOTIFICATIONS
+    //
+    //  Recipient-only read; same-tenant required as defense in depth
+    //  (a token without tenantId could not match the stamped value).
+    //  Updates limited to isRead and dismissedAt; tenantId immutability
+    //  guard rejects any cross-tenant rewrite even on those fields.
     // ════════════════════════════════════════════════════════════════
 
     match /notifications/{notifId} {
-      allow read:   if isAuthenticated() && resource.data.recipientUid == request.auth.uid;
-      allow update: if isAuthenticated()
-                    && resource.data.recipientUid == request.auth.uid
-                    && request.resource.data.diff(resource.data).affectedKeys()
-                         .hasOnly(['isRead', 'dismissedAt']);
+      allow read:   if isAuthenticated() &&
+                       resource.data.recipientUid == request.auth.uid &&
+                       sameTenant(resource.data);
+      allow update: if isAuthenticated() &&
+                       resource.data.recipientUid == request.auth.uid &&
+                       sameTenant(resource.data) &&
+                       tenantImmutable() &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['isRead', 'dismissedAt']);
       allow create, delete: if false;
     }
 
@@ -149,6 +214,9 @@ service cloud.firestore {
 
     // ════════════════════════════════════════════════════════════════
     //  CATEGORY 7 — PUBLIC DATA
+    //
+    //  stats/public stays cross-tenant by design. Per-tenant aggregates
+    //  live on the tenants/{tenantId} doc instead.
     // ════════════════════════════════════════════════════════════════
 
     match /stats/{docId} {
