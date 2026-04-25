@@ -85,11 +85,15 @@ service cloud.firestore {
     }
 
     // auditTrails/mobile/entries/{logId}
-    //   PROJ_ENG mobile app activity (login, field actions)
-    //   Read: MIS + HCSD for monitoring | Create: PROJ_ENG mobile app only
+    //   PROJ_ENG mobile self-audit. The web side never reads this. Mobile
+    //   activity surfaces to HCSD only via notifications (category: "field"),
+    //   fanned out by the onMobileAuditCreated trigger. This keeps the web
+    //   audit trail strictly "actions this account performed" and routes
+    //   field activity through the Notifications page instead.
+    //   Read/Create: PROJ_ENG only.
 
     match /auditTrails/mobile/entries/{logId} {
-      allow read:   if hasRole(['MIS', 'HCSD', 'PROJ_ENG']);
+      allow read:   if hasRole(['PROJ_ENG']);
       allow create: if hasRole(['PROJ_ENG']);
       allow update, delete: if false;
     }
@@ -135,6 +139,10 @@ service cloud.firestore {
     // ════════════════════════════════════════════════════════════════
 
     match /ntpRateLimits/{uid} {
+      allow read, write: if false;
+    }
+
+    match /projectCreateRateLimits/{uid} {
       allow read, write: if false;
     }
 

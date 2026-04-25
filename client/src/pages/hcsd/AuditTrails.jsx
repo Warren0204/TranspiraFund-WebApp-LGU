@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, query, orderBy, limit, getDocs, startAfter, onSnapshot } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import app, { db } from '../../config/firebase';
 import {
-    Shield, Clock, Activity, LogIn,
-    FolderKanban, UserPlus, UserX, Image, MessageSquare, UserCircle,
-    Sparkles, ClipboardCheck, Trash2,
+    Shield, Clock, Activity, LogIn, LogOut,
+    FolderKanban, UserPlus, UserX, UserCircle,
+    FileX2, Trash2, KeyRound, ShieldOff,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useUsers } from '../../hooks/useUsers';
@@ -18,6 +19,27 @@ const EVENT_META = {
         pill: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-500/30',
         Icon: LogIn,
         iconBg: 'from-green-500 to-emerald-400',
+        role: 'HCSD',
+    },
+    USER_LOGOUT: {
+        label: 'User Logout',
+        pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
+        Icon: LogOut,
+        iconBg: 'from-slate-400 to-slate-500',
+        role: 'HCSD',
+    },
+    PASSWORD_CHANGED: {
+        label: 'Password Changed',
+        pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
+        Icon: KeyRound,
+        iconBg: 'from-amber-500 to-yellow-400',
+        role: 'HCSD',
+    },
+    SESSIONS_REVOKED: {
+        label: 'Sessions Revoked',
+        pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',
+        Icon: ShieldOff,
+        iconBg: 'from-rose-500 to-red-400',
         role: 'HCSD',
     },
     PROJECT_CREATED: {
@@ -41,13 +63,6 @@ const EVENT_META = {
         iconBg: 'from-red-500 to-rose-400',
         role: 'HCSD',
     },
-    PHOTO_UPLOADED: {
-        label: 'Photo Uploaded',
-        pill: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
-        Icon: Image,
-        iconBg: 'from-sky-500 to-cyan-400',
-        role: 'PROJ_ENG',
-    },
     PHOTO_UPDATED: {
         label: 'Profile Photo Updated',
         pill: 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-500/30',
@@ -55,71 +70,49 @@ const EVENT_META = {
         iconBg: 'from-violet-500 to-purple-400',
         role: 'HCSD',
     },
-    PROJECT_UPDATE: {
-        label: 'Project Updated',
-        pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
-        Icon: MessageSquare,
-        iconBg: 'from-amber-500 to-orange-400',
-        role: 'PROJ_ENG',
-    },
-    // Mobile-originated milestone events. Keys use the exact strings the mobile
-    // app writes (Title Case with spaces) — Firestore lookups are case-sensitive,
-    // so do not normalize without coordinating a mobile deploy.
-    'Milestones Drafted': {
-        label: 'Milestones Drafted',
-        pill: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
-        Icon: Sparkles,
-        iconBg: 'from-indigo-500 to-violet-400',
-        role: 'PROJ_ENG',
-    },
-    'Milestones Confirmed': {
-        label: 'Milestones Confirmed',
-        pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
-        Icon: ClipboardCheck,
-        iconBg: 'from-emerald-500 to-teal-400',
-        role: 'PROJ_ENG',
-    },
-    'Milestone Draft Removed': {
-        label: 'Milestone Draft Removed',
-        pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
-        Icon: Trash2,
-        iconBg: 'from-slate-400 to-slate-500',
-        role: 'PROJ_ENG',
+    NTP_REJECTED: {
+        label: 'NTP Rejected',
+        pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',
+        Icon: FileX2,
+        iconBg: 'from-rose-500 to-red-400',
+        role: 'HCSD',
     },
 };
 
-const DEFAULT_META = {
+// Safety fallback for any action not in the registry. The registry above is
+// closed — every HCSD-scoped action should have an entry — so this should
+// never render in practice. If it does, add the action to EVENT_META.
+const defaultMetaFor = () => ({
     label: 'System Event',
     pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
     Icon: Activity,
     iconBg: 'from-slate-400 to-slate-500',
     role: 'HCSD',
-};
+});
 
 const FILTERS = [
-    { key: 'ALL', label: 'All', actions: null },
-    { key: 'AUTH', label: 'Auth Events', actions: ['USER_LOGIN', 'PHOTO_UPDATED'] },
-    { key: 'PROJECT', label: 'Project Events', actions: ['PROJECT_CREATED', 'PROJECT_UPDATE', 'PHOTO_UPLOADED'] },
-    { key: 'STAFF', label: 'Staff Events', actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
-    { key: 'MILESTONE', label: 'Milestone Events', actions: ['Milestones Drafted', 'Milestones Confirmed', 'Milestone Draft Removed'] },
+    { key: 'ALL',     label: 'All',            actions: null },
+    { key: 'AUTH',    label: 'Auth Events',    actions: ['USER_LOGIN', 'USER_LOGOUT', 'PASSWORD_CHANGED', 'SESSIONS_REVOKED'] },
+    { key: 'PROFILE', label: 'Profile Events', actions: ['PHOTO_UPDATED'] },
+    { key: 'PROJECT', label: 'Project Events', actions: ['PROJECT_CREATED', 'NTP_REJECTED'] },
+    { key: 'STAFF',   label: 'Staff Events',   actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
 ];
 
 // ── Derive the "subject / entity" for a log entry ────────────────────────────
 const getSubject = (log) => {
     const d = log.details || {};
+    const actorFallback = () => d.actorName || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
     switch (log.action) {
-        case 'USER_LOGIN':     return d.name || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
-        case 'PHOTO_UPDATED':  return d.actorName || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
-        case 'PROJECT_CREATED':return d.projectName || log.targetId || 'Untitled Project';
-        case 'ACCOUNT_CREATED':return d.email || d.newUserEmail || log.targetId || 'Unknown Engineer';
-        case 'ACCOUNT_DELETED':return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
-        case 'PHOTO_UPLOADED': return d.projectName || log.targetId || 'Project Photo';
-        case 'PROJECT_UPDATE': return d.projectName || log.targetId || 'Project';
-        case 'Milestones Drafted':
-        case 'Milestones Confirmed':
-        case 'Milestone Draft Removed':
-            return d.projectName || log.target?.split('|')[0]?.replace(/^Project:\s*/i, '').trim() || log.targetId || 'Project';
-        default:               return log.targetId || log.action?.replace(/_/g, ' ') || '—';
+        case 'USER_LOGIN':          return d.name || actorFallback();
+        case 'USER_LOGOUT':         return actorFallback();
+        case 'PASSWORD_CHANGED':    return actorFallback();
+        case 'SESSIONS_REVOKED':    return actorFallback();
+        case 'PHOTO_UPDATED':       return actorFallback();
+        case 'PROJECT_CREATED':     return d.projectName || log.targetId || 'Untitled Project';
+        case 'NTP_REJECTED':        return d.projectName || d.reason || log.targetId || 'NTP rejected';
+        case 'ACCOUNT_CREATED':     return d.email || d.newUserEmail || log.targetId || 'Unknown Engineer';
+        case 'ACCOUNT_DELETED':     return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
+        default:                    return log.targetId || log.action?.replace(/_/g, ' ') || '—';
     }
 };
 
@@ -127,30 +120,19 @@ const getSubject = (log) => {
 const getSubjectDetail = (log) => {
     const d = log.details || {};
     switch (log.action) {
-        case 'USER_LOGIN':      return 'Authentication via OTP';
-        case 'PHOTO_UPDATED':   return 'Profile photo changed';
+        case 'USER_LOGIN':       return 'Authentication via OTP';
+        case 'USER_LOGOUT':      return 'Signed out of the web app';
+        case 'PASSWORD_CHANGED': return 'Password updated';
+        case 'SESSIONS_REVOKED': return 'Signed out all other devices';
+        case 'PHOTO_UPDATED':    return 'Profile photo changed';
         case 'PROJECT_CREATED': {
             const amt = d.contractAmount;
             if (amt) return `Contract: ₱${Number(amt).toLocaleString('en-PH')}`;
             return d.barangay ? `Barangay ${d.barangay}` : 'New project initialized';
         }
+        case 'NTP_REJECTED': return d.reason ? `Reason: ${d.reason}` : 'NTP upload blocked';
         case 'ACCOUNT_CREATED': return `${d.roleType || d.role || 'PROJ_ENG'} · ${d.department || 'CSDD, DEPW'}`;
         case 'ACCOUNT_DELETED': return 'Account and access permanently removed';
-        case 'PHOTO_UPLOADED':  return 'Progress photo submitted via mobile';
-        case 'PROJECT_UPDATE': {
-            const pct = d.actualPercent ?? d.progress;
-            return pct != null ? `Progress updated to ${pct}%` : 'Project details updated';
-        }
-        case 'Milestones Drafted': {
-            const count = d.count ?? (log.target?.match(/Count:\s*(\d+)/i)?.[1]);
-            return count ? `AI generated ${count} draft milestones` : 'AI milestone draft generated';
-        }
-        case 'Milestones Confirmed': {
-            const count = d.count ?? (log.target?.match(/Count:\s*(\d+)/i)?.[1]);
-            return count ? `Engineer locked in ${count} phases` : 'Engineer finished milestone review';
-        }
-        case 'Milestone Draft Removed':
-            return d.title ? `Draft removed: ${d.title}` : 'Draft milestone discarded';
         default: return null;
     }
 };
@@ -213,13 +195,45 @@ const SpinSVG = ({ size = 18 }) => (
 
 export default function AuditTrails() {
     const [logs, setLogs] = useState([]);
-    const [mobileLogs, setMobileLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [lastDoc, setLastDoc] = useState(null);
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [filter, setFilter] = useState('ALL');
     const [refreshKey, setRefreshKey] = useState(0);
+    const [purging, setPurging] = useState(false);
+
+    // Mobile-origin action strings. These belong in the Notifications "Field
+    // Activity" lane, never the HCSD audit trail. We filter them out of the
+    // UI defensively (belt-and-suspenders alongside the Firestore rule that
+    // already blocks client writes) and expose a one-click purge callable.
+    const MOBILE_ORIGIN_ACTIONS = [
+        'Proof Uploaded',
+        'Milestones Drafted',
+        'Milestones Confirmed',
+        'Milestone Completed',
+        'Project Completed',
+        'Milestones Generated (AI-Assisted)',
+    ];
+
+    const handlePurgeMobileRows = useCallback(async () => {
+        if (purging) return;
+        const confirmed = window.confirm(
+            'Purge legacy mobile-origin rows (Proof Uploaded, Milestone Completed, etc.) from this audit trail? Field activity lives in Notifications.',
+        );
+        if (!confirmed) return;
+        setPurging(true);
+        try {
+            const callable = httpsCallable(getFunctions(app, 'asia-southeast1'), 'purgeMobileOriginHcsdAudit');
+            const res = await callable();
+            window.alert(`Removed ${res.data?.deleted ?? 0} stray row(s).`);
+        } catch (err) {
+            console.error('Purge failed:', err);
+            window.alert(err?.message || 'Purge failed. Please try again.');
+        } finally {
+            setPurging(false);
+        }
+    }, [purging]);
 
     // Real-time directory — hydrates every actor's current name + photo.
     // Photo updates propagate instantly (no stale copies in audit entries).
@@ -247,25 +261,6 @@ export default function AuditTrails() {
         return () => unsub();
     }, [refreshKey]);
 
-    // ── Real-time listener: mobile entries (PHOTO_UPLOADED, PROJECT_UPDATE) ──
-    // These are written by field engineers via the mobile app to a separate
-    // subcollection. HCSD has read access per Firestore rules.
-    useEffect(() => {
-        setMobileLogs([]);
-        const q = query(
-            collection(db, 'auditTrails', 'mobile', 'entries'),
-            orderBy('timestamp', 'desc'),
-            limit(PAGE_SIZE)
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            const entries = snap.docs.map(d => ({ id: `mobile_${d.id}`, ...d.data() }));
-            setMobileLogs(entries);
-        }, () => {
-            // Mobile collection may not exist yet — silently ignore
-        });
-        return () => unsub();
-    }, [refreshKey]);
-
     // ── Load more (older entries, one-time fetch) ─────────────────────────────
     const fetchLogs = useCallback(async (isLoadMore = false) => {
         if (!isLoadMore || !lastDoc) return;
@@ -289,18 +284,16 @@ export default function AuditTrails() {
         }
     }, [lastDoc]);
 
-    // Merge HCSD + mobile logs, sorted newest-first
-    const allLogs = [...logs, ...mobileLogs].sort((a, b) => {
-        const ta = a.timestamp?.toMillis?.() ?? 0;
-        const tb = b.timestamp?.toMillis?.() ?? 0;
-        return tb - ta;
-    });
+    // Strip any stray mobile-origin rows defensively so the UI never shows
+    // PE field activity here — even if a row slips through the rules.
+    const cleanLogs = logs.filter(l => !MOBILE_ORIGIN_ACTIONS.includes(l.action));
+    const mobileBleedCount = logs.length - cleanLogs.length;
 
     // Apply filter
     const activeFilter = FILTERS.find(f => f.key === filter);
     const visible = activeFilter?.actions
-        ? allLogs.filter(l => activeFilter.actions.includes(l.action))
-        : allLogs;
+        ? cleanLogs.filter(l => activeFilter.actions.includes(l.action))
+        : cleanLogs;
 
     return (
         <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">
@@ -323,6 +316,18 @@ export default function AuditTrails() {
                             Tamper-proof record of HCSD operations and staff activities.
                         </p>
                     </div>
+
+                    {mobileBleedCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={handlePurgeMobileRows}
+                            disabled={purging}
+                            className="inline-flex items-center gap-2 self-start sm:self-auto px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider bg-gradient-to-r from-rose-500 to-red-500 text-white border border-transparent shadow-md shadow-rose-500/20 hover:shadow-lg hover:shadow-rose-500/30 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {purging ? <SpinSVG size={14} /> : <Trash2 size={14} strokeWidth={2.5} />}
+                            {purging ? 'Purging…' : `Remove ${mobileBleedCount} mobile row${mobileBleedCount !== 1 ? 's' : ''}`}
+                        </button>
+                    )}
                 </div>
 
                 {/* ── FILTER TABS + REFRESH ─────────────────────────── */}
@@ -371,7 +376,7 @@ export default function AuditTrails() {
                             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">HCSD operations will appear here once they occur.</p>
                         </div>
                     ) : visible.map((log, i) => {
-                        const meta = EVENT_META[log.action] ?? DEFAULT_META;
+                        const meta = EVENT_META[log.action] ?? defaultMetaFor(log.action);
                         const { Icon } = meta;
                         const subject = getSubject(log);
                         const detail = getSubjectDetail(log);
@@ -418,7 +423,7 @@ export default function AuditTrails() {
                     {!loading && visible.length > 0 && (
                         <div className="flex items-center justify-center gap-2 py-3">
                             <Shield size={12} className="text-slate-300 dark:text-slate-600 shrink-0" />
-                            <p className="text-[11px] font-semibold text-slate-300 dark:text-slate-600">All entries are write-protected. Only the system can append to this log.</p>
+                            <p className="text-[11px] font-semibold text-slate-300 dark:text-slate-600">Entries are immutable — once logged, they cannot be edited, removed, or bypassed.</p>
                         </div>
                     )}
                 </div>
@@ -450,7 +455,7 @@ export default function AuditTrails() {
                                 <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">HCSD operations will appear here once they occur.</p>
                             </div>
                         ) : visible.map((log, i) => {
-                            const meta = EVENT_META[log.action] ?? DEFAULT_META;
+                            const meta = EVENT_META[log.action] ?? defaultMetaFor(log.action);
                             const { Icon } = meta;
                             const subject = getSubject(log);
                             const detail = getSubjectDetail(log);
@@ -521,7 +526,7 @@ export default function AuditTrails() {
                     <div className="px-6 py-3.5 border-t border-slate-100 dark:border-slate-700/40 bg-slate-50/50 dark:bg-slate-800/20 flex items-center justify-center gap-2">
                         <Shield size={13} className="text-slate-400 dark:text-slate-500 shrink-0" />
                         <p className="text-xs font-semibold text-slate-400 dark:text-slate-500">
-                            All entries are write-protected. Only the system can append to this log.
+                            Entries are immutable — once logged, they cannot be edited, removed, or bypassed.
                         </p>
                     </div>
                 </div>

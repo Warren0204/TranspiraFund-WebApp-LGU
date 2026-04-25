@@ -1,14 +1,42 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
-    Hash, Banknote, Flag, ExternalLink
+    Hash, Banknote, Flag, ExternalLink, ChevronDown, ChevronUp,
+    ImageIcon, X as XIcon
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
-import { doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
+import { doc, collection, query, onSnapshot } from 'firebase/firestore';
+import { getStorage, ref as storageRef, listAll, getDownloadURL } from 'firebase/storage';
+import exifr from 'exifr';
 import { db } from '../../config/firebase';
 import { useUsers } from '../../hooks/useUsers';
+
+// Canonical mobile proof contract: { id, fileName, url, storagePath,
+// uploadedBy, uploadedAt, gps: {lat,lng}, accuracy, location, capturedAt }.
+// Legacy docs still carry flat latitude/longitude + ms-epoch `timestamp`;
+// tolerated here during the mobile migration window.
+const normalizeProof = (p) => {
+    if (!p || typeof p !== 'object') return null;
+    const lat = p.gps?.lat ?? p.latitude;
+    const lng = p.gps?.lng ?? p.longitude;
+    const raw = p.capturedAt ?? p.timestamp;
+    const capturedAt =
+        raw?.toDate ? raw.toDate()
+        : typeof raw === 'number' ? new Date(raw)
+        : raw instanceof Date ? raw
+        : typeof raw === 'string' ? raw
+        : null;
+    return {
+        name: p.fileName ?? p.name,
+        url: p.url,
+        capturedAt,
+        gps: (lat != null && lng != null) ? { lat: Number(lat), lng: Number(lng) } : null,
+        accuracy: typeof p.accuracy === 'number' ? p.accuracy : null,
+        location: typeof p.location === 'string' ? p.location : null,
+    };
+};
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 const fmt = (val) => (val === null || val === undefined || val === '') ? '—' : val;
@@ -38,7 +66,6 @@ const statusMeta = (s) => {
         case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-teal-400', dot: 'bg-emerald-500' };
         case 'ongoing':   return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30',    bar: 'from-teal-500 to-emerald-400',  dot: 'bg-teal-500' };
         case 'delayed':   return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300',  dot: 'bg-amber-400' };
-        case 'returned':  return { pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',       bar: 'from-rose-500 to-red-400',      dot: 'bg-rose-500' };
         default:          return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300',  dot: 'bg-amber-400' };
     }
 };
@@ -107,14 +134,17 @@ const ProjectDetail = () => {
 
     const { usersMap } = useUsers();
 
-    // Fetch project doc (one-time snapshot — project writes go through CF anyway)
+    // Live project doc: the recomputeProjectActualPercent trigger updates
+    // `actualPercent` on every milestone write, so we subscribe to pick up
+    // progress changes without a page refresh.
     useEffect(() => {
         if (!id) return;
-        getDoc(doc(db, 'projects', id)).then((snap) => {
+        const unsub = onSnapshot(doc(db, 'projects', id), (snap) => {
             if (!snap.exists()) { setNotFound(true); setLoading(false); return; }
             setProject({ id: snap.id, ...snap.data() });
             setLoading(false);
-        }).catch(() => { setNotFound(true); setLoading(false); });
+        }, () => { setNotFound(true); setLoading(false); });
+        return () => unsub();
     }, [id]);
 
     // Fetch milestones subcollection (real-time — mobile engineers update them).
@@ -135,6 +165,94 @@ const ProjectDetail = () => {
         }, () => {});
         return () => unsub();
     }, [id]);
+
+    /* proof-of-work gallery — fetch geotagged photos from Storage on expand */
+    const [expandedProofs, setExpandedProofs] = useState(() => new Set());
+    const [proofCache, setProofCache] = useState({});
+    const [proofLoading, setProofLoading] = useState({});
+    const [lightbox, setLightbox] = useState(null);
+
+    // Firestore-first: primary source is milestone.proofs[] (canonical shape
+    // written by mobile's uploadProofPhoto). Storage listAll() + EXIF runs
+    // only for pre-contract files that never made it into the Firestore
+    // array — once mobile backfills, the fallback goes silent.
+    const loadProofs = useCallback(async (milestone) => {
+        if (!id || !milestone?.id) return;
+        const milestoneId = milestone.id;
+        setProofLoading((s) => ({ ...s, [milestoneId]: true }));
+        try {
+            const fsEntries = Array.isArray(milestone.proofs) ? milestone.proofs : [];
+            const fsPhotos = fsEntries
+                .map(normalizeProof)
+                .filter((p) => p && p.url && p.name);
+            const fsNames = new Set(fsPhotos.map((p) => p.name));
+
+            let legacyPhotos = [];
+            try {
+                const dirRef = storageRef(getStorage(), `projects/${id}/milestones/${milestoneId}/proofs`);
+                const { items } = await listAll(dirRef);
+                const missing = items.filter((r) => !fsNames.has(r.name));
+                legacyPhotos = await Promise.all(missing.map(async (r) => {
+                    const url = await getDownloadURL(r);
+                    const fallbackCapture = r.name.replace(/\.jpe?g$/i, '');
+                    let gps = null;
+                    let capturedAt = null;
+                    try {
+                        const exif = await exifr.parse(url, {
+                            pick: ['latitude', 'longitude', 'DateTimeOriginal'],
+                        });
+                        if (exif?.latitude != null && exif?.longitude != null) {
+                            gps = { lat: exif.latitude, lng: exif.longitude };
+                        }
+                        if (exif?.DateTimeOriginal) capturedAt = exif.DateTimeOriginal;
+                    } catch { /* no EXIF → filename fallback below */ }
+                    if (!capturedAt) {
+                        const asNum = Number(fallbackCapture);
+                        capturedAt = Number.isFinite(asNum) && asNum > 0
+                            ? new Date(asNum)
+                            : fallbackCapture;
+                    }
+                    return { name: r.name, url, capturedAt, gps, accuracy: null, location: null };
+                }));
+            } catch { /* storage listing errors → show Firestore entries only */ }
+
+            const photos = [...fsPhotos, ...legacyPhotos];
+            photos.sort((a, b) => {
+                const ta = a.capturedAt instanceof Date ? a.capturedAt.getTime() : Date.parse(a.capturedAt) || 0;
+                const tb = b.capturedAt instanceof Date ? b.capturedAt.getTime() : Date.parse(b.capturedAt) || 0;
+                return tb - ta;
+            });
+            setProofCache((c) => ({ ...c, [milestoneId]: photos }));
+        } catch {
+            setProofCache((c) => ({ ...c, [milestoneId]: [] }));
+        } finally {
+            setProofLoading((s) => ({ ...s, [milestoneId]: false }));
+        }
+    }, [id]);
+
+    const toggleProofs = useCallback((milestoneId) => {
+        setExpandedProofs((prev) => {
+            const next = new Set(prev);
+            if (next.has(milestoneId)) {
+                next.delete(milestoneId);
+            } else {
+                next.add(milestoneId);
+                if (!proofCache[milestoneId]) {
+                    const m = milestones.find((x) => x.id === milestoneId);
+                    if (m) loadProofs(m);
+                }
+            }
+            return next;
+        });
+    }, [proofCache, loadProofs, milestones]);
+
+    // Esc closes lightbox
+    useEffect(() => {
+        if (!lightbox) return;
+        const onKey = (e) => { if (e.key === 'Escape') setLightbox(null); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [lightbox]);
 
     // Resolve projectEngineer UID → {name, photoURL} from the shared users hook
     const engineer = useMemo(() => {
@@ -554,12 +672,57 @@ const ProjectDetail = () => {
                                                         Suggested duration: {m.suggestedDurationDays} day{m.suggestedDurationDays !== 1 ? 's' : ''}
                                                     </div>
                                                 ) : null}
-                                                {(Array.isArray(m.proofs) && m.proofs.length > 0) && (
-                                                    <div className="flex items-center gap-1.5 text-[11px] text-teal-600 dark:text-teal-400 font-semibold mb-2">
-                                                        <CheckCircle2 size={11} />
-                                                        {m.proofs.length} proof photo{m.proofs.length !== 1 ? 's' : ''} submitted
-                                                    </div>
-                                                )}
+                                                {(() => {
+                                                    const isOpen = expandedProofs.has(m.id);
+                                                    const cached = proofCache[m.id];
+                                                    const loadingProofs = proofLoading[m.id];
+                                                    const hasCount = Array.isArray(m.proofs) && m.proofs.length > 0;
+                                                    const count = cached ? cached.length : (hasCount ? m.proofs.length : 0);
+                                                    if (count === 0 && !isOpen && !hasCount) return null;
+                                                    return (
+                                                        <div className="mb-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => toggleProofs(m.id)}
+                                                                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300 transition-colors"
+                                                            >
+                                                                <ImageIcon size={12} />
+                                                                {count} proof photo{count !== 1 ? 's' : ''}
+                                                                {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                                            </button>
+                                                            {isOpen && (
+                                                                <div className="mt-2 rounded-xl bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/60 p-3">
+                                                                    {loadingProofs ? (
+                                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium text-center py-3">Loading photos…</p>
+                                                                    ) : (cached && cached.length > 0) ? (
+                                                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                                                            {cached.map((p) => (
+                                                                                <button
+                                                                                    key={p.name}
+                                                                                    type="button"
+                                                                                    onClick={() => setLightbox(p)}
+                                                                                    className="group relative aspect-square rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
+                                                                                >
+                                                                                    <img src={p.url} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                                                                    {p.gps && (
+                                                                                        <span
+                                                                                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-teal-600/90 text-white flex items-center justify-center shadow-sm"
+                                                                                            title={p.location ?? `${p.gps.lat.toFixed(6)}, ${p.gps.lng.toFixed(6)}`}
+                                                                                        >
+                                                                                            <MapPin size={12} strokeWidth={2.5} />
+                                                                                        </span>
+                                                                                    )}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium text-center py-3">No proof photos uploaded yet.</p>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
                                                 {m.actualPercent != null && (
                                                     <div className="w-full h-1.5 bg-white dark:bg-slate-700 rounded-full overflow-hidden">
                                                         <div className={`h-full rounded-full transition-all duration-700 ${isComplete ? 'bg-emerald-500' : isLate ? 'bg-amber-400' : 'bg-teal-500'}`}
@@ -575,6 +738,46 @@ const ProjectDetail = () => {
                     </div>
                 </div>
             </main>
+
+            {lightbox && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                    onClick={() => setLightbox(null)}
+                    role="dialog"
+                    aria-modal="true"
+                >
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+                        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                        aria-label="Close"
+                    >
+                        <XIcon size={22} />
+                    </button>
+                    <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                        <img src={lightbox.url} alt={lightbox.name} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" />
+                        {/* Capture time + GPS + accuracy live in the burnt-in
+                            banner on the JPEG itself; the only unique value
+                            the web can add is an interactive Maps deep-link. */}
+                        {lightbox.gps && (
+                            <a
+                                href={`https://www.google.com/maps?q=${lightbox.gps.lat},${lightbox.gps.lng}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                title={`${lightbox.gps.lat.toFixed(6)}, ${lightbox.gps.lng.toFixed(6)}`}
+                                className={`text-xs font-semibold text-white bg-teal-600/90 hover:bg-teal-500 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition-colors max-w-[80vw] ${lightbox.location ? '' : 'font-mono'}`}
+                            >
+                                <MapPin size={12} strokeWidth={2.5} />
+                                <span className="truncate">
+                                    {lightbox.location ?? `${lightbox.gps.lat.toFixed(6)}, ${lightbox.gps.lng.toFixed(6)}`}
+                                </span>
+                                <ExternalLink size={11} strokeWidth={2.5} />
+                            </a>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

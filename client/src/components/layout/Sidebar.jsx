@@ -2,7 +2,8 @@ import React, { useState, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { LogOut, Menu, X } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { auth } from '../../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import app, { auth } from '../../config/firebase';
 import logo from '../../assets/logo.png';
 import LogoutModal from '../shared/LogoutModal';
 
@@ -29,6 +30,17 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
         if (isLoggingOut) return;
         setIsLoggingOut(true);
         try {
+            // Best-effort audit log before tearing down the session. Bounded
+            // by a 2s race so a slow function never strands the user on the
+            // app, and any error is swallowed — logging is not load-bearing.
+            try {
+                const callable = httpsCallable(getFunctions(app, 'asia-southeast1'), 'logUserLogout');
+                await Promise.race([
+                    callable().catch(() => null),
+                    new Promise((r) => setTimeout(r, 2000)),
+                ]);
+            } catch { /* ignore */ }
+
             await signOut(auth);
             sessionStorage.clear();
             navigate('/');

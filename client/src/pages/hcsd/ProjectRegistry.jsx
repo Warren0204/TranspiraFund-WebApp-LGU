@@ -49,7 +49,6 @@ const useProjectRegistry = () => {
     const normalizeStatus = (status) => {
         const s = (status || '').toLowerCase();
         if (s === 'completed') return 'Completed';
-        if (s === 'returned') return 'Returned';
         if (s === 'ongoing') return 'Ongoing';
         if (s === 'delayed') return 'Delayed';
         if (s === 'for mayor' || s === 'draft') return 'Ongoing'; // legacy → Ongoing
@@ -61,7 +60,6 @@ const useProjectRegistry = () => {
             case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-teal-400' };
             case 'ongoing':   return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30', bar: 'from-teal-500 to-emerald-400' };
             case 'delayed':   return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
-            case 'returned':  return { pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30', bar: 'from-rose-500 to-red-400' };
             default:          return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
         }
     };
@@ -99,7 +97,7 @@ const ProjectRegistry = () => {
         formatCurrencyShort, navigate
     } = useProjectRegistry();
 
-    const STATUS_OPTIONS = ['All Status', 'Delayed', 'Ongoing', 'Returned', 'Completed'];
+    const STATUS_OPTIONS = ['All Status', 'Delayed', 'Ongoing', 'Completed'];
 
     return (
         <div className="min-h-screen hcsd-bg font-sans text-slate-900 dark:text-slate-100">

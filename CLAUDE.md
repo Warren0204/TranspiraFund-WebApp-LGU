@@ -104,8 +104,8 @@ Functions use Firebase Secrets (not env vars):
 | `projects/{projectId}/milestones/{milestoneId}` | Project milestones (subcollection) | PROJ_ENG can update (mobile proof) |
 | `auditTrails/mis/entries/{logId}` | MIS-scope audit trail | MIS read-only; Cloud Functions write |
 | `auditTrails/hcsd/entries/{logId}` | HCSD-scope audit trail | HCSD read-only; Cloud Functions write |
-| `auditTrails/mobile/entries/{logId}` | Mobile activity log | PROJ_ENG creates; MIS/HCSD read |
-| `notifications/{notifId}` | App notifications | Recipient-only read/update (isRead + dismissedAt). Writes via Cloud Functions |
+| `auditTrails/mobile/entries/{logId}` | Mobile PROJ_ENG self-audit log | PROJ_ENG-only read + create. Web side never reads this; mobile activity surfaces to HCSD exclusively via notifications (see `onMobileAuditCreated` trigger) |
+| `notifications/{notifId}` | App notifications (two lanes via `category`: `"system"` for admin events, `"field"` for mobile PROJ_ENG activity) | Recipient-only read/update (isRead + dismissedAt). Writes via Cloud Functions |
 | `stats/public` | Aggregated public counters (`totalProjects`, `totalBudget`, `totalEngineers`, `done`, `delayed`, `progress`) | Public read; trigger-maintained |
 | `otpCodes/{uid}` | OTP storage | Cloud Functions only |
 | `passwordResets/{emailHash}` | Password reset rate-limiting (legacy) | Cloud Functions only |
@@ -127,6 +127,23 @@ All fields stored on the project document:
 - **Notes**: `remarks`, `actionTaken`
 - **System**: `status` ("Delayed" if no engineer assigned, "Ongoing" if engineer assigned), `progress` (0), `createdBy`, `createdAt`
 
+### Proof-of-Work Photos
+Mobile engineers upload geotagged phase photos to Storage at `projects/{projectId}/milestones/{milestoneId}/proofs/{capturedAt}.jpg` (filename pattern enforced by `storage.rules`) and append a metadata entry to the parent milestone's `proofs[]` array in Firestore.
+
+**Canonical `proofs[]` entry shape** (mobile `uploadProofPhoto` writes this):
+```
+{ id, fileName, url, storagePath, uploadedBy, uploadedAt: Timestamp,
+  gps: { lat: number, lng: number }, accuracy: number,
+  location: string,              // reverse-geocoded server-side by mobile
+  capturedAt: Timestamp }
+```
+
+**Legacy tolerance.** Older docs may still carry the pre-convergence shape (`name`, flat `latitude` / `longitude`, ms-epoch `timestamp`). Readers must accept both during the mobile migration window — see `normalizeProof` in [client/src/pages/hcsd/ProjectDetail.jsx](client/src/pages/hcsd/ProjectDetail.jsx).
+
+**Tamper-evident banner.** Every new JPEG carries a 5-line evidence stamp burnt into pixel data at the bottom by mobile's `uploadProofPhoto` before upload: place name, coords + accuracy, capture time, engineer name, role. The file itself is the audit record — re-downloads preserve the stamp.
+
+**Web read path.** HCSD Project Detail's `loadProofs` reads Firestore `milestone.proofs[]` as the primary source, then runs a Storage `listAll()` + client-side EXIF fallback only for files without a matching Firestore entry (pre-contract proofs). The lightbox deliberately shows only the stamped JPEG + a single tappable "📍 {location} ↗" Maps deep-link chip — capture time / coords / accuracy are intentionally not rendered as structured chips because they'd duplicate the burnt-in banner. The thumbnail pin-badge tooltip surfaces `location` on hover.
+
 ## Project Status Workflow
 Valid project statuses: `Delayed` → `Ongoing` → `Completed`. `Returned` is used when a project is sent back for revision. `Delayed` means created but no engineer assigned yet; `Ongoing` means an engineer is assigned and work is active. The former `"Draft"` and `"For Mayor"` statuses are retired — both normalize to `Ongoing` for display. New projects auto-set to `"Delayed"` (no engineer) or `"Ongoing"` (engineer assigned) on creation.
 
@@ -141,17 +158,53 @@ Valid project statuses: `Delayed` → `Ongoing` → `Completed`. `Returned` is u
 - Git user: Warren Gallardo
 
 ## Audit Trail Events (HCSD scope — `auditTrails/hcsd/entries`)
-| Action | Trigger | Subject |
+The HCSD audit trail is the tamper-proof record of **administrative actions done by an HCSD user inside the web app**. Mobile/PROJ_ENG activity is explicitly excluded — it surfaces to HCSD only via the Notifications "Field Activity" tab.
+
+| Action | Trigger | Subject | Filter group |
+|---|---|---|---|
+| `USER_LOGIN` | OTP verification success (HCSD actor) | Actor name | Auth |
+| `USER_LOGOUT` | `logUserLogout` Cloud Function — fired from sidebar sign-out button (HCSD actor) | Actor name | Auth |
+| `PASSWORD_CHANGED` | `changePassword` Cloud Function (HCSD actor) | Actor name | Auth |
+| `SESSIONS_REVOKED` | `revokeOtherSessions` Cloud Function (HCSD actor) | Actor name | Auth |
+| `PHOTO_UPDATED` | `updateProfilePhoto` Cloud Function (HCSD actor) | Actor name | Profile |
+| `PROJECT_CREATED` | `createProject` Cloud Function | Project name | Project |
+| `NTP_REJECTED` | `attachNtp` Cloud Function (filename violation or magic-byte mismatch) | Project name | Project |
+| `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email | Staff |
+| `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email | Staff |
+
+**Dual-write pattern.** Three actions (`USER_LOGOUT`, `PASSWORD_CHANGED`, `SESSIONS_REVOKED`) also write a row to `auditTrails/mis/entries` so the MIS system-observability scope retains full visibility. The HCSD row is only written when the actor's `users/{uid}.role === "HCSD"` — MAYOR/CPDO/MIS users' analogous actions land in MIS-only and do not pollute the HCSD trail.
+
+**Deliberately not logged here:**
+- `NTP_ATTACHED` — bundled into the `PROJECT_CREATED` entry; NTP upload is part of project creation, not a standalone admin action.
+- `PROFILE_UPDATED` (display name) — only MIS can change department-head names; the MIS scope alone covers it.
+- Maintenance operations (`backfillProjectEngineerUids`, `purgeMobileOriginHcsdAudit`) — system housekeeping, not administrative work; Cloud Functions logs retain the forensic record.
+
+**Excluded from this trail.** Mobile-origin actions (`Proof Uploaded`, `Milestone Completed`, `Milestones Drafted`, `Milestones Confirmed`, `Project Completed`) never belong here — they route to Notifications. Enforced by three layers: (1) `firestore.rules` denies all client writes to `auditTrails/hcsd/entries`, (2) `AuditTrails.jsx` client-side filter `MOBILE_ORIGIN_ACTIONS` strips any bleed-through, (3) the `purgeMobileOriginHcsdAudit` callable batch-deletes legacy stray rows (no audit entry on its own run).
+
+## Notification Categories
+Notifications have a `category` field with two lanes, rendered as tabs on the Notifications page:
+
+| `category` | Direction | Examples |
 |---|---|---|
-| `USER_LOGIN` | OTP verification success | Actor name |
-| `PROJECT_CREATED` | `createProject` Cloud Function | Project name |
-| `NTP_ATTACHED` | `attachNtp` Cloud Function | Project name |
-| `NTP_REJECTED` | `attachNtp` Cloud Function (filename violation or magic-byte mismatch) | Project name |
-| `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email |
-| `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email |
-| `PHOTO_UPDATED` | `updateProfilePhoto` Cloud Function (HCSD only) | Actor name |
-| `PHOTO_UPLOADED` | Mobile PROJ_ENG upload | Project name |
-| `PROJECT_UPDATE` | Mobile PROJ_ENG update | Project name |
+| `"system"` (default) | HCSD → PROJ_ENG | `PROJECT_ASSIGNED` |
+| `"field"` | PROJ_ENG → HCSD | `Proof Uploaded`, `Milestones Drafted`, `Milestones Confirmed`, `Milestone Completed`, `Project Completed` (server-synthesized) |
+
+NTP attachments deliberately do **not** fan out a notification to the engineer — the NTP upload is a mandatory part of project creation on the web side, not a standalone event worth alerting on.
+
+## Mobile → Web Notification Fan-Out (`onMobileAuditCreated` trigger)
+Mobile PROJ_ENG writes its own self-audit to `auditTrails/mobile/entries` (PROJ_ENG-only read per rules). A Firestore `onCreate` trigger watches that collection and, for the four whitelisted actions below, creates a `category: "field"` notification for the project's `createdBy` HCSD user. Everything else the mobile writes (login, generic updates, draft removals) is ignored.
+
+| Action (exact string) | Mobile trigger | Notification severity |
+|---|---|---|
+| `Proof Uploaded` | Geotagged proof-of-work photo upload (mobile `uploadProofPhoto` callable writes the mobile audit doc) | info |
+| `Milestones Drafted` | AI milestone draft generated | info |
+| `Milestones Confirmed` | Engineer finalizes milestones | success |
+| `Milestone Completed` | Engineer marks a single phase complete on mobile | success |
+| `Project Completed` | Synthesized server-side when `Milestone Completed` brings the done-count to total (no mobile event required) | success |
+
+Action strings are case-sensitive — mobile must emit them exactly as written. Mobile must also include either `targetId: projectId` or `details.projectId` on the audit entry so the trigger can resolve the project's `createdBy`, AND `details.milestoneId: "<firestore-doc-id>"` on all four actions so the trigger can FK-resolve the milestone's canonical `title` + `sequence` and render them into the notification body (e.g. `Construction of Drainage Canal: Phase 2 — "Site Preparation" marked complete`). The resolved milestone is also persisted on the notification as `metadata.milestoneId` / `metadata.milestoneTitle` / `metadata.milestoneSequence` for deep-linking.
+
+**Canonical mobile audit entry shape:** `{ action, actorUid, createdAt: serverTimestamp(), details: { message, projectId?, milestoneId? }, targetId?, email }`. Dropped from new writes: `uid`, `timestamp`, `platform`, string-form `details`. The trigger only reads `action`, `details`, and `targetId`, and its `typeof rawDetails === "object"` guard tolerates the legacy string form during migration.
 
 ## Data Migration (One-Time)
 Before deploying to production, run `scripts/migrate-depw-to-hcsd.js` to update existing Firestore user documents from `role: 'DEPW'` to `role: 'HCSD'` and refresh Auth custom claims. See script for full instructions.

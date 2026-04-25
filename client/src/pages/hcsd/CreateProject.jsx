@@ -433,18 +433,6 @@ const CreateProject = () => {
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                 <div className="space-y-2">
-                                    <label className={labelCls}>Sitio / Street</label>
-                                    <input
-                                        type="text"
-                                        value={formData.sitioStreet}
-                                        onChange={(e) => handleChange('sitioStreet', e.target.value)}
-                                        placeholder="e.g. Sitio Bagong Pag-asa, P. Burgos St."
-                                        maxLength={200}
-                                        className={inputCls(false)}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
                                     <label className={labelCls}>Barangay <span className="text-red-400">*</span></label>
                                     <div className="relative">
                                         <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -458,6 +446,18 @@ const CreateProject = () => {
                                         </select>
                                     </div>
                                     <FieldError msg={errors.barangay} />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className={labelCls}>Sitio / Street</label>
+                                    <input
+                                        type="text"
+                                        value={formData.sitioStreet}
+                                        onChange={(e) => handleChange('sitioStreet', e.target.value)}
+                                        placeholder="e.g. Sitio Bagong Pag-asa, P. Burgos St."
+                                        maxLength={200}
+                                        className={inputCls(false)}
+                                    />
                                 </div>
                             </div>
 
@@ -900,8 +900,8 @@ const CreateProject = () => {
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Project Details</p>
                                 <div className="space-y-2 text-sm">
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Name</span><span className="text-slate-800 font-semibold">{formData.projectName}</span></div>
-                                    {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Barangay</span><span className="text-slate-800 font-semibold">{formData.barangay}</span></div>
+                                    {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
                                     {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} days</span></div>}
                                 </div>
                             </div>

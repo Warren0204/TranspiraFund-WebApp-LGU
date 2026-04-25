@@ -88,7 +88,6 @@ const DonutChart = ({ statusDist, total, isDark }) => {
 const normalizeStatus = (status) => {
     const s = (status || '').toLowerCase();
     if (s === 'completed') return 'Completed';
-    if (s === 'returned') return 'Returned';
     if (s === 'ongoing') return 'Ongoing';
     if (s === 'delayed') return 'Delayed';
     if (s === 'for mayor' || s === 'draft') return 'Ongoing'; // legacy → Ongoing
@@ -100,8 +99,6 @@ const statusStyle = (status) => {
     const s = normalizeStatus(status).toUpperCase();
     if (s === 'COMPLETED')
         return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20';
-    if (s === 'RETURNED')
-        return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20';
     if (s === 'DELAYED')
         return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20';
     return 'bg-teal-50 text-teal-700 ring-1 ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/20';
@@ -114,7 +111,7 @@ const HcsdDashboard = () => {
 
     const [stats, setStats]           = useState({ budget: 0, engineers: 0, projects: 0 });
     const [recentProjects, setRecent] = useState([]);
-    const [statusDist, setDist]       = useState({ delayed: 0, ongoing: 0, returned: 0, done: 0 });
+    const [statusDist, setDist]       = useState({ delayed: 0, ongoing: 0, done: 0 });
 
     useEffect(() => {
         const unsubEng = onSnapshot(
@@ -133,11 +130,10 @@ const HcsdDashboard = () => {
             (snap) => {
                 const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 const budget = data.reduce((a, c) => a + (Number(c.contractAmount) || 0), 0);
-                const dist = { delayed: 0, ongoing: 0, returned: 0, done: 0 };
+                const dist = { delayed: 0, ongoing: 0, done: 0 };
                 data.forEach(p => {
                     const s = normalizeStatus(p.status).toUpperCase();
                     if (s === 'COMPLETED') dist.done++;
-                    else if (s === 'RETURNED') dist.returned++;
                     else if (s === 'DELAYED') dist.delayed++;
                     else dist.ongoing++;
                 });
@@ -311,20 +307,25 @@ const HcsdDashboard = () => {
                                                 {normalizeStatus(project.status)}
                                             </span>
                                         </div>
-                                        <div className="hidden sm:flex sm:col-span-2 items-center justify-end gap-2">
-                                            <div className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full rounded-full transition-all duration-700"
-                                                    style={{
-                                                        width: `${project.progress || 0}%`,
-                                                        background: 'linear-gradient(to right, #0d9488, #10b981)',
-                                                    }}
-                                                />
-                                            </div>
-                                            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 w-8 text-right tabular-nums shrink-0">
-                                                {project.progress || 0}%
-                                            </span>
-                                        </div>
+                                        {(() => {
+                                            const pct = project.actualPercent ?? project.progress ?? 0;
+                                            return (
+                                                <div className="hidden sm:flex sm:col-span-2 items-center justify-end gap-2">
+                                                    <div className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full rounded-full transition-all duration-700"
+                                                            style={{
+                                                                width: `${pct}%`,
+                                                                background: 'linear-gradient(to right, #0d9488, #10b981)',
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 w-8 text-right tabular-nums shrink-0">
+                                                        {pct}%
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 ))
                             )}

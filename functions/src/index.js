@@ -1,5 +1,5 @@
 ﻿const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onDocumentWritten, onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -133,10 +133,18 @@ const logSystemAudit = async (actorUid, actorEmail, action, target = {}, status 
 // Write a user-facing notification document. Narrow payload on purpose â€”
 // recipientUid is queried by the client; severity drives the visual variant;
 // isRead/dismissedAt are the only fields the client may mutate (rules enforced).
+//
+// category split:
+//   "system" - admin/operational events from the web side (assignments,
+//              provisioning). Default.
+//   "field"  - mobile PROJ_ENG activity on a project (photo, milestones,
+//              completion submit). Feeds the Notifications page "Field
+//              Activity" tab and never lands in the Audit Trail.
 const createNotification = async ({
     recipientUid,
     action,
     severity = "info",
+    category = "system",
     title,
     body,
     targetType = null,
@@ -149,6 +157,7 @@ const createNotification = async ({
             recipientUid,
             action,
             severity,
+            category,
             title,
             body,
             targetType,
@@ -183,13 +192,12 @@ const validateNtpFilename = (name) => {
     return null;
 };
 
-// Enforce a per-user rolling-hour cap on attachNtp calls. Guards against a
-// compromised HCSD account or malicious insider. 20 uploads/hr is generous for
-// realistic workload (a few projects/day) but caps abuse blast radius.
-const NTP_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-const NTP_RATE_LIMIT_MAX = 20;
-const enforceNtpRateLimit = async (uid) => {
-    const rlRef = admin.firestore().doc(`ntpRateLimits/${uid}`);
+// Per-user rolling-hour rate limit. Guards against compromised or abusive
+// accounts by capping the blast radius of sensitive callables (NTP uploads,
+// project creation). Each collection holds { count, windowStartAt } per uid.
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const enforceRateLimit = async (collection, uid, max, errorMsg) => {
+    const rlRef = admin.firestore().doc(`${collection}/${uid}`);
     await admin.firestore().runTransaction(async (tx) => {
         const snap = await tx.get(rlRef);
         const now = Date.now();
@@ -202,19 +210,25 @@ const enforceNtpRateLimit = async (uid) => {
         }
         const data = snap.data();
         const windowStart = data.windowStartAt?.toMillis?.() ?? 0;
-        if (now - windowStart > NTP_RATE_LIMIT_WINDOW_MS) {
+        if (now - windowStart > RATE_LIMIT_WINDOW_MS) {
             tx.set(rlRef, {
                 count: 1,
                 windowStartAt: admin.firestore.FieldValue.serverTimestamp(),
             });
             return;
         }
-        if ((data.count || 0) >= NTP_RATE_LIMIT_MAX) {
-            throw new HttpsError("resource-exhausted", "Too many NTP uploads. Try again in an hour.");
+        if ((data.count || 0) >= max) {
+            throw new HttpsError("resource-exhausted", errorMsg);
         }
         tx.update(rlRef, { count: admin.firestore.FieldValue.increment(1) });
     });
 };
+
+const enforceNtpRateLimit = (uid) =>
+    enforceRateLimit("ntpRateLimits", uid, 20, "Too many NTP uploads. Try again in an hour.");
+
+const enforceCreateProjectRateLimit = (uid) =>
+    enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.");
 
 // â”€â”€â”€ CLOUD FUNCTION: Send OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
@@ -249,11 +263,19 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Clear previous OTP verification claim for this session
-    await admin.auth().setCustomUserClaims(uid, {
-        otpVerified: false,
-        otpVerifiedAtAuthTime: 0,
-    });
+    // Additive claim update: preserve all existing claims, only reset the OTP
+    // fields. Restore role from Firestore only if it's missing from claims
+    // (covers legacy accounts whose role got wiped by older OTP code).
+    const sendOtpUser = await admin.auth().getUser(uid);
+    const sendOtpExisting = sendOtpUser.customClaims || {};
+    let sendOtpRole = sendOtpExisting.role;
+    if (!sendOtpRole) {
+        const sendOtpUserDoc = await admin.firestore().collection("users").doc(uid).get();
+        sendOtpRole = sendOtpUserDoc.exists ? sendOtpUserDoc.data().role : undefined;
+    }
+    const sendOtpNextClaims = { ...sendOtpExisting, otpVerified: false, otpVerifiedAtAuthTime: 0 };
+    if (sendOtpRole) sendOtpNextClaims.role = sendOtpRole;
+    await admin.auth().setCustomUserClaims(uid, sendOtpNextClaims);
 
     try {
         const transporter = createTransporter();
@@ -326,19 +348,21 @@ exports.verifyOtp = onCall(async (request) => {
 
     await otpRef.delete();
 
-    // Bind OTP claim to this login session
-    const authTime = auth.token.auth_time;
-    await admin.auth().setCustomUserClaims(uid, {
-        otpVerified: true,
-        otpVerifiedAtAuthTime: authTime,
-    });
-
-    // Fetch user role to route login audit to correct trail
+    // Additive claim update: preserve all existing claims, only set the OTP
+    // verification fields. Restore role from Firestore only if it's missing
+    // from claims (covers legacy accounts whose role got wiped).
     const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userRole = userDoc.exists ? userDoc.data().role : null;
     const userName = userDoc.exists
         ? `${userDoc.data().firstName || ""} ${userDoc.data().lastName || ""}`.trim()
         : null;
+
+    const authTime = auth.token.auth_time;
+    const verifyOtpUser = await admin.auth().getUser(uid);
+    const verifyOtpExisting = verifyOtpUser.customClaims || {};
+    const verifyOtpNextClaims = { ...verifyOtpExisting, otpVerified: true, otpVerifiedAtAuthTime: authTime };
+    if (!verifyOtpNextClaims.role && userRole) verifyOtpNextClaims.role = userRole;
+    await admin.auth().setCustomUserClaims(uid, verifyOtpNextClaims);
 
     if (userRole === "HCSD") {
         await logAudit(uid, auth.token.email, "USER_LOGIN", uid, { role: userRole, name: userName });
@@ -499,6 +523,8 @@ exports.createProject = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Only HCSD personnel can create projects.");
     }
 
+    await enforceCreateProjectRateLimit(auth.uid);
+
     // Firebase callable SDK sends null for absent optional fields; convert null â†’ undefined before validation
     const sanitized = Object.fromEntries(
         Object.entries(data || {}).map(([k, v]) => [k, v === null ? undefined : v])
@@ -646,25 +672,10 @@ exports.attachNtp = onCall(async (request) => {
             ntpUploadedBy: auth.uid,
         });
 
-        await logAudit(auth.uid, auth.token.email, "NTP_ATTACHED", projectId, {
-            projectName: projectData.projectName,
-            fileName,
-            sizeBytes,
-            contentType,
-        });
-
-        if (projectData.projectEngineer) {
-            await createNotification({
-                recipientUid: projectData.projectEngineer,
-                action: "NTP_ATTACHED",
-                severity: "success",
-                title: "NTP document uploaded",
-                body: `NTP is now available for ${projectData.projectName}`,
-                targetType: "project",
-                targetId: projectId,
-                metadata: { fileName },
-            });
-        }
+        // No separate audit row: NTP attachment is part of project creation,
+        // already covered by the `PROJECT_CREATED` entry on the same project.
+        // No PE notification either: NTP upload is a project-creation
+        // requirement on the web side, not a standalone event.
 
         return { success: true };
     } catch (error) {
@@ -704,13 +715,20 @@ exports.changePassword = onCall(async (request) => {
 
     try {
         await admin.auth().updateUser(auth.uid, { password: newPassword });
-        await admin.firestore().collection("users").doc(auth.uid).update({
+        const userRef = admin.firestore().collection("users").doc(auth.uid);
+        await userRef.update({
             mustChangePassword: false,
             passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-        // Audit trail
+        // Audit trail — MIS scope always; HCSD scope only when the actor is HCSD.
         await logSystemAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", {}, "SUCCESS");
+        const userDoc = await userRef.get();
+        if (userDoc.exists && userDoc.data().role === "HCSD") {
+            const d = userDoc.data();
+            const actorName = [d.firstName, d.lastName].filter(Boolean).join(" ") || auth.token.email;
+            await logAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", auth.uid, { actorName });
+        }
 
         return { success: true };
     } catch (error) {
@@ -732,6 +750,12 @@ exports.revokeOtherSessions = onCall(async (request) => {
     try {
         await admin.auth().revokeRefreshTokens(auth.uid);
         await logSystemAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", {}, "SUCCESS");
+        const userDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+        if (userDoc.exists && userDoc.data().role === "HCSD") {
+            const d = userDoc.data();
+            const actorName = [d.firstName, d.lastName].filter(Boolean).join(" ") || auth.token.email;
+            await logAudit(auth.uid, auth.token.email, "SESSIONS_REVOKED", auth.uid, { actorName });
+        }
         return { success: true };
     } catch (error) {
         logger.error("Error revoking sessions:", error);
@@ -739,7 +763,33 @@ exports.revokeOtherSessions = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Backfill projectEngineer field (name â†’ UID) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── CLOUD FUNCTION: Log User Logout ──────────────────────────────────────────
+// Called from the HCSD sidebar sign-out button immediately before Firebase
+// signOut(). Writes a system-level audit row always, and duplicates to the
+// HCSD scope when the actor is HCSD so the administrative trail records the
+// logout alongside the matching login. Best-effort — never throws, so a slow
+// or failed log write doesn't strand the user on the app.
+exports.logUserLogout = onCall(async (request) => {
+    const { auth } = request;
+    if (!auth) return { success: false };
+    try {
+        const userDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+        const role = userDoc.exists ? userDoc.data().role : null;
+        const actorName = userDoc.exists
+            ? [userDoc.data().firstName, userDoc.data().lastName].filter(Boolean).join(" ") || auth.token.email
+            : auth.token.email;
+        await logSystemAudit(auth.uid, auth.token.email, "USER_LOGOUT", {}, "SUCCESS", actorName);
+        if (role === "HCSD") {
+            await logAudit(auth.uid, auth.token.email, "USER_LOGOUT", auth.uid, { actorName });
+        }
+        return { success: true };
+    } catch (err) {
+        logger.error("logUserLogout failed:", err);
+        return { success: false };
+    }
+});
+
+// ─── CLOUD FUNCTION: Backfill projectEngineer field (name → UID) ──────────
 // One-time maintenance op to convert legacy project docs that stored the
 // engineer's display name in `projectEngineer` over to the engineer's UID,
 // so Firestore rules and the mobile app query (`projectEngineer == uid`) match.
@@ -800,13 +850,8 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
             await batch.commit();
         }
 
-        await logAudit(auth.uid, auth.token.email, "PROJECT_ENGINEER_BACKFILL", null, {
-            updated: updates.length,
-            alreadyUid,
-            empty,
-            unresolved: unresolved.length,
-        });
-
+        // Maintenance op — not logged to the HCSD audit trail; results are
+        // returned to the caller and visible in Cloud Functions logs.
         return {
             success: true,
             scanned: projSnap.size,
@@ -1035,6 +1080,57 @@ exports.recalculateStats = onCall(async (request) => {
     }
 });
 
+// ─── CLOUD FUNCTION: Purge mobile-origin rows from HCSD audit trail ─────────
+// Legacy bleed-through: before the onMobileAuditCreated fan-out trigger
+// shipped, mobile-origin activity was being written directly into
+// auditTrails/hcsd/entries with these exact action strings. The web-side
+// Audit Trails page is strictly "what this HCSD account did"; field
+// activity lives in Notifications. This callable deletes those stray rows.
+// HCSD-only. Idempotent — safe to call any time. Returns the number deleted.
+exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
+    const { auth } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can run this maintenance task.");
+    }
+
+    const MOBILE_ORIGIN_ACTIONS = [
+        "Proof Uploaded",
+        "Milestones Drafted",
+        "Milestones Confirmed",
+        "Milestone Completed",
+        "Project Completed",
+        "Milestones Generated (AI-Assisted)",
+    ];
+
+    try {
+        const snap = await admin.firestore()
+            .collection("auditTrails").doc("hcsd").collection("entries")
+            .where("action", "in", MOBILE_ORIGIN_ACTIONS)
+            .get();
+
+        if (snap.empty) return { success: true, deleted: 0 };
+
+        let deleted = 0;
+        for (let i = 0; i < snap.docs.length; i += 400) {
+            const chunk = snap.docs.slice(i, i + 400);
+            const batch = admin.firestore().batch();
+            chunk.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+            deleted += chunk.length;
+        }
+
+        // Maintenance op — not logged to the HCSD audit trail; Cloud
+        // Functions logs retain the invocation record for forensics.
+        return { success: true, deleted };
+    } catch (error) {
+        logger.error("[purgeMobileOriginHcsdAudit] Failed:", error);
+        throw new HttpsError("internal", "Unable to purge audit entries. Please try again.");
+    }
+});
+
 // â”€â”€â”€ TRIGGER: Recompute public stats on user writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     try {
@@ -1085,6 +1181,268 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
         logger.error("[onProjectWritten] Failed to update stats:", error);
     }
 });
+
+// ─── TRIGGER: Fan out mobile PROJ_ENG activity into HCSD notifications ─────
+// The Audit Trails page is strictly "what I (this account) did." Mobile
+// activity lives in `auditTrails/mobile/entries` (PROJ_ENG-only read) and
+// is surfaced to HCSD exclusively as notifications with category "field".
+// Only the whitelisted actions produce notifications — anything else the
+// mobile writes (login, generic updates, draft removal) is ignored here.
+// Mobile currently ships `details` as a plain string: `"<ProjectName> · <MilestoneName>"`
+// (middle-dot U+00B7 separator). Parse that shape first; fall back to object-key
+// scanning for any mobile client that starts sending structured `details`.
+const parseMilestoneFromDetailsString = (s) => {
+    if (typeof s !== "string" || !s.trim()) return null;
+    const parts = s.split(/\s*[·|]\s*/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return null;
+    // When there are >=2 parts, last is the milestone name (`Project · Milestone`
+    // or `Project · Phase N · Milestone`). With one part, treat as milestone name.
+    const name = parts[parts.length - 1];
+    return name ? { name, phase: null, order: null } : null;
+};
+
+const pickMilestoneLabel = (details) => {
+    const fromString = parseMilestoneFromDetailsString(details);
+    if (fromString) return fromString;
+    if (!details || typeof details !== "object") return { name: null, phase: null, order: null };
+    const name = details.milestoneName || details.milestone
+        || details.title || details.name || details.label
+        || details.taskName || details.description || null;
+    const phase = details.phase || details.phaseName || details.phaseTitle
+        || details.stage || details.stageName || null;
+    const order = details.phaseNumber ?? details.phaseOrder
+        ?? details.milestoneNumber ?? details.milestoneOrder
+        ?? details.order ?? details.sequence ?? details.index ?? null;
+    return { name, phase, order };
+};
+
+const formatMilestoneLabel = ({ name, phase, order }) => {
+    if (name && phase) return `"${name}" (${phase})`;
+    if (name && order != null) return `Phase ${order} — "${name}"`;
+    if (name) return `"${name}"`;
+    if (phase && order != null) return `Phase ${order} — ${phase}`;
+    if (phase) return phase;
+    if (order != null) return `Phase ${order}`;
+    return null;
+};
+
+// Prefer the canonical milestone doc (web-authored, stable `title` + `sequence`)
+// when the trigger has FK-resolved it from `details.milestoneId`. Fall back to
+// whatever keys mobile happened to carry.
+const labelFromMilestoneDoc = (milestoneDoc) => {
+    if (!milestoneDoc) return null;
+    return formatMilestoneLabel({
+        name: milestoneDoc.title || null,
+        phase: null,
+        order: milestoneDoc.sequence ?? null,
+    });
+};
+
+const FIELD_NOTIFICATION_SPECS = {
+    "Proof Uploaded": {
+        severity: "info",
+        title: "Proof uploaded",
+        bodyFor: (projectName, details, milestoneDoc) => {
+            const label = labelFromMilestoneDoc(milestoneDoc)
+                || formatMilestoneLabel(pickMilestoneLabel(details));
+            return label
+                ? `${projectName}: geotagged proof uploaded for ${label}`
+                : `${projectName}: geotagged proof-of-work photo uploaded`;
+        },
+    },
+    "Milestones Drafted": {
+        severity: "info",
+        title: "Milestones drafted",
+        bodyFor: (projectName, details) => {
+            const count = details?.count;
+            return count
+                ? `${projectName}: ${count} AI-generated milestones drafted`
+                : `${projectName}: milestone draft generated`;
+        },
+    },
+    "Milestones Confirmed": {
+        severity: "success",
+        title: "Milestones confirmed",
+        bodyFor: (projectName, details) => {
+            const count = details?.count;
+            return count
+                ? `${projectName}: engineer confirmed ${count} milestones`
+                : `${projectName}: milestones confirmed`;
+        },
+    },
+    "Milestone Completed": {
+        severity: "success",
+        title: "Milestone completed",
+        bodyFor: (projectName, details, milestoneDoc) => {
+            const label = labelFromMilestoneDoc(milestoneDoc)
+                || formatMilestoneLabel(pickMilestoneLabel(details));
+            return label
+                ? `${projectName}: ${label} marked complete`
+                : `${projectName}: engineer marked a milestone complete`;
+        },
+    },
+};
+
+exports.onMobileAuditCreated = onDocumentCreated(
+    "auditTrails/mobile/entries/{logId}",
+    async (event) => {
+        try {
+            const entry = event.data?.data();
+            if (!entry) return;
+
+            const spec = FIELD_NOTIFICATION_SPECS[entry.action];
+            if (!spec) return;
+
+            // `details` from mobile is currently a plain string like
+            // `"<ProjectName> · <MilestoneName>"`. Keep it as-is for parsing,
+            // but normalize to an empty object for safe property lookups.
+            const rawDetails = entry.details;
+            const detailsObj = (rawDetails && typeof rawDetails === "object") ? rawDetails : {};
+
+            const projectId = entry.targetId || detailsObj.projectId;
+            if (!projectId) {
+                logger.warn(`[onMobileAuditCreated] Skipping — no projectId on ${entry.action}`);
+                return;
+            }
+
+            const projectSnap = await admin.firestore()
+                .doc(`projects/${projectId}`)
+                .get();
+            if (!projectSnap.exists) return;
+
+            const project = projectSnap.data();
+            const projectName = project.projectName || detailsObj.projectName || "Project";
+
+            // Deliver to the HCSD who created the project. If missing
+            // (legacy docs), silently skip — no broadcast to every HCSD.
+            const recipientUid = project.createdBy;
+            if (!recipientUid) return;
+
+            // FK-resolve the milestone when mobile passes milestoneId so the
+            // notification body uses the web-authored canonical title/sequence
+            // instead of whatever free-text keys mobile happened to ship.
+            let milestoneDoc = null;
+            const milestoneId = detailsObj.milestoneId || null;
+            if (milestoneId) {
+                try {
+                    const mSnap = await admin.firestore()
+                        .doc(`projects/${projectId}/milestones/${milestoneId}`)
+                        .get();
+                    if (mSnap.exists) milestoneDoc = { id: mSnap.id, ...mSnap.data() };
+                } catch (e) {
+                    logger.warn(`[onMobileAuditCreated] Milestone lookup failed for ${milestoneId}: ${e.message}`);
+                }
+            }
+
+            await createNotification({
+                recipientUid,
+                action: entry.action,
+                category: "field",
+                severity: spec.severity,
+                title: spec.title,
+                body: spec.bodyFor(projectName, rawDetails, milestoneDoc),
+                targetType: milestoneId ? "milestone" : "project",
+                targetId: milestoneId || projectId,
+                metadata: {
+                    ...detailsObj,
+                    ...(typeof rawDetails === "string" ? { detailsRaw: rawDetails } : {}),
+                    projectId,
+                    milestoneId,
+                    milestoneTitle: milestoneDoc?.title || null,
+                    milestoneSequence: milestoneDoc?.sequence ?? null,
+                    sourceAuditLogId: event.params.logId,
+                },
+            });
+
+            // Server-side synthesis: after a phase is marked complete, check
+            // whether ALL sibling milestones are done. If so, emit a second
+            // "Project Completed" notification. No new mobile event needed.
+            if (entry.action === "Milestone Completed") {
+                const milestonesSnap = await admin.firestore()
+                    .collection(`projects/${projectId}/milestones`)
+                    .get();
+                const total = milestonesSnap.size;
+                const doneStatuses = new Set(["Done", "Complete", "Completed"]);
+                const done = milestonesSnap.docs.filter(
+                    (d) => doneStatuses.has(d.data().status),
+                ).length;
+                if (total > 0 && done === total) {
+                    await createNotification({
+                        recipientUid,
+                        action: "Project Completed",
+                        category: "field",
+                        severity: "success",
+                        title: "Project completed",
+                        body: `${projectName}: all ${total} milestones marked complete`,
+                        targetType: "project",
+                        targetId: projectId,
+                        metadata: {
+                            projectId,
+                            totalMilestones: total,
+                            sourceAuditLogId: event.params.logId,
+                        },
+                    });
+                }
+            }
+        } catch (err) {
+            logger.error("[onMobileAuditCreated] Failed to fan out notification:", err);
+        }
+    }
+);
+
+// Recompute parent project's actualPercent on any milestone write.
+// Mobile engineers modify per-milestone status/actualPercent over the life
+// of a project; the parent projects/{id} doc carries a denormalized
+// actualPercent so that list views (Manage Projects, Dashboard Active
+// Registry) can render progress without an N+1 subcollection read. This
+// trigger keeps that field fresh. Weighted by weightPercentage and
+// normalized to 100 to handle legacy weights that don't sum exactly.
+exports.recomputeProjectActualPercent = onDocumentWritten(
+    "projects/{projectId}/milestones/{milestoneId}",
+    async (event) => {
+        const { projectId } = event.params;
+        try {
+            const snap = await admin.firestore()
+                .collection("projects").doc(projectId)
+                .collection("milestones").get();
+
+            const confirmed = snap.docs
+                .map((d) => d.data())
+                .filter((m) => m.confirmed !== false);
+
+            if (confirmed.length === 0) {
+                await admin.firestore().collection("projects").doc(projectId)
+                    .update({ actualPercent: 0 });
+                return;
+            }
+
+            const totalWeight = confirmed.reduce(
+                (s, m) => s + (Number(m.weightPercentage) || Number(m.weight) || 0),
+                0,
+            );
+
+            let earned = 0;
+            for (const m of confirmed) {
+                const weight = Number(m.weightPercentage) || Number(m.weight) || 0;
+                const statusLower = (m.status || "").toLowerCase();
+                const isComplete = ["done", "complete", "completed"].includes(statusLower);
+                const contribution = m.actualPercent != null
+                    ? Math.min(Number(m.actualPercent) || 0, weight)
+                    : (isComplete ? weight : 0);
+                earned += contribution;
+            }
+
+            const actualPercent = totalWeight > 0
+                ? Math.min(100, Math.round((earned / totalWeight) * 100 * 10) / 10)
+                : 0;
+
+            await admin.firestore().collection("projects").doc(projectId)
+                .update({ actualPercent });
+        } catch (err) {
+            logger.error(`[recomputeProjectActualPercent] ${projectId}:`, err);
+        }
+    },
+);
 
 // â”€â”€â”€ CLOUD FUNCTION: Update Profile Photo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updateProfilePhoto = onCall(async (request) => {
@@ -1174,10 +1532,14 @@ exports.updateProfile = onCall(async (request) => {
     try {
         await userRef.update({ firstName, lastName, nameChangedAt: Date.now() });
         await admin.auth().updateUser(auth.uid, { displayName: `${firstName} ${lastName}` });
+        const newName = `${firstName} ${lastName}`;
+        // Name updates are an MIS-only operation (department heads' display
+        // names are maintained by MIS), so no HCSD audit duplicate — only
+        // the MIS observability row is written.
         await logSystemAudit(
             auth.uid, auth.token.email, "PROFILE_UPDATED",
-            { oldName: oldName ?? "â€”", newName: `${firstName} ${lastName}` },
-            "SUCCESS", `${firstName} ${lastName}`
+            { oldName: oldName ?? "â€”", newName },
+            "SUCCESS", newName
         );
         return { success: true };
     } catch (error) {
