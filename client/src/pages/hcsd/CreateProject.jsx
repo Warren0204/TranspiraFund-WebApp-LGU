@@ -10,8 +10,9 @@ import {
 import { z } from 'zod';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { ROLES } from '../../config/roles';
-import { collection, query, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, storage } from '../../config/firebase';
+import { useAuth } from '../../context/AuthContext';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app from '../../config/firebase';
@@ -71,6 +72,7 @@ const projectSchema = z.object({
 
 const useCreateProject = () => {
     const navigate = useNavigate();
+    const { tenantId } = useAuth();
 
     const [ntpFile, setNtpFile] = useState(null);
     const [ntpFileError, setNtpFileError] = useState('');
@@ -116,9 +118,13 @@ const useCreateProject = () => {
     const [loadingEngineers, setLoadingEngineers] = useState(true);
 
     useEffect(() => {
+        if (!tenantId) return;
         const fetchEngineers = async () => {
             try {
-                const snapshot = await getDocs(query(collection(db, "users")));
+                const snapshot = await getDocs(query(
+                    collection(db, "users"),
+                    where("tenantId", "==", tenantId),
+                ));
                 const fetched = snapshot.docs
                     .map(doc => ({ id: doc.id, name: `Engr. ${doc.data().firstName} ${doc.data().lastName}`, ...doc.data() }))
                     .filter(u => u.role === ROLES.PROJECT_ENGINEER || u.role === 'Project Engineer' || u.role === 'PROJ_ENG');
@@ -129,7 +135,7 @@ const useCreateProject = () => {
             }
         };
         fetchEngineers();
-    }, []);
+    }, [tenantId]);
 
     // ── Computed values (never stored) ──────────────────────────────────────────
     const contractDurationDays = useMemo(() => {

@@ -1,26 +1,35 @@
 import { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { useAuth } from '../context/AuthContext';
 
 /**
- * Real-time directory of all user documents, keyed by UID.
+ * Real-time directory of all user documents in the caller's tenant, keyed
+ * by UID.
  *
  * Single source of truth for display name / email / photoURL / role —
  * any page that shows an actor, engineer, or assignee should hydrate
  * from `usersMap[uid]` rather than duplicating user fields on other
  * collections (audit entries, projects, milestones, etc.).
  *
- * Only callable from HCSD and MIS contexts; Firestore rules block
- * other roles from reading the full users collection, in which case
- * the hook resolves to an empty map silently.
+ * Tenant-scoped: only users where users.tenantId == auth.token.tenantId
+ * are returned. Only callable from HCSD and MIS contexts; Firestore rules
+ * block other roles from reading the users collection, in which case the
+ * hook resolves to an empty map silently.
  */
 export function useUsers() {
+    const { tenantId } = useAuth();
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        if (!tenantId) {
+            setUsers([]);
+            setLoading(false);
+            return;
+        }
         const unsub = onSnapshot(
-            collection(db, 'users'),
+            query(collection(db, 'users'), where('tenantId', '==', tenantId)),
             (snap) => {
                 setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
@@ -28,7 +37,7 @@ export function useUsers() {
             () => { setUsers([]); setLoading(false); }
         );
         return () => unsub();
-    }, []);
+    }, [tenantId]);
 
     const usersMap = useMemo(() => {
         const m = {};

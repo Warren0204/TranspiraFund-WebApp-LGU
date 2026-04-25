@@ -136,8 +136,6 @@ const Settings = () => {
     const ROLE_FULL_LABELS = {
         HCSD:     'Head of Construction Services Division',
         MIS:      'Management Information Systems',
-        MAYOR:    'Mayor',
-        CPDO:     'City Planning and Development Office',
         PROJ_ENG: 'Project Engineer',
     };
     const userRoleFull = ROLE_FULL_LABELS[userRole] || userRole;

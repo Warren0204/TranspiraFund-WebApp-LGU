@@ -16,17 +16,18 @@ const NAV_SECTIONS = [
 ];
 
 const AdminSidebar = memo(() => {
-    const { currentUser } = useAuth();
+    const { currentUser, lguName } = useAuth();
 
     const firstName = currentUser?.firstName || '';
     const lastName = currentUser?.lastName || '';
     const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'System Admin';
     const initial = firstName?.[0]?.toUpperCase() || fullName[0]?.toUpperCase() || 'S';
     const department = currentUser?.department || 'IT Operations';
+    const brand = lguName || 'MIS';
 
     return (
         <Sidebar
-            brandLabel="MIS"
+            brandLabel={brand}
             navSections={NAV_SECTIONS}
             userDisplay={{ name: fullName, subtitle: department }}
             userInitial={initial}

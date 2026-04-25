@@ -26,15 +26,20 @@ const NAV_SECTIONS = [
 ];
 
 const HcsdSidebar = memo(() => {
-    const { currentUser } = useAuth();
+    const { currentUser, lguName } = useAuth();
 
     const userName = currentUser
         ? `Engr. ${currentUser.firstName} ${currentUser.lastName}`
         : 'Loading...';
 
+    // Brand label is the LGU name when known. Falls back to the department
+    // label so the sidebar still renders cleanly during the brief window
+    // before the tenant doc loads.
+    const brand = lguName || 'Construction Services Division';
+
     return (
         <Sidebar
-            brandLabel="Construction Services Division"
+            brandLabel={brand}
             navSections={NAV_SECTIONS}
             userDisplay={{ name: userName, subtitle: 'Construction Services Division, DEPW' }}
             userInitial={currentUser?.firstName?.[0]?.toUpperCase() || '?'}

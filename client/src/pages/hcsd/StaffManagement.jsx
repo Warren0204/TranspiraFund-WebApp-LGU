@@ -9,14 +9,16 @@ import AccountProvisioningService from '../../services/AccountProvisioningServic
 import ConfirmAssignmentModal from '../../components/shared/ConfirmAssignmentModal';
 import SuccessModal from '../../components/shared/SuccessModal';
 import { ROLES, ROLE_METADATA } from '../../config/roles';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app, { db } from '../../config/firebase';
 import { staffProvisionSchema } from '../../config/validationSchemas';
 import { useDebounce } from '../../hooks/useDebounce';
+import { useAuth } from '../../context/AuthContext';
 
 const useStaffLogic = () => {
     const navigate = useNavigate();
+    const { tenantId } = useAuth();
     const ENGINEER_ROLE = ROLES.PROJECT_ENGINEER;
 
     const [staff, setStaff] = useState([]);
@@ -24,7 +26,12 @@ const useStaffLogic = () => {
     const [searchTerm, setSearchTerm] = useState('');
 
     useEffect(() => {
-        const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
+        if (!tenantId) return;
+        const q = query(
+            collection(db, "users"),
+            where("tenantId", "==", tenantId),
+            orderBy("createdAt", "desc"),
+        );
         const unsubscribe = onSnapshot(q,
             (snapshot) => {
                 const fetchedStaff = snapshot.docs
@@ -52,11 +59,16 @@ const useStaffLogic = () => {
             () => {}
         );
         return () => unsubscribe();
-    }, [ENGINEER_ROLE]);
+    }, [ENGINEER_ROLE, tenantId]);
 
     // Real-time project workload, keyed by engineer UID.
     useEffect(() => {
-        const q = query(collection(db, 'projects'), orderBy('createdAt', 'desc'));
+        if (!tenantId) return;
+        const q = query(
+            collection(db, 'projects'),
+            where('tenantId', '==', tenantId),
+            orderBy('createdAt', 'desc'),
+        );
         const unsub = onSnapshot(q, (snap) => {
             const map = {};
             snap.docs.forEach(d => {
@@ -77,7 +89,7 @@ const useStaffLogic = () => {
             setProjectsByEngineer(map);
         }, () => {});
         return () => unsub();
-    }, []);
+    }, [tenantId]);
 
     const debouncedSearchTerm = useDebounce(searchTerm, 300);
     const filteredStaff = useMemo(() => {

@@ -266,7 +266,7 @@ const Landing = () => {
                 </div>
                 <h3 className="text-lg sm:text-xl font-extrabold text-slate-800 mb-2 tracking-tight">Connected Departments</h3>
                 <p className="text-slate-500 leading-relaxed text-[15px]">
-                  One dashboard for the Mayor's Office, Engineering, and Planning — real-time, role-based, citywide.
+                  One dashboard for Construction Services and Field Engineering — real-time, role-based, citywide.
                 </p>
               </div>
             </div>

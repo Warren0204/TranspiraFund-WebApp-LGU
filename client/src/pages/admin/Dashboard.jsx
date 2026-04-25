@@ -1,58 +1,48 @@
 import {
-    ShieldCheck, Users, FileText, HardHat, Map, AlertTriangle
+    ShieldCheck, Users, FileText, HardHat, AlertTriangle
 } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import AdminSidebar from '../../components/layout/AdminSidebar';
 import { useAuth } from '../../context/AuthContext';
 
-const useDashboardData = () => {
+const useDashboardData = (tenantId) => {
     const [departments, setDepartments] = useState([]);
     const [systemHealth, setSystemHealth] = useState({
         status: 'Loading...', message: 'Analyzing system configuration...', isError: false
     });
 
     useEffect(() => {
-        const unsubscribe = onSnapshot(query(collection(db, 'users')), (snapshot) => {
-            const users    = snapshot.docs.map(doc => doc.data());
-            const find     = (role) => users.find(u => u.role === role);
-            const mayorUser = find('MAYOR');
-            const hcsdUser  = find('HCSD');
-            const cpdoUser  = find('CPDO');
-            const engCount  = users.filter(u => u.role === 'PROJ_ENG').length;
+        if (!tenantId) return;
+        const unsubscribe = onSnapshot(
+            query(collection(db, 'users'), where('tenantId', '==', tenantId)),
+            (snapshot) => {
+                const users    = snapshot.docs.map(doc => doc.data());
+                const find     = (role) => users.find(u => u.role === role);
+                const hcsdUser  = find('HCSD');
+                const engCount  = users.filter(u => u.role === 'PROJ_ENG').length;
 
-            const depts = [
-                {
-                    id: 'mayor', title: "Mayor's Office", role: 'APPROVER',
-                    status: mayorUser ? 'Active' : 'Required', isMissing: !mayorUser,
-                    person: { label: 'Designated User', name: mayorUser ? `${mayorUser.firstName} ${mayorUser.lastName}` : null },
-                    extra: null,
-                },
-                {
-                    id: 'hcsd', title: 'Construction Services Division', role: 'HCSD',
-                    status: hcsdUser ? 'Active' : 'Required', isMissing: !hcsdUser,
-                    person: { label: 'Division Head', name: hcsdUser ? `${hcsdUser.firstName} ${hcsdUser.lastName}` : null },
-                    extra: { label: 'Field Engineers', value: `${engCount}` },
-                },
-                {
-                    id: 'cpdo', title: 'City Planning', role: 'CPDO',
-                    status: cpdoUser ? 'Active' : 'Required', isMissing: !cpdoUser,
-                    person: { label: 'Department Head', name: cpdoUser ? `${cpdoUser.firstName} ${cpdoUser.lastName}` : null },
-                    extra: null,
-                },
-            ];
+                const depts = [
+                    {
+                        id: 'hcsd', title: 'Construction Services Division', role: 'HCSD',
+                        status: hcsdUser ? 'Active' : 'Required', isMissing: !hcsdUser,
+                        person: { label: 'Division Head', name: hcsdUser ? `${hcsdUser.firstName} ${hcsdUser.lastName}` : null },
+                        extra: { label: 'Field Engineers', value: `${engCount}` },
+                    },
+                ];
 
-            setDepartments(depts);
-            const missing = depts.filter(d => d.isMissing).length;
-            setSystemHealth(missing > 0
-                ? { status: 'Configuration Incomplete', message: `${missing} key account(s) are not yet provisioned. Go to Account Management to resolve this.`, isError: true }
-                : { status: 'System Fully Operational', message: 'All departmental accounts are provisioned and active.', isError: false }
-            );
-        });
+                setDepartments(depts);
+                const missing = depts.filter(d => d.isMissing).length;
+                setSystemHealth(missing > 0
+                    ? { status: 'Configuration Incomplete', message: `${missing} key account(s) are not yet provisioned. Go to Account Management to resolve this.`, isError: true }
+                    : { status: 'System Fully Operational', message: 'All departmental accounts are provisioned and active.', isError: false }
+                );
+            },
+        );
         return () => unsubscribe();
-    }, []);
+    }, [tenantId]);
 
     return { departments, systemHealth };
 };
@@ -64,7 +54,7 @@ const getGreeting = () => {
     return 'Good evening';
 };
 
-const DEPT_ICONS = { mayor: FileText, hcsd: HardHat, cpdo: Map };
+const DEPT_ICONS = { hcsd: HardHat };
 
 const DepartmentCard = memo(({ data, index }) => {
     const Icon    = DEPT_ICONS[data.id] || FileText;
@@ -201,8 +191,8 @@ const SystemHealthBanner = memo(({ health }) => {
 
 const Dashboard = () => {
     const navigate    = useNavigate();
-    const { currentUser } = useAuth();
-    const { departments, systemHealth } = useDashboardData();
+    const { currentUser, tenantId } = useAuth();
+    const { departments, systemHealth } = useDashboardData(tenantId);
 
     const firstName   = currentUser?.firstName || 'Administrator';
     const greeting    = getGreeting();

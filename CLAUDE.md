@@ -10,7 +10,7 @@ TranspiraFund is a role-based web application for a Local Government Unit (LGU) 
 /
 ├── client/          # React + Vite frontend
 │   └── src/
-│       ├── pages/   # Role-scoped page directories: admin/, hcsd/, mayor/, cpdo/, public/
+│       ├── pages/   # Role-scoped page directories: admin/, hcsd/, public/
 │       ├── components/  # auth/, layout/, shared/
 │       ├── context/     # AuthContext.jsx, ThemeContext.jsx
 │       ├── config/      # firebase.js, roles.js, validationSchemas.js
@@ -28,19 +28,31 @@ TranspiraFund is a role-based web application for a Local Government Unit (LGU) 
 ### Roles
 | Role | Constant | Department | Notes |
 |------|----------|------------|-------|
-| MIS | `ROLES.MIS` | Management Information Systems | Admin/IT |
-| HCSD | `ROLES.HCSD` | Construction Services Division, DEPW | Sub-org of DEPW |
-| MAYOR | `ROLES.MAYOR` | Office of the Mayor | |
-| CPDO | `ROLES.CPDO` | City Planning and Development Office | |
+| MIS | `ROLES.MIS` | Management Information Systems | LGU tenant administrator |
+| HCSD | `ROLES.HCSD` | Construction Services Division, DEPW | Web dashboard user |
 | PROJECT_ENGINEER | `ROLES.PROJECT_ENGINEER` (`PROJ_ENG`) | Construction Services Division, DEPW | Mobile app user |
 
-> **Note:** The HCSD role was formerly named `DEPW`. All files, directories, and routes now use `hcsd/`. The string "DEPW" still appears in display labels (e.g., "Construction Services Division, DEPW") because DEPW is the parent department — that usage is intentional.
+> **Note:** The HCSD role was formerly named `DEPW`. All files, directories, and routes now use `hcsd/`. The string "DEPW" still appears in display labels (e.g., "Construction Services Division, DEPW") because DEPW is the parent department — that usage is intentional. The MAYOR and CPDO roles existed in v1 but were retired in the multi-tenant refactor.
+
+### Multi-Tenant Architecture
+TranspiraFund is a multi-tenant SaaS. Each LGU (city or municipality) is one tenant.
+
+**Tenant ID format:** `{lgu-slug}-{psgc-10-digit}`, e.g. `cebu-city-0730600000`. The PSGC 10-digit code is per PSGC Revision 1 (PSA Board Resolution No. 07 Series of 2021).
+
+**Three layers of isolation (defense in depth):**
+1. **Custom claims** (`role`, `tenantId`) on every Auth token, set in Cloud Functions only.
+2. **`tenantId` field** stamped on every Firestore document at creation, immutable thereafter.
+3. **Firestore + Storage rules** that verify both `request.auth.token.tenantId` and the document's `tenantId` match.
+
+**Tenant lifecycle.** New tenants are created via the `provisionTenant` Cloud Function, gated by a `platformAdmin` custom claim. Grant the claim with `node scripts/grant-platform-admin.js <uid>`. The function creates the `tenants/{tenantId}` doc and the first MIS Admin account in one transaction (with rollback on failure).
 
 ### Authentication Flow
 - Firebase Auth + Firestore user document for role/metadata
 - **OTP verification** via custom claims (`otpVerified`, `otpVerifiedAtAuthTime`)
+- **Tenant binding** via `tenantId` custom claim, set at account creation
 - `mustChangePassword` flag for provisioned accounts
 - `RequireAuth` component checks both auth state and `allowedRoles`
+- AuthContext extracts `tenantId` from claims on login and force-signs-out any account without one
 
 ## Tech Stack
 - **Frontend**: React 18, Vite, React Router v6, Zod (client-side validation)
@@ -172,7 +184,7 @@ The HCSD audit trail is the tamper-proof record of **administrative actions done
 | `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email | Staff |
 | `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email | Staff |
 
-**Dual-write pattern.** Three actions (`USER_LOGOUT`, `PASSWORD_CHANGED`, `SESSIONS_REVOKED`) also write a row to `auditTrails/mis/entries` so the MIS system-observability scope retains full visibility. The HCSD row is only written when the actor's `users/{uid}.role === "HCSD"` — MAYOR/CPDO/MIS users' analogous actions land in MIS-only and do not pollute the HCSD trail.
+**Dual-write pattern.** Three actions (`USER_LOGOUT`, `PASSWORD_CHANGED`, `SESSIONS_REVOKED`) also write a row to `auditTrails/mis/entries` so the MIS system-observability scope retains full visibility. The HCSD row is only written when the actor's `users/{uid}.role === "HCSD"` — MIS users' analogous actions land in MIS-only and do not pollute the HCSD trail.
 
 **Deliberately not logged here:**
 - `NTP_ATTACHED` — bundled into the `PROJECT_CREATED` entry; NTP upload is part of project creation, not a standalone admin action.

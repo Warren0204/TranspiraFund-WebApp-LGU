@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { collection, query, orderBy, limit, getDocs, startAfter, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, startAfter, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app, { db } from '../../config/firebase';
 import {
@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useUsers } from '../../hooks/useUsers';
+import { useAuth } from '../../context/AuthContext';
 
 const PAGE_SIZE = 30;
 
@@ -238,13 +239,16 @@ export default function AuditTrails() {
     // Real-time directory — hydrates every actor's current name + photo.
     // Photo updates propagate instantly (no stale copies in audit entries).
     const { usersMap, displayName: userDisplayName } = useUsers();
+    const { tenantId } = useAuth();
 
     // ── Real-time listener: HCSD entries (project/account/auth events) ────────
     useEffect(() => {
+        if (!tenantId) return;
         setLoading(true);
         setLogs([]);
         const q = query(
             collection(db, 'auditTrails', 'hcsd', 'entries'),
+            where('tenantId', '==', tenantId),
             orderBy('timestamp', 'desc'),
             limit(PAGE_SIZE)
         );
@@ -259,15 +263,16 @@ export default function AuditTrails() {
             setLoading(false);
         });
         return () => unsub();
-    }, [refreshKey]);
+    }, [refreshKey, tenantId]);
 
     // ── Load more (older entries, one-time fetch) ─────────────────────────────
     const fetchLogs = useCallback(async (isLoadMore = false) => {
-        if (!isLoadMore || !lastDoc) return;
+        if (!isLoadMore || !lastDoc || !tenantId) return;
         setLoadingMore(true);
         try {
             const q = query(
                 collection(db, 'auditTrails', 'hcsd', 'entries'),
+                where('tenantId', '==', tenantId),
                 orderBy('timestamp', 'desc'),
                 startAfter(lastDoc),
                 limit(PAGE_SIZE)
@@ -282,7 +287,7 @@ export default function AuditTrails() {
         } finally {
             setLoadingMore(false);
         }
-    }, [lastDoc]);
+    }, [lastDoc, tenantId]);
 
     // Strip any stray mobile-origin rows defensively so the UI never shows
     // PE field activity here — even if a row slips through the rules.

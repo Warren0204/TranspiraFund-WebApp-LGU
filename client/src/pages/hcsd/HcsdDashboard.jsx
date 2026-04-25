@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useTheme } from '../../context/ThemeContext';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { useAuth } from '../../context/AuthContext';
+import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { ROLES } from '../../config/roles';
 
@@ -90,7 +91,7 @@ const normalizeStatus = (status) => {
     if (s === 'completed') return 'Completed';
     if (s === 'ongoing') return 'Ongoing';
     if (s === 'delayed') return 'Delayed';
-    if (s === 'for mayor' || s === 'draft') return 'Ongoing'; // legacy → Ongoing
+    if (s === 'draft') return 'Ongoing'; // legacy → Ongoing
     return 'Delayed';
 };
 
@@ -107,6 +108,7 @@ const statusStyle = (status) => {
 /* ── Component ───────────────────────────────────────────────────────────── */
 const HcsdDashboard = () => {
     const { isDark } = useTheme();
+    const { tenantId } = useAuth();
     const navigate = useNavigate();
 
     const [stats, setStats]           = useState({ budget: 0, engineers: 0, projects: 0 });
@@ -114,8 +116,13 @@ const HcsdDashboard = () => {
     const [statusDist, setDist]       = useState({ delayed: 0, ongoing: 0, done: 0 });
 
     useEffect(() => {
+        if (!tenantId) return;
         const unsubEng = onSnapshot(
-            query(collection(db, 'users'), orderBy('createdAt', 'desc')),
+            query(
+                collection(db, 'users'),
+                where('tenantId', '==', tenantId),
+                orderBy('createdAt', 'desc'),
+            ),
             (snap) => {
                 const count = snap.docs.filter(d => {
                     const r = d.data().role;
@@ -126,7 +133,11 @@ const HcsdDashboard = () => {
         );
 
         const unsubProj = onSnapshot(
-            query(collection(db, 'projects'), orderBy('createdAt', 'desc')),
+            query(
+                collection(db, 'projects'),
+                where('tenantId', '==', tenantId),
+                orderBy('createdAt', 'desc'),
+            ),
             (snap) => {
                 const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 const budget = data.reduce((a, c) => a + (Number(c.contractAmount) || 0), 0);
@@ -144,7 +155,7 @@ const HcsdDashboard = () => {
         );
 
         return () => { unsubEng(); unsubProj(); };
-    }, []);
+    }, [tenantId]);
 
     const fmtBudget = (val) => {
         if (val >= 1_000_000_000) return `₱${(val / 1_000_000_000).toFixed(2)}B`;

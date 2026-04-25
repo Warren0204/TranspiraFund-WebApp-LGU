@@ -64,16 +64,17 @@ const TAB_ICON = {
 };
 
 const Notifications = () => {
-    const { currentUser } = useAuth();
+    const { currentUser, tenantId } = useAuth();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState('ALL');
 
     useEffect(() => {
-        if (!currentUser?.uid) return;
+        if (!currentUser?.uid || !tenantId) return;
         const q = query(
             collection(db, 'notifications'),
             where('recipientUid', '==', currentUser.uid),
+            where('tenantId', '==', tenantId),
             orderBy('createdAt', 'desc'),
             limit(50)
         );
@@ -86,7 +87,7 @@ const Notifications = () => {
             () => setLoading(false)
         );
         return unsub;
-    }, [currentUser?.uid]);
+    }, [currentUser?.uid, tenantId]);
 
     const markRead = async (id) => {
         try {

@@ -1,48 +1,49 @@
 import { memo, useState, useMemo, useEffect } from 'react';
 import {
     Trash2, Plus, X, Shield, Mail, UserPlus,
-    FileText, HardHat, Map, CheckCircle2, AlertTriangle, User,
+    HardHat, CheckCircle2, AlertTriangle, User,
     ArrowLeft, Send, AlertCircle
 } from 'lucide-react';
 import AdminSidebar from '../../components/layout/AdminSidebar';
 import AccountProvisioningService from '../../services/AccountProvisioningService';
 import SuccessModal from '../../components/shared/SuccessModal';
 import { ROLE_METADATA } from '../../config/roles';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { useAuth } from '../../context/AuthContext';
 import { accountProvisionSchema } from '../../config/validationSchemas';
 
-const MIS_PROVISIONABLE_ROLES = ['MAYOR', 'HCSD', 'CPDO'];
-const DEPARTMENT_HEAD_ROLES   = ['MIS', 'MAYOR', 'HCSD', 'CPDO'];
+const MIS_PROVISIONABLE_ROLES = ['HCSD'];
+const DEPARTMENT_HEAD_ROLES   = ['MIS', 'HCSD'];
 
-const ROLE_ICONS = { MAYOR: FileText, HCSD: HardHat, CPDO: Map };
+const ROLE_ICONS = { HCSD: HardHat };
 
-const ROLE_SHORT_NAMES = { MAYOR: 'City Mayor', HCSD: 'HCSD Head', CPDO: 'CPDO Head' };
+const ROLE_SHORT_NAMES = { HCSD: 'HCSD Head' };
 
 const ROLE_DESCRIPTIONS = {
-    MAYOR: 'Final approver for infrastructure projects and fund disbursements.',
-    HCSD:  'Manages construction services projects, site personnel, and public works milestones.',
-    CPDO:  'Oversees city planning, zoning, and development permits.',
+    HCSD: 'Manages construction services projects, site personnel, and public works milestones.',
 };
 
 const ROLE_PERMISSIONS = {
-    MAYOR: ['Approve or reject infrastructure projects', 'Fund disbursement authorization', 'View all project reports'],
-    HCSD:  ['Create and manage projects', 'Provision field engineers', 'Submit milestone reports'],
-    CPDO:  ['City planning oversight', 'Zoning and permit review', 'Development plan approval'],
+    HCSD: ['Create and manage projects', 'Provision field engineers', 'Submit milestone reports'],
 };
 
 const ROLE_GRADIENTS = {
-    MAYOR: { gradient: 'from-violet-600 to-purple-500', glow: 'shadow-violet-500/30', ambient: 'bg-violet-500/10' },
-    HCSD:  { gradient: 'from-teal-600 to-emerald-500',  glow: 'shadow-teal-500/30',   ambient: 'bg-teal-500/10'   },
-    CPDO:  { gradient: 'from-blue-600 to-cyan-500',     glow: 'shadow-blue-500/30',   ambient: 'bg-blue-500/10'   },
+    HCSD: { gradient: 'from-teal-600 to-emerald-500', glow: 'shadow-teal-500/30', ambient: 'bg-teal-500/10' },
 };
 
 const useRosterLogic = () => {
+    const { tenantId } = useAuth();
     const REQUIRED_ROLES = useMemo(() => ROLE_METADATA, []);
     const [accounts, setAccounts] = useState([]);
 
     useEffect(() => {
-        const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+        if (!tenantId) return;
+        const q = query(
+            collection(db, 'users'),
+            where('tenantId', '==', tenantId),
+            orderBy('createdAt', 'desc'),
+        );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const fetchedAccounts = snapshot.docs
                 .map(doc => {
@@ -63,7 +64,7 @@ const useRosterLogic = () => {
             setAccounts(fetchedAccounts);
         });
         return () => unsubscribe();
-    }, [REQUIRED_ROLES]);
+    }, [REQUIRED_ROLES, tenantId]);
 
     const roster = useMemo(() => MIS_PROVISIONABLE_ROLES.map(roleType => {
         const roleMeta = REQUIRED_ROLES.find(r => r.type === roleType);

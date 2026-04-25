@@ -30,10 +30,6 @@ const CreateProject = lazy(() => import('./pages/hcsd/CreateProject'));
 const ProjectDetail = lazy(() => import('./pages/hcsd/ProjectDetail'));
 const Settings = lazy(() => import('./pages/hcsd/Settings'));
 
-const MayorDashboard = lazy(() => import('./pages/mayor/MayorDashboard'));
-
-const CpdoDashboard = lazy(() => import('./pages/cpdo/CpdoDashboard'));
-
 function App() {
   return (
     <ErrorBoundary>
@@ -56,8 +52,6 @@ function App() {
                 <Route path="/admin/settings" element={<RequireAuth allowedRoles={[ROLES.MIS]}><MisSettings /></RequireAuth>} />
                 <Route path="/admin/audits" element={<RequireAuth allowedRoles={[ROLES.MIS]}><MisAuditTrails /></RequireAuth>} />
 
-                <Route path="/mayor/dashboard" element={<RequireAuth allowedRoles={[ROLES.MAYOR]}><MayorDashboard /></RequireAuth>} />
-
                 <Route path="/hcsd/dashboard" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><HcsdDashboard /></RequireAuth>} />
                 <Route path="/hcsd/staff" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><StaffManagement /></RequireAuth>} />
                 <Route path="/hcsd/projects" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><ProjectRegistry /></RequireAuth>} />
@@ -66,8 +60,6 @@ function App() {
                 <Route path="/hcsd/notifications" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><Notifications /></RequireAuth>} />
                 <Route path="/hcsd/create-project" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><CreateProject /></RequireAuth>} />
                 <Route path="/hcsd/settings" element={<RequireAuth allowedRoles={[ROLES.HCSD]}><Settings /></RequireAuth>} />
-
-                <Route path="/cpdo/dashboard" element={<RequireAuth allowedRoles={[ROLES.CPDO]}><CpdoDashboard /></RequireAuth>} />
 
                 <Route path="*" element={<NotFound />} />
               </Routes>

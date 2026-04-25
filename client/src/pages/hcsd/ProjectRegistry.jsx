@@ -4,12 +4,14 @@ import {
     Plus, FolderKanban, Search, Filter, MapPin, Clock, TrendingUp
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useDebounce } from '../../hooks/useDebounce';
+import { useAuth } from '../../context/AuthContext';
 
 const useProjectRegistry = () => {
     const navigate = useNavigate();
+    const { tenantId } = useAuth();
     const [projects, setProjects] = useState([]);
     const [loading, setLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState('All Status');
@@ -17,7 +19,12 @@ const useProjectRegistry = () => {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
     useEffect(() => {
-        const q = query(collection(db, "projects"), orderBy("createdAt", "desc"));
+        if (!tenantId) return;
+        const q = query(
+            collection(db, "projects"),
+            where("tenantId", "==", tenantId),
+            orderBy("createdAt", "desc"),
+        );
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const fetchedProjects = snapshot.docs.map(doc => {
                 const data = doc.data();
@@ -37,7 +44,7 @@ const useProjectRegistry = () => {
             setLoading(false);
         }, () => { setLoading(false); });
         return () => unsubscribe();
-    }, []);
+    }, [tenantId]);
 
     const formatCurrencyShort = (amount) => {
         if (!amount && amount !== 0) return '—';
@@ -51,7 +58,7 @@ const useProjectRegistry = () => {
         if (s === 'completed') return 'Completed';
         if (s === 'ongoing') return 'Ongoing';
         if (s === 'delayed') return 'Delayed';
-        if (s === 'for mayor' || s === 'draft') return 'Ongoing'; // legacy → Ongoing
+        if (s === 'draft') return 'Ongoing'; // legacy → Ongoing
         return 'Delayed';
     };
 

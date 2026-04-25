@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 
@@ -14,6 +14,10 @@ export const AuthProvider = ({ children }) => {
     const [userRole, setUserRole] = useState(null);
     const [otpVerified, setOtpVerified] = useState(false);
     const [mustChangePassword, setMustChangePassword] = useState(false);
+    const [tenantId, setTenantId] = useState(null);
+    const [claimRole, setClaimRole] = useState(null);
+    const [lguName, setLguName] = useState(null);
+    const [tenantClassification, setTenantClassification] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const refreshOtpStatus = async (forceRefresh = true) => {
@@ -47,6 +51,47 @@ export const AuthProvider = ({ children }) => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 try {
+                    // Read claims first. Tenant assignment is the gating
+                    // requirement; an account without a tenantId claim is
+                    // misconfigured (or pre-migration) and gets force-logged-out.
+                    const tokenResult = await user.getIdTokenResult();
+                    const claims = tokenResult.claims;
+
+                    if (!claims.tenantId) {
+                        try {
+                            sessionStorage.setItem(
+                                'authError',
+                                'Account is not assigned to a tenant. Contact your administrator.',
+                            );
+                        } catch { /* sessionStorage may be disabled */ }
+                        await signOut(auth);
+                        // onAuthStateChanged will fire again with user=null;
+                        // let that pass clear all the fields.
+                        return;
+                    }
+
+                    setTenantId(claims.tenantId);
+                    setClaimRole(typeof claims.role === 'string' ? claims.role : null);
+
+                    // Tenant doc fetch is non-blocking. If it fails (rules
+                    // misconfigured, doc missing), the dashboard still
+                    // renders with a null lguName — the sidebar falls back
+                    // to the department label.
+                    try {
+                        const tenantDoc = await getDoc(doc(db, 'tenants', claims.tenantId));
+                        if (tenantDoc.exists()) {
+                            const td = tenantDoc.data();
+                            setLguName(td.lguName || null);
+                            setTenantClassification(td.classification || null);
+                        } else {
+                            setLguName(null);
+                            setTenantClassification(null);
+                        }
+                    } catch {
+                        setLguName(null);
+                        setTenantClassification(null);
+                    }
+
                     const userDoc = await getDoc(doc(db, "users", user.uid));
                     if (userDoc.exists()) {
                         const userData = userDoc.data();
@@ -57,8 +102,7 @@ export const AuthProvider = ({ children }) => {
                         setUserRole('GUEST');
                         setCurrentUser(user);
                     }
-                    const tokenResult = await user.getIdTokenResult();
-                    const claims = tokenResult.claims;
+
                     const isVerified =
                         claims.otpVerified === true &&
                         Number(claims.otpVerifiedAtAuthTime) === Number(claims.auth_time);
@@ -68,12 +112,20 @@ export const AuthProvider = ({ children }) => {
                     setCurrentUser(null);
                     setOtpVerified(false);
                     setMustChangePassword(false);
+                    setTenantId(null);
+                    setClaimRole(null);
+                    setLguName(null);
+                    setTenantClassification(null);
                 }
             } else {
                 setCurrentUser(null);
                 setUserRole(null);
                 setOtpVerified(false);
                 setMustChangePassword(false);
+                setTenantId(null);
+                setClaimRole(null);
+                setLguName(null);
+                setTenantClassification(null);
             }
             setLoading(false);
         });
@@ -86,6 +138,10 @@ export const AuthProvider = ({ children }) => {
         userRole,
         otpVerified,
         mustChangePassword,
+        tenantId,
+        claimRole,
+        lguName,
+        tenantClassification,
         loading,
         refreshOtpStatus,
         refreshUserData,

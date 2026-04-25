@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { collection, query, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import AdminSidebar from '../../components/layout/AdminSidebar';
+import { useAuth } from '../../context/AuthContext';
 
 const PAGE_SIZE = 30;
 
@@ -77,6 +78,7 @@ const getDetails = (log) => {
 };
 
 export default function AuditTrails() {
+    const { tenantId } = useAuth();
     const [logs, setLogs]               = useState([]);
     const [loading, setLoading]         = useState(true);
     const [lastDoc, setLastDoc]         = useState(null);
@@ -85,16 +87,19 @@ export default function AuditTrails() {
     const [filter, setFilter]           = useState('ALL');
 
     const fetchLogs = useCallback(async (isLoadMore = false) => {
+        if (!tenantId) return;
         isLoadMore ? setLoadingMore(true) : setLoading(true);
         try {
             let q = query(
                 collection(db, 'auditTrails', 'mis', 'entries'),
+                where('tenantId', '==', tenantId),
                 orderBy('createdAt', 'desc'),
                 limit(PAGE_SIZE)
             );
             if (isLoadMore && lastDoc) {
                 q = query(
                     collection(db, 'auditTrails', 'mis', 'entries'),
+                    where('tenantId', '==', tenantId),
                     orderBy('createdAt', 'desc'),
                     startAfter(lastDoc),
                     limit(PAGE_SIZE)
@@ -110,9 +115,9 @@ export default function AuditTrails() {
         } finally {
             isLoadMore ? setLoadingMore(false) : setLoading(false);
         }
-    }, [lastDoc]);
+    }, [lastDoc, tenantId]);
 
-    useEffect(() => { fetchLogs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { fetchLogs(); }, [tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const activeFilter = FILTERS.find(f => f.key === filter);
     const visible = activeFilter?.actions
