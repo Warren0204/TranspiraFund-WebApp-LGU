@@ -17,6 +17,11 @@ firebase-debug.*.log*
 # it commented so all members can deploy to the same project(s) in .firebaserc.
 # .firebaserc
 
+# Firebase service account keys — NEVER commit these
+serviceAccountKey.json
+serviceAccountKey.*.json
+*-firebase-adminsdk-*.json
+
 # Runtime data
 pids
 *.pid
