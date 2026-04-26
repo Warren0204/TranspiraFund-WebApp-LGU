@@ -143,7 +143,11 @@ const ProjectDetail = () => {
             if (!snap.exists()) { setNotFound(true); setLoading(false); return; }
             setProject({ id: snap.id, ...snap.data() });
             setLoading(false);
-        }, () => { setNotFound(true); setLoading(false); });
+        }, (error) => {
+            console.error('[ProjectDetail/project] snapshot listener error:', error);
+            setNotFound(true);
+            setLoading(false);
+        });
         return () => unsub();
     }, [id]);
 
@@ -162,7 +166,9 @@ const ProjectDetail = () => {
             });
             setMilestones(all.filter(m => m.confirmed !== false));
             setDraftCount(all.filter(m => m.confirmed === false).length);
-        }, () => {});
+        }, (error) => {
+            console.error('[ProjectDetail/milestones] snapshot listener error:', error);
+        });
         return () => unsub();
     }, [id]);
 

@@ -40,6 +40,9 @@ const useDashboardData = (tenantId) => {
                     : { status: 'System Fully Operational', message: 'All departmental accounts are provisioned and active.', isError: false }
                 );
             },
+            (error) => {
+                console.error('[Dashboard/users] snapshot listener error:', error);
+            },
         );
         return () => unsubscribe();
     }, [tenantId]);

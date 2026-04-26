@@ -84,7 +84,10 @@ const Notifications = () => {
                 setAlerts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             },
-            () => setLoading(false)
+            (error) => {
+                console.error('[Notifications/notifications] snapshot listener error:', error);
+                setLoading(false);
+            }
         );
         return unsub;
     }, [currentUser?.uid, tenantId]);

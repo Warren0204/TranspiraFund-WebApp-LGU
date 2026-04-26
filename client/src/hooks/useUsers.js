@@ -34,7 +34,11 @@ export function useUsers() {
                 setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             },
-            () => { setUsers([]); setLoading(false); }
+            (error) => {
+                console.error('[useUsers/users] snapshot listener error:', error);
+                setUsers([]);
+                setLoading(false);
+            }
         );
         return () => unsub();
     }, [tenantId]);

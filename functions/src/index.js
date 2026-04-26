@@ -1074,6 +1074,70 @@ exports.logUserLogout = onCall(async (request) => {
     }
 });
 
+// ─── CALLABLE: Log a mobile-origin audit trail entry ──────────────────────
+// Mobile PE app calls this on every audit-worthy local event (sign-in/out,
+// milestone confirm/complete, etc). Writes one row to
+// auditTrails/mobile/entries (PROJ_ENG-only read per firestore.rules) with
+// tenantId stamped from the caller's claim.
+//
+// Canonical shape per CLAUDE.md:
+//   { action, actorUid, createdAt, details, tenantId, targetId?, email? }
+//
+// Recreates a deployed nodejs20 ghost function whose source was never in
+// the repo. Adds the tenantId-required invariant via requireTenantClaim
+// so unscoped writes are impossible by construction (matches logAudit at
+// 153-156 and logSystemAudit at 175-178). `details` accepts both object
+// (canonical) and string (legacy) forms — onMobileAuditCreated already
+// tolerates both at line 1628, so we preserve that here. `syncToHCSD` is
+// accepted for backward compatibility with the mobile payload but
+// deliberately ignored: CLAUDE.md forbids mobile-origin actions from
+// bleeding into the HCSD audit trail.
+const logMobileAuditTrailSchema = z.object({
+    action: z.string().min(1).max(128),
+    details: z.union([z.record(z.any()), z.string()]).optional(),
+    targetId: z.string().min(1).max(128).optional(),
+    email: z.string().email().optional(),
+    syncToHCSD: z.boolean().optional(),
+});
+
+exports.logMobileAuditTrail = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) {
+        throw new HttpsError("unauthenticated", "Must be authenticated to log audit events.");
+    }
+    const callerTenantId = requireTenantClaim(auth);
+
+    const parsed = logMobileAuditTrailSchema.safeParse(data || {});
+    if (!parsed.success) {
+        throw new HttpsError(
+            "invalid-argument",
+            parsed.error.errors[0]?.message ?? "Invalid audit payload.",
+        );
+    }
+    const { action, details, targetId, email } = parsed.data;
+
+    const doc = {
+        action,
+        actorUid: auth.uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        details: details ?? {},
+        tenantId: callerTenantId,
+    };
+    if (targetId) doc.targetId = targetId;
+    const resolvedEmail = email || auth.token?.email || null;
+    if (resolvedEmail) doc.email = resolvedEmail;
+
+    try {
+        await admin.firestore()
+            .collection("auditTrails").doc("mobile").collection("entries")
+            .add(doc);
+        return { success: true };
+    } catch (err) {
+        logger.error("logMobileAuditTrail write failed:", err);
+        throw new HttpsError("internal", "Failed to log audit event.");
+    }
+});
+
 // ─── CLOUD FUNCTION: Backfill projectEngineer field (name → UID) ──────────
 // One-time maintenance op to convert legacy project docs that stored the
 // engineer's display name in `projectEngineer` over to the engineer's UID,

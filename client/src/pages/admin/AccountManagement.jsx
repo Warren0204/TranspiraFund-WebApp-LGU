@@ -62,6 +62,8 @@ const useRosterLogic = () => {
                 })
                 .filter(acc => DEPARTMENT_HEAD_ROLES.includes(acc.roleType));
             setAccounts(fetchedAccounts);
+        }, (error) => {
+            console.error('[AccountManagement/users] snapshot listener error:', error);
         });
         return () => unsubscribe();
     }, [REQUIRED_ROLES, tenantId]);

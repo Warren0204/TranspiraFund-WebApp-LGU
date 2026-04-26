@@ -56,7 +56,9 @@ const useStaffLogic = () => {
                     );
                 setStaff(fetchedStaff);
             },
-            () => {}
+            (error) => {
+                console.error('[StaffManagement/users] snapshot listener error:', error);
+            }
         );
         return () => unsubscribe();
     }, [ENGINEER_ROLE, tenantId]);
@@ -87,7 +89,9 @@ const useStaffLogic = () => {
                 });
             });
             setProjectsByEngineer(map);
-        }, () => {});
+        }, (error) => {
+            console.error('[StaffManagement/projects] snapshot listener error:', error);
+        });
         return () => unsub();
     }, [tenantId]);
 

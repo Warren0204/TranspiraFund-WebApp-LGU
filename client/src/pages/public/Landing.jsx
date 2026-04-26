@@ -88,7 +88,10 @@ const useLandingStats = () => {
         }
         setDataLoaded(true);
       },
-      () => setDataLoaded(true)
+      (error) => {
+        console.error('[Landing/stats-public] snapshot listener error:', error);
+        setDataLoaded(true);
+      }
     );
     return () => unsubscribe();
   }, []);

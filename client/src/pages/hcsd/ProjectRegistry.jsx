@@ -42,7 +42,10 @@ const useProjectRegistry = () => {
             });
             setProjects(fetchedProjects);
             setLoading(false);
-        }, () => { setLoading(false); });
+        }, (error) => {
+            console.error('[ProjectRegistry/projects] snapshot listener error:', error);
+            setLoading(false);
+        });
         return () => unsubscribe();
     }, [tenantId]);
 

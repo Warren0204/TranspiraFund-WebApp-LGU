@@ -129,6 +129,9 @@ const HcsdDashboard = () => {
                     return r === ROLES.PROJECT_ENGINEER || r === 'Project Engineer' || r === 'PROJ_ENG';
                 }).length;
                 setStats(p => ({ ...p, engineers: count }));
+            },
+            (error) => {
+                console.error('[HcsdDashboard/users] snapshot listener error:', error);
             }
         );
 
@@ -151,6 +154,9 @@ const HcsdDashboard = () => {
                 setStats(p => ({ ...p, budget, projects: data.length }));
                 setRecent(data.slice(0, 5));
                 setDist(dist);
+            },
+            (error) => {
+                console.error('[HcsdDashboard/projects] snapshot listener error:', error);
             }
         );
 
