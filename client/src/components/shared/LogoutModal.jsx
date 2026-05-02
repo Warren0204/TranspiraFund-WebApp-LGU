@@ -8,7 +8,6 @@ const LogoutModal = memo(({ isOpen, onConfirm, onCancel, isProcessing }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-200 p-4">
             <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-white/80 dark:border-white/10 rounded-[28px] shadow-2xl w-full max-w-sm animate-in zoom-in-95 duration-200 flex flex-col items-center text-center p-8">
 
-                {/* Icon */}
                 <div className="relative mb-5">
                     <div className="w-16 h-16 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center shadow-xl shadow-slate-900/30">
                         <ShieldOff size={28} className="text-white" />

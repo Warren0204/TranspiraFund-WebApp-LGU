@@ -63,7 +63,6 @@ const useStaffLogic = () => {
         return () => unsubscribe();
     }, [ENGINEER_ROLE, tenantId]);
 
-    // Real-time project workload, keyed by engineer UID.
     useEffect(() => {
         if (!tenantId) return;
         const q = query(
@@ -120,8 +119,6 @@ const useStaffLogic = () => {
     const [credentialsSent, setCredentialsSent] = useState(false);
     const [successEmail, setSuccessEmail] = useState('');
 
-    // Legacy data detection: if any key in projectsByEngineer is NOT a known engineer UID,
-    // it's a stale name-keyed entry from the pre-UID era and needs backfilling.
     const legacyKeyCount = useMemo(() => {
         if (staff.length === 0) return 0;
         const uidSet = new Set(staff.map(s => s.id));
@@ -403,7 +400,6 @@ const RevokeModal = memo(({ isOpen, onClose, onConfirm, isProcessing, error }) =
     );
 });
 
-/* ── Shared helpers ──────────────────────────────────────────────────────── */
 const projectStatusStyle = (status) => {
     const s = (status || '').toLowerCase();
     if (s === 'completed') return { pill: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'bg-emerald-400', accent: 'bg-emerald-400' };
@@ -419,7 +415,6 @@ const fmtAmt = (amt) => {
     return `₱${Number(amt).toLocaleString('en-PH')}`;
 };
 
-/* ── Engineer Detail Modal ───────────────────────────────────────────────── */
 const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
     const [showActions, setShowActions] = useState(false);
     if (!engineer) return null;
@@ -429,14 +424,12 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
             <div className="relative bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-white/5 w-full sm:max-w-2xl max-h-[92vh] flex flex-col animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-300 overflow-hidden"
                 onClick={e => e.stopPropagation()}>
 
-                {/* ── X close button — lifted to modal level so overflow-hidden on header never clips it ── */}
                 <button onClick={onClose}
                     className="absolute top-4 right-4 z-30 w-11 h-11 rounded-full bg-white/20 hover:bg-white/35 active:bg-white/50 flex items-center justify-center text-white transition-all"
                     aria-label="Close">
                     <X size={20} strokeWidth={2.5} />
                 </button>
 
-                {/* ── More actions button (⋯) — opens menu containing Revoke ── */}
                 <div className="absolute top-4 right-[60px] z-30">
                     <button
                         onClick={(e) => { e.stopPropagation(); setShowActions(v => !v); }}
@@ -462,12 +455,10 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
                     )}
                 </div>
 
-                {/* ── Header ── */}
                 <div className="relative bg-gradient-to-br from-teal-600 via-teal-500 to-emerald-500 px-7 pt-7 pb-10 shrink-0 overflow-hidden">
                     <div className="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10 pointer-events-none" />
                     <div className="absolute -bottom-6 left-10 w-32 h-32 rounded-full bg-emerald-400/20 pointer-events-none" />
 
-                    {/* pr-28 reserves space so engineer name doesn't slide under the two header buttons */}
                     <div className="relative flex items-center gap-5 pr-28">
                         {engineer.photoURL ? (
                             <img src={engineer.photoURL} alt={engineer.name}
@@ -497,7 +488,6 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
                     </div>
                 </div>
 
-                {/* ── Projects header ── */}
                 <div className="shrink-0 px-6 py-4 flex items-center justify-between bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-700/60">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
@@ -517,7 +507,6 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
                     </span>
                 </div>
 
-                {/* ── Project list ── */}
                 <div className="flex-1 overflow-y-auto p-5 space-y-3">
                     {engineer.projects.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-14 gap-4">
@@ -587,7 +576,6 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
                     })}
                 </div>
 
-                {/* ── Footer — just Close; Revoke is in the ⋯ menu above ── */}
                 <div className="shrink-0 px-6 py-5 border-t border-slate-200 dark:border-slate-700/60 bg-white dark:bg-slate-900">
                     <button onClick={onClose}
                         className="w-full py-4 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-base transition-all">
@@ -599,7 +587,6 @@ const EngineerModal = ({ engineer, onClose, onRevoke, navigate }) => {
     );
 };
 
-/* ── Main page ───────────────────────────────────────────────────────────── */
 const StaffManagement = () => {
     const {
         filteredStaff, searchTerm, setSearchTerm, navigate,
@@ -613,7 +600,6 @@ const StaffManagement = () => {
 
     const [selectedEngineer, setSelectedEngineer] = useState(null);
 
-    // Keep drawer in sync when live data updates (e.g. new project assigned)
     useEffect(() => {
         if (selectedEngineer) {
             const updated = filteredStaff.find(s => s.id === selectedEngineer.id);
@@ -627,7 +613,6 @@ const StaffManagement = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                {/* ── Page header ── */}
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
@@ -651,7 +636,6 @@ const StaffManagement = () => {
                     </div>
                 </div>
 
-                {/* ── Legacy-data maintenance banner ── */}
                 {legacyKeyCount > 0 && !backfillResult && (
                     <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-900/20 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4"
                         style={{ animation: 'fadeIn 0.4s ease-out both' }}>
@@ -678,7 +662,6 @@ const StaffManagement = () => {
                     </div>
                 )}
 
-                {/* ── Backfill result modal ── */}
                 {backfillResult && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4"
                         role="dialog" aria-modal="true">
@@ -719,11 +702,9 @@ const StaffManagement = () => {
                     </div>
                 )}
 
-                {/* ── Engineer list ── */}
                 <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
-                    {/* List toolbar */}
                     <div className="p-4 sm:p-5 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col gap-3 bg-white/40 dark:bg-slate-800/20">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
@@ -745,14 +726,12 @@ const StaffManagement = () => {
                         </div>
                     </div>
 
-                    {/* Column headers */}
                     <div className="grid grid-cols-12 px-5 sm:px-6 py-2.5 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/40 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.1em]">
                         <div className="col-span-8 sm:col-span-7">Engineer</div>
                         <div className="hidden sm:block sm:col-span-3">Department</div>
                         <div className="col-span-4 sm:col-span-2 text-right">Projects</div>
                     </div>
 
-                    {/* Rows */}
                     <div className="divide-y divide-slate-100/70 dark:divide-slate-700/30">
                         {filteredStaff.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-24">
@@ -769,7 +748,6 @@ const StaffManagement = () => {
                                     className="w-full grid grid-cols-12 items-center px-5 sm:px-6 py-4 hover:bg-teal-500/[0.04] dark:hover:bg-teal-400/[0.05] border-l-2 border-transparent hover:border-teal-500 dark:hover:border-teal-400 transition-all duration-150 text-left group"
                                     style={{ animation: `slideUp 0.4s ease-out ${i * 0.05}s both` }}>
 
-                                    {/* Engineer identity */}
                                     <div className="col-span-8 sm:col-span-7 flex items-center gap-3 min-w-0">
                                         {s.photoURL ? (
                                             <img src={s.photoURL} alt={s.name}
@@ -790,7 +768,6 @@ const StaffManagement = () => {
                                         </div>
                                     </div>
 
-                                    {/* Department */}
                                     <div className="hidden sm:block sm:col-span-3 min-w-0 pr-3">
                                         <div className="flex items-center gap-1.5 mb-1">
                                             <span className="inline-flex px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wide bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-500/30">
@@ -803,7 +780,6 @@ const StaffManagement = () => {
                                         <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">{s.department}</p>
                                     </div>
 
-                                    {/* Project count badge */}
                                     <div className="col-span-4 sm:col-span-2 flex items-center justify-end gap-2">
                                         <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-bold text-xs transition-all ${s.projects.length > 0 ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'}`}>
                                             <FolderKanban size={11} />
@@ -818,7 +794,6 @@ const StaffManagement = () => {
                 </div>
             </main>
 
-            {/* ── Engineer detail modal ── */}
             <EngineerModal
                 engineer={selectedEngineer}
                 onClose={() => setSelectedEngineer(null)}

@@ -130,7 +130,6 @@ export default function AuditTrails() {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                {/* ── HEADER ── */}
                 <div className="mb-8" style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div className="flex items-center gap-2.5 mb-2">
                         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-teal-600 to-emerald-500 flex items-center justify-center shadow-md shadow-teal-500/30">
@@ -150,7 +149,6 @@ export default function AuditTrails() {
                     </p>
                 </div>
 
-                {/* ── FILTER TABS + REFRESH ── */}
                 <div
                     className="flex items-center justify-between mb-4 gap-4 flex-wrap"
                     style={{ animation: 'slideUp 0.4s ease-out 0.05s both' }}
@@ -182,12 +180,10 @@ export default function AuditTrails() {
                     </button>
                 </div>
 
-                {/* ── LOG TABLE ── */}
                 <div
                     className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[20px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}
                 >
-                    {/* Table header — desktop only */}
                     <div className="hidden lg:grid grid-cols-[1.4fr_1.8fr_2.4fr_1.4fr] gap-4 px-6 py-3 border-b border-slate-100 dark:border-slate-700/40 bg-slate-50/60 dark:bg-slate-800/20">
                         <span className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500">Event</span>
                         <span className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-slate-400 dark:text-slate-500">Actor</span>
@@ -227,7 +223,6 @@ export default function AuditTrails() {
                                         className="px-4 sm:px-6 py-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/20 transition-colors"
                                         style={{ animation: `slideUp 0.3s ease-out ${i * 0.03}s both` }}
                                     >
-                                        {/* ── MOBILE CARD ── */}
                                         <div className="lg:hidden space-y-3">
                                             <div className="flex items-center justify-between gap-2">
                                                 <div className="flex items-center gap-2 min-w-0">
@@ -268,7 +263,6 @@ export default function AuditTrails() {
                                             </div>
                                         </div>
 
-                                        {/* ── DESKTOP ROW ── */}
                                         <div className="hidden lg:grid grid-cols-[1.4fr_1.8fr_2.4fr_1.4fr] gap-4">
                                             <div className="flex items-start gap-2.5 min-w-0">
                                                 <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
@@ -312,7 +306,6 @@ export default function AuditTrails() {
                         </div>
                     )}
 
-                    {/* Load More */}
                     {hasMore && !loading && (
                         <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700/40">
                             <button

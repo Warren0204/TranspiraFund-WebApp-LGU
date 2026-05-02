@@ -11,7 +11,6 @@ import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestor
 import { db } from '../../config/firebase';
 import { ROLES } from '../../config/roles';
 
-/* ── Status distribution donut ──────────────────────────────────────────── */
 const SEGMENTS = [
     { label: 'Delayed',   color: '#f59e0b', dark: '#fbbf24' },
     { label: 'Ongoing',   color: '#14b8a6', dark: '#2dd4bf' },
@@ -85,17 +84,15 @@ const DonutChart = ({ statusDist, total, isDark }) => {
     );
 };
 
-/* ── Normalize legacy/retired statuses ───────────────────────────────────── */
 const normalizeStatus = (status) => {
     const s = (status || '').toLowerCase();
     if (s === 'completed') return 'Completed';
     if (s === 'ongoing') return 'Ongoing';
     if (s === 'delayed') return 'Delayed';
-    if (s === 'draft') return 'Ongoing'; // legacy → Ongoing
+    if (s === 'draft') return 'Ongoing';
     return 'Delayed';
 };
 
-/* ── Status badge helper ─────────────────────────────────────────────────── */
 const statusStyle = (status) => {
     const s = normalizeStatus(status).toUpperCase();
     if (s === 'COMPLETED')
@@ -105,7 +102,6 @@ const statusStyle = (status) => {
     return 'bg-teal-50 text-teal-700 ring-1 ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/20';
 };
 
-/* ── Component ───────────────────────────────────────────────────────────── */
 const HcsdDashboard = () => {
     const { isDark } = useTheme();
     const { tenantId } = useAuth();
@@ -182,7 +178,6 @@ const HcsdDashboard = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-8 pt-20 md:pt-8">
 
-                {/* ── PAGE HEADER ─────────────────────────────────────────── */}
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8" style={{ animation: 'fadeIn 0.5s ease-out both' }}>
                     <div>
                         <div className="flex items-center gap-2 mb-1.5">
@@ -222,7 +217,6 @@ const HcsdDashboard = () => {
                     </div>
                 </div>
 
-                {/* ── STAT CARDS ──────────────────────────────────────────── */}
                 <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-6">
                     {STAT_CARDS.map((card, i) => {
                         const CardIcon = card.icon;
@@ -236,7 +230,6 @@ const HcsdDashboard = () => {
                             <div className="absolute -right-6 -bottom-6 w-20 h-20 rounded-full pointer-events-none"
                                 style={{ background: card.glow, opacity: 0.08 }} />
 
-                            {/* Mobile: compact vertical stack */}
                             <div className="flex flex-col items-center gap-1.5 p-3 sm:hidden">
                                 <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${card.gradient} flex items-center justify-center shadow-md ${card.iconShadow}`}>
                                     <CardIcon size={16} className="text-white" strokeWidth={2} />
@@ -249,7 +242,6 @@ const HcsdDashboard = () => {
                                 </p>
                             </div>
 
-                            {/* sm+: horizontal layout */}
                             <div className="hidden sm:flex items-center gap-4 p-5">
                                 <div className={`relative w-12 h-12 rounded-2xl bg-gradient-to-br ${card.gradient} flex items-center justify-center shadow-md ${card.iconShadow} shrink-0`}>
                                     <CardIcon size={22} className="text-white" strokeWidth={2} />
@@ -268,17 +260,10 @@ const HcsdDashboard = () => {
                     })}
                 </div>
 
-                {/* ── MAIN CONTENT ────────────────────────────────────────── */}
-                {/*
-                    · mobile/sm/md  → stacked full-width
-                    · lg+           → Active Registry (8/12) + side panels (4/12)
-                */}
                 <div className="flex flex-col lg:flex-row gap-4">
 
-                    {/* Active Registry ──────────────────────────────────── */}
                     <div className="w-full lg:w-8/12 bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-white/[0.07] shadow-md shadow-slate-200/50 dark:shadow-black/20 overflow-hidden">
 
-                        {/* Card header */}
                         <div className="px-5 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
                             <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-200">
                                 <FolderKanban size={16} className="text-teal-500 dark:text-teal-400 shrink-0" />
@@ -292,7 +277,6 @@ const HcsdDashboard = () => {
                             </button>
                         </div>
 
-                        {/* Table header */}
                         <div className="grid grid-cols-12 px-4 sm:px-6 py-2.5 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-700 text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                             <div className="col-span-8 sm:col-span-5">Project Name</div>
                             <div className="hidden sm:block sm:col-span-3">Location</div>
@@ -300,7 +284,6 @@ const HcsdDashboard = () => {
                             <div className="hidden sm:block sm:col-span-2 text-right">Progress</div>
                         </div>
 
-                        {/* Rows */}
                         <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
                             {recentProjects.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-14 gap-2.5 text-slate-300 dark:text-slate-600">
@@ -349,10 +332,8 @@ const HcsdDashboard = () => {
                         </div>
                     </div>
 
-                    {/* Side panels ──────────────────────────────────────── */}
                     <div className="w-full lg:w-4/12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-4">
 
-                        {/* Slippage Alerts */}
                         <div className="bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-white/[0.07] shadow-md shadow-slate-200/50 dark:shadow-black/20 p-5">
                             <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
                                 <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-200 min-w-0">
@@ -371,7 +352,6 @@ const HcsdDashboard = () => {
                             </div>
                         </div>
 
-                        {/* Status Distribution */}
                         <div className="bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-white/[0.07] shadow-md shadow-slate-200/50 dark:shadow-black/20 p-5">
                             <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-200 mb-5">
                                 <Activity size={15} className="text-teal-500 dark:text-teal-400 shrink-0" />

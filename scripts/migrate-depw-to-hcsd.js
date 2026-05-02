@@ -1,22 +1,3 @@
-/**
- * One-time migration script: DEPW → HCSD
- *
- * Run this script BEFORE deploying updated Cloud Functions or Firestore rules.
- * It updates all Firestore user documents with role 'DEPW' to 'HCSD' and
- * refreshes the corresponding Firebase Auth custom claims.
- *
- * Prerequisites:
- *   1. Place your Firebase service account key JSON at ./serviceAccountKey.json
- *      (download from Firebase Console → Project Settings → Service accounts)
- *   2. npm install firebase-admin (in this scripts/ directory or project root)
- *
- * Usage:
- *   node scripts/migrate-depw-to-hcsd.js
- *
- * After running, verify in Firebase Console → Firestore → users collection
- * that no documents have role === 'DEPW' remaining.
- */
-
 const admin = require('firebase-admin');
 const serviceAccount = require('./serviceAccountKey.json');
 
@@ -72,7 +53,6 @@ async function migrateAuditTrails() {
         return;
     }
 
-    // Firestore batch limit is 500 operations; split if needed
     const chunks = [];
     for (let i = 0; i < snapshot.docs.length; i += 250) {
         chunks.push(snapshot.docs.slice(i, i + 250));

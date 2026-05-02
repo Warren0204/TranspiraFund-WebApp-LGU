@@ -72,7 +72,7 @@ const isWithinHours = (ts, hours) => {
     return Date.now() - d.getTime() < hours * 60 * 60 * 1000;
 };
 
-const FRESHNESS_WINDOW_MS = 4 * 60 * 1000; // 4 minutes — buffer under Firebase's ~5-min reauth window
+const FRESHNESS_WINDOW_MS = 4 * 60 * 1000;
 
 const SpinnerSVG = ({ size = 14 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -82,7 +82,6 @@ const SpinnerSVG = ({ size = 14 }) => (
     </svg>
 );
 
-/* ── Reusable card shell ──────────────────────────────── */
 const Card = ({ children, className = '' }) => (
     <div className={`bg-white/80 dark:bg-slate-900/60 backdrop-blur-xl border border-slate-200/60 dark:border-white/5 rounded-2xl shadow-lg ${className}`}>
         {children}
@@ -142,7 +141,6 @@ const Settings = () => {
     const userEmail   = currentUser?.email || '—';
     const userInitial = currentUser?.firstName?.charAt(0).toUpperCase() || 'D';
 
-    /* ── PHOTO UPLOAD ─────────────────────────────────────────────── */
     const photoInputRef = useRef(null);
     const [photoLoading, setPhotoLoading] = useState(false);
     const [photoError, setPhotoError]     = useState('');
@@ -196,7 +194,6 @@ const Settings = () => {
 
     const handleCancelPreview = () => { setPreviewBlob(null); setPreviewURL(''); setPhotoError(''); };
 
-    /* ── CHANGE PASSWORD ──────────────────────────────────────────── */
     const [showPwForm, setShowPwForm]       = useState(false);
     const [currentPwStep, setCurrentPwStep] = useState(false);
     const [verifiedAt, setVerifiedAt]       = useState(0);
@@ -217,13 +214,11 @@ const Settings = () => {
     const currentPwRef = useRef(null);
     const newPwRef     = useRef(null);
 
-    // Tier 1.1 — real "last changed" timestamp
     const pwChangedAt  = currentUser?.passwordChangedAt;
     const pwChangedRel = useMemo(() => formatRelativeTime(pwChangedAt), [pwChangedAt]);
     const pwChangedAbs = useMemo(() => formatAbsoluteDate(pwChangedAt), [pwChangedAt]);
     const recentChange = useMemo(() => isWithinHours(pwChangedAt, 24), [pwChangedAt]);
 
-    // Tier 1.5 — autofocus per step
     useEffect(() => {
         if (showPwForm && !currentPwStep) {
             const t = setTimeout(() => currentPwRef.current?.focus(), 60);
@@ -269,7 +264,6 @@ const Settings = () => {
         e.preventDefault();
         if (pwLoading || stepLoading) return;
 
-        // Step 1: route Enter key to verification
         if (!currentPwStep) {
             await verifyCurrentPassword();
             return;
@@ -277,7 +271,6 @@ const Settings = () => {
 
         setPwError(''); setPwSuccess(false); setFieldErrors({});
 
-        // Tier 2.7 — freshness safeguard: bounce to step 1 if verification is stale
         if (Date.now() - verifiedAt > FRESHNESS_WINDOW_MS) {
             setCurrentPwStep(false);
             setStaleReAuth(true);
@@ -295,11 +288,10 @@ const Settings = () => {
         try {
             await httpsCallable(getFunctions(app, 'asia-southeast1'), 'changePassword')({ newPassword });
 
-            // Tier 2.8 — optionally revoke all other sessions
             if (signOutOthersChecked) {
                 try {
                     await httpsCallable(getFunctions(app, 'asia-southeast1'), 'revokeOtherSessions')();
-                } catch { /* non-fatal — don't block success */ }
+                } catch {}
             }
 
             await refreshUserData();
@@ -333,11 +325,10 @@ const Settings = () => {
 
     const handleForgotPassword = async () => {
         setShowForgotModal(false);
-        try { await signOut(getAuth(app)); } catch { /* ignore */ }
+        try { await signOut(getAuth(app)); } catch {}
         navigate('/forgot-password');
     };
 
-    // Go back to Step 1 without discarding the new/confirm values already typed
     const reverifyIdentity = () => {
         setCurrentPwStep(false);
         setStaleReAuth(false);
@@ -352,7 +343,6 @@ const Settings = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-8 pt-20 md:pt-8">
 
-                {/* ── PAGE HEADER ───────────────────────────────── */}
                 <div className="mb-8" style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div className="inline-flex items-center gap-2 bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 dark:border-teal-400/30 rounded-full px-3 py-1 mb-3">
                         <Settings2 size={12} className="text-teal-600 dark:text-teal-400" strokeWidth={2.5} />
@@ -364,16 +354,11 @@ const Settings = () => {
 
                 <div className="space-y-5" style={{ animation: 'slideUp 0.4s ease-out 0.05s both' }}>
 
-                    {/* ═══════════════════════════════════════════════
-                        1. PROFILE
-                    ═══════════════════════════════════════════════ */}
                     <Card>
                         <SectionLabel icon={Settings2}>Profile</SectionLabel>
                         <div className="p-6 lg:p-8">
-                            {/* Two-column layout: Identity left, Info tiles right */}
                             <div className="flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-10">
 
-                                {/* LEFT — Avatar + Identity */}
                                 <div className="flex flex-col items-center text-center lg:w-80 shrink-0">
                                     <div className="relative">
                                         <div className="rounded-full p-1 bg-gradient-to-br from-teal-400 to-emerald-500 shadow-xl shadow-teal-500/30">
@@ -399,10 +384,8 @@ const Settings = () => {
                                     </span>
                                 </div>
 
-                                {/* Vertical divider (desktop only) */}
                                 <div className="hidden lg:block w-px self-stretch bg-slate-200 dark:bg-slate-700/50" />
 
-                                {/* RIGHT — Info tiles, distributed across full remaining width */}
                                 <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50 hover:border-teal-200 dark:hover:border-teal-500/30 transition-colors">
                                         <div className="flex items-center gap-1.5 mb-2">
@@ -431,7 +414,6 @@ const Settings = () => {
                                 </div>
                             </div>
 
-                            {/* Photo preview / feedback */}
                             {previewURL && (
                                 <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
                                     <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 sm:flex-1">Set this as your profile photo?</p>
@@ -458,7 +440,6 @@ const Settings = () => {
                                 </div>
                             )}
 
-                            {/* Admin notice */}
                             <div className="mt-5 flex items-center gap-2 text-slate-400 dark:text-slate-500">
                                 <Lock size={13} className="shrink-0" />
                                 <p className="text-xs font-medium">Identity is managed by <span className="font-bold text-slate-500 dark:text-slate-400">system admin</span>. Contact MIS to update your name or role.</p>
@@ -466,12 +447,8 @@ const Settings = () => {
                         </div>
                     </Card>
 
-                    {/* ═══════════════════════════════════════════════
-                        2. APPEARANCE  +  3. ACCESS LEVEL — side by side
-                    ═══════════════════════════════════════════════ */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-                        {/* Appearance */}
                         <Card>
                             <SectionLabel icon={Sun}>Appearance</SectionLabel>
                             <div className="p-6">
@@ -501,7 +478,6 @@ const Settings = () => {
                             </div>
                         </Card>
 
-                        {/* Access Level */}
                         <Card>
                             <SectionLabel icon={Shield}>Access Level</SectionLabel>
                             <div className="p-6">
@@ -518,9 +494,6 @@ const Settings = () => {
                         </Card>
                     </div>
 
-                    {/* ═══════════════════════════════════════════════
-                        4. SECURITY — password
-                    ═══════════════════════════════════════════════ */}
                     <Card>
                         <SectionLabel icon={KeyRound}>Security</SectionLabel>
 
@@ -557,9 +530,7 @@ const Settings = () => {
                                     return (
                                         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,300px)_1fr] gap-6 lg:gap-10">
 
-                                            {/* ═══ LEFT — context / status panel ═══ */}
                                             <aside className="space-y-4">
-                                                {/* Step + verified status inline at top */}
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-teal-50 dark:bg-teal-900/30 border border-teal-100 dark:border-teal-500/30 text-[10px] font-extrabold uppercase tracking-[0.12em] text-teal-700 dark:text-teal-300">
                                                         Step {currentPwStep ? '2' : '1'} of 2
@@ -582,7 +553,6 @@ const Settings = () => {
                                                     </p>
                                                 </div>
 
-                                                {/* Step 2 — re-verify ghost button */}
                                                 {currentPwStep && (
                                                     <button
                                                         type="button"
@@ -594,7 +564,6 @@ const Settings = () => {
                                                     </button>
                                                 )}
 
-                                                {/* Banners */}
                                                 {recentChange && !pwSuccess && (
                                                     <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30">
                                                         <Clock size={14} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -610,7 +579,6 @@ const Settings = () => {
                                                     </div>
                                                 )}
 
-                                                {/* Password safety tips — fills the left column */}
                                                 {!pwSuccess && (
                                                     <div className="pt-4 border-t border-slate-100 dark:border-slate-700/50 space-y-2">
                                                         <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">
@@ -632,7 +600,6 @@ const Settings = () => {
                                                 )}
                                             </aside>
 
-                                            {/* ═══ RIGHT — form inputs ═══ */}
                                             <div className="space-y-5 min-w-0">
 
                                                 {!currentPwStep && (
@@ -664,7 +631,6 @@ const Settings = () => {
                                                 )}
 
                                                 {currentPwStep && (<>
-                                                    {/* New password + strength inline */}
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                                         <div>
                                                             <PwInput
@@ -723,7 +689,6 @@ const Settings = () => {
                                                         </div>
                                                     </div>
 
-                                                    {/* Strength bar — full width under inputs */}
                                                     {strength && (
                                                         <div id="pw-strength" className="space-y-1.5">
                                                             <div className="flex items-center justify-between">
@@ -746,7 +711,6 @@ const Settings = () => {
                                                         </div>
                                                     )}
 
-                                                    {/* Next-missing hint */}
                                                     {pwForm.newPassword && nextMissing && (
                                                         <div className="flex items-start gap-2 px-3.5 py-2.5 rounded-lg bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-500/20">
                                                             <Sparkles size={13} className="text-sky-500 dark:text-sky-400 shrink-0 mt-0.5" />
@@ -756,7 +720,6 @@ const Settings = () => {
                                                         </div>
                                                     )}
 
-                                                    {/* Rules grid — 2 cols on md, fills space */}
                                                     {pwForm.newPassword && (
                                                         <div id="pw-rules" className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
                                                             {PW_RULES.map(rule => {
@@ -771,7 +734,6 @@ const Settings = () => {
                                                         </div>
                                                     )}
 
-                                                    {/* Sign out other devices — inline row, not a card */}
                                                     <label className="flex items-center gap-2.5 py-1 cursor-pointer group w-fit">
                                                         <input
                                                             type="checkbox"
@@ -794,7 +756,6 @@ const Settings = () => {
                                     );
                                 })()}
 
-                                {/* Live feedback region — full width */}
                                 <div aria-live="polite">
                                     {tooManyAttempts && (
                                         <div className="mt-5 flex items-start gap-2 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20" role="alert">
@@ -823,7 +784,6 @@ const Settings = () => {
                                     )}
                                 </div>
 
-                                {/* Unified action row — full width, right-aligned, separated by subtle divider */}
                                 <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-700/50 flex items-center justify-end gap-3">
                                     <button type="button" onClick={cancelPasswordChange}
                                         className="px-5 py-2.5 text-sm font-bold text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors">
@@ -849,7 +809,6 @@ const Settings = () => {
                 </div>
             </main>
 
-            {/* ─── Forgot Password confirmation modal ─── */}
             {showForgotModal && (
                 <div
                     role="dialog"

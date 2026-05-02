@@ -30,16 +30,13 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
         if (isLoggingOut) return;
         setIsLoggingOut(true);
         try {
-            // Best-effort audit log before tearing down the session. Bounded
-            // by a 2s race so a slow function never strands the user on the
-            // app, and any error is swallowed — logging is not load-bearing.
             try {
                 const callable = httpsCallable(getFunctions(app, 'asia-southeast1'), 'logUserLogout');
                 await Promise.race([
                     callable().catch(() => null),
                     new Promise((r) => setTimeout(r, 2000)),
                 ]);
-            } catch { /* ignore */ }
+            } catch {}
 
             await signOut(auth);
             sessionStorage.clear();

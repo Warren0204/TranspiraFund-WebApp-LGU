@@ -21,9 +21,6 @@ const fmtTime = (ts) => {
     } catch { return ''; }
 };
 
-// Binary read/unread styling — one accent palette for unread, neutral when read.
-// Category is surfaced via the title/body text, not color, keeping the list
-// visually uniform regardless of action type.
 const getAlertMeta = (isRead) => (
     isRead
         ? {
@@ -46,11 +43,6 @@ const getAlertMeta = (isRead) => (
         }
 );
 
-// Two notification lanes surface on this page:
-//   "system" — web-side admin/operational events (project assignments,
-//              provisioning, etc). Default for legacy docs without a category.
-//   "field"  — mobile PROJ_ENG activity on projects (photo, milestones,
-//              completion submit). Fanned out by onMobileAuditCreated.
 const TAB_FILTERS = [
     { key: 'ALL',    label: 'All',            match: () => true },
     { key: 'SYSTEM', label: 'System',         match: (a) => (a.category ?? 'system') === 'system' },
@@ -129,7 +121,6 @@ const Notifications = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                {/* PAGE HEADER */}
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
@@ -164,7 +155,6 @@ const Notifications = () => {
                     )}
                 </div>
 
-                {/* TAB FILTER ── System vs. Field Activity */}
                 <div className="flex flex-wrap gap-2 mb-6" style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     {TAB_FILTERS.map((t) => {
                         const Icon = TAB_ICON[t.key] || Bell;
@@ -197,7 +187,6 @@ const Notifications = () => {
                     })}
                 </div>
 
-                {/* ALERTS LIST */}
                 <div className="space-y-4">
                     {visibleAlerts.map((alert, i) => {
                         const meta = getAlertMeta(alert.isRead);

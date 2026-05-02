@@ -142,7 +142,6 @@ const ProjectRegistry = () => {
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
                     <div className="p-4 sm:p-5 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-col gap-3 bg-white/40 dark:bg-slate-800/20">
-                        {/* Row 1: title */}
                         <div className="flex items-center gap-2.5 font-bold text-slate-700 dark:text-slate-200">
                             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center shrink-0">
                                 <FolderKanban size={15} className="text-white" />
@@ -150,7 +149,6 @@ const ProjectRegistry = () => {
                             Active Projects
                         </div>
 
-                        {/* Row 2: filter + search — always full-width row */}
                         <div className="flex gap-2 w-full">
                             <div className="relative shrink-0">
                                 <button onClick={() => setIsFilterOpen(!isFilterOpen)}

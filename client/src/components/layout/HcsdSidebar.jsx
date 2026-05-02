@@ -32,9 +32,6 @@ const HcsdSidebar = memo(() => {
         ? `Engr. ${currentUser.firstName} ${currentUser.lastName}`
         : 'Loading...';
 
-    // Brand label is the LGU name when known. Falls back to the department
-    // label so the sidebar still renders cleanly during the brief window
-    // before the tenant doc loads.
     const brand = lguName || 'Construction Services Division';
 
     return (

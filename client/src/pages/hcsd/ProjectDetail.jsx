@@ -7,16 +7,14 @@ import {
     ImageIcon, X as XIcon
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
-import { doc, collection, query, onSnapshot } from 'firebase/firestore';
+import NtpViewerModal from '../../components/shared/NtpViewerModal';
+import { doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref as storageRef, listAll, getDownloadURL } from 'firebase/storage';
 import exifr from 'exifr';
 import { db } from '../../config/firebase';
+import { useAuth } from '../../context/AuthContext';
 import { useUsers } from '../../hooks/useUsers';
 
-// Canonical mobile proof contract: { id, fileName, url, storagePath,
-// uploadedBy, uploadedAt, gps: {lat,lng}, accuracy, location, capturedAt }.
-// Legacy docs still carry flat latitude/longitude + ms-epoch `timestamp`;
-// tolerated here during the mobile migration window.
 const normalizeProof = (p) => {
     if (!p || typeof p !== 'object') return null;
     const lat = p.gps?.lat ?? p.latitude;
@@ -38,8 +36,7 @@ const normalizeProof = (p) => {
     };
 };
 
-/* ── helpers ──────────────────────────────────────────────────────────────── */
-const fmt = (val) => (val === null || val === undefined || val === '') ? '—' : val;
+const fmt = (val) =>(val === null || val === undefined || val === '') ? '—' : val;
 
 const fmtDate = (str) => {
     if (!str) return '—';
@@ -70,7 +67,6 @@ const statusMeta = (s) => {
     }
 };
 
-/* ── sub-components ───────────────────────────────────────────────────────── */
 const SectionCard = ({ icon: Icon, title, children, accent = 'teal', className = '' }) => (
     <div className={`bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[20px] shadow-md overflow-hidden ${className}`}
         style={{ animation: 'slideUp 0.4s ease-out both' }}>
@@ -104,7 +100,6 @@ const LoaderSpinner = () => (
     </svg>
 );
 
-/* ── stat tile for accomplishment ─────────────────────────────────────────── */
 const StatTile = ({ label, value, unit = '%', sub, warn, good }) => (
     <div className={`rounded-2xl p-5 border flex flex-col gap-1
         ${warn ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-500/30'
@@ -121,7 +116,6 @@ const StatTile = ({ label, value, unit = '%', sub, warn, good }) => (
     </div>
 );
 
-/* ── main page ────────────────────────────────────────────────────────────── */
 const ProjectDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -131,12 +125,11 @@ const ProjectDetail = () => {
     const [draftCount, setDraftCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+    const [ntpViewerOpen, setNtpViewerOpen] = useState(false);
 
+    const { tenantId } = useAuth();
     const { usersMap } = useUsers();
 
-    // Live project doc: the recomputeProjectActualPercent trigger updates
-    // `actualPercent` on every milestone write, so we subscribe to pick up
-    // progress changes without a page refresh.
     useEffect(() => {
         if (!id) return;
         const unsub = onSnapshot(doc(db, 'projects', id), (snap) => {
@@ -151,13 +144,12 @@ const ProjectDetail = () => {
         return () => unsub();
     }, [id]);
 
-    // Fetch milestones subcollection (real-time — mobile engineers update them).
-    // Split confirmed vs. AI-generated drafts. Mobile treats docs without a
-    // `confirmed` field as already-confirmed (pre-AI-era milestones), so we
-    // only exclude when `confirmed === false`.
     useEffect(() => {
-        if (!id) return;
-        const unsub = onSnapshot(query(collection(db, 'projects', id, 'milestones')), (snap) => {
+        if (!id || !tenantId) return;
+        const unsub = onSnapshot(query(
+            collection(db, 'projects', id, 'milestones'),
+            where('tenantId', '==', tenantId)
+        ), (snap) => {
             const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             all.sort((a, b) => {
                 if (a.sequence != null && b.sequence != null) return a.sequence - b.sequence;
@@ -170,18 +162,13 @@ const ProjectDetail = () => {
             console.error('[ProjectDetail/milestones] snapshot listener error:', error);
         });
         return () => unsub();
-    }, [id]);
+    }, [id, tenantId]);
 
-    /* proof-of-work gallery — fetch geotagged photos from Storage on expand */
     const [expandedProofs, setExpandedProofs] = useState(() => new Set());
     const [proofCache, setProofCache] = useState({});
     const [proofLoading, setProofLoading] = useState({});
     const [lightbox, setLightbox] = useState(null);
 
-    // Firestore-first: primary source is milestone.proofs[] (canonical shape
-    // written by mobile's uploadProofPhoto). Storage listAll() + EXIF runs
-    // only for pre-contract files that never made it into the Firestore
-    // array — once mobile backfills, the fallback goes silent.
     const loadProofs = useCallback(async (milestone) => {
         if (!id || !milestone?.id) return;
         const milestoneId = milestone.id;
@@ -211,7 +198,7 @@ const ProjectDetail = () => {
                             gps = { lat: exif.latitude, lng: exif.longitude };
                         }
                         if (exif?.DateTimeOriginal) capturedAt = exif.DateTimeOriginal;
-                    } catch { /* no EXIF → filename fallback below */ }
+                    } catch {}
                     if (!capturedAt) {
                         const asNum = Number(fallbackCapture);
                         capturedAt = Number.isFinite(asNum) && asNum > 0
@@ -220,7 +207,7 @@ const ProjectDetail = () => {
                     }
                     return { name: r.name, url, capturedAt, gps, accuracy: null, location: null };
                 }));
-            } catch { /* storage listing errors → show Firestore entries only */ }
+            } catch {}
 
             const photos = [...fsPhotos, ...legacyPhotos];
             photos.sort((a, b) => {
@@ -252,7 +239,6 @@ const ProjectDetail = () => {
         });
     }, [proofCache, loadProofs, milestones]);
 
-    // Esc closes lightbox
     useEffect(() => {
         if (!lightbox) return;
         const onKey = (e) => { if (e.key === 'Escape') setLightbox(null); };
@@ -260,7 +246,6 @@ const ProjectDetail = () => {
         return () => window.removeEventListener('keydown', onKey);
     }, [lightbox]);
 
-    // Resolve projectEngineer UID → {name, photoURL} from the shared users hook
     const engineer = useMemo(() => {
         const pe = project?.projectEngineer;
         if (!pe) return null;
@@ -270,16 +255,24 @@ const ProjectDetail = () => {
             photoURL: u.photoURL || null,
             email: u.email || null,
         };
-        // Fallbacks: UID never resolved (deleted user) or legacy name-string
         return { name: pe, photoURL: null, email: null };
     }, [project?.projectEngineer, usersMap]);
 
-    /* computed accomplishment values */
+    const milestoneProgress = useMemo(() => {
+        const total = milestones.length;
+        const completed = milestones.filter((m) => {
+            const s = (m.status || '').toLowerCase();
+            return s === 'done' || s === 'completed';
+        }).length;
+        const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+        return { total, completed, percent };
+    }, [milestones]);
+
     const computed = useMemo(() => {
         if (!project) return {};
         const start = project.officialDateStarted;
         const end   = project.originalDateCompletion;
-        const actual = project.actualPercent ?? 0;
+        const actual = Number(project.actualPercent) || 0;
         const durationDays = diffDays(start, end);
 
         let timeElapsed = 0;
@@ -300,11 +293,10 @@ const ProjectDetail = () => {
             slippage:    Math.round(slippage    * 10) / 10,
             daysDelay,
         };
-    }, [project]);
+    }, [project, milestoneProgress]);
 
     const st = statusMeta(project?.status);
 
-    /* ── render states ── */
     if (loading) return (
         <div className="min-h-screen hcsd-bg font-sans">
             <HcsdSidebar />
@@ -345,7 +337,6 @@ const ProjectDetail = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                {/* ── Page header ── */}
                 <div className="flex flex-col gap-4 mb-8" style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <button onClick={() => navigate('/hcsd/projects')}
                         className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors w-fit">
@@ -381,10 +372,8 @@ const ProjectDetail = () => {
                     </div>
                 </div>
 
-                {/* ── Content grid ── */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-                    {/* 1 — Account & Funding */}
                     <SectionCard icon={Hash} title="Account & Funding">
                         <FieldGrid cols={2}>
                             <Field label="Account Code" value={fmt(p.accountCode)} mono />
@@ -392,7 +381,6 @@ const ProjectDetail = () => {
                         </FieldGrid>
                     </SectionCard>
 
-                    {/* 2 — Contract */}
                     <SectionCard icon={Banknote} title="Contract Details">
                         <FieldGrid cols={2}>
                             <Field label="Contract Amount" value={fmtCurrency(p.contractAmount)} highlight />
@@ -403,7 +391,6 @@ const ProjectDetail = () => {
                         </FieldGrid>
                     </SectionCard>
 
-                    {/* 3 — Personnel */}
                     <SectionCard icon={Users} title="Assigned Personnel">
                         <FieldGrid cols={2}>
                             <div>
@@ -432,7 +419,6 @@ const ProjectDetail = () => {
                         </FieldGrid>
                     </SectionCard>
 
-                    {/* 4 — Timeline */}
                     <SectionCard icon={Calendar} title="Project Timeline">
                         <FieldGrid cols={2}>
                             <Field label="NTP Received" value={fmtDate(p.ntpReceivedDate)} />
@@ -446,21 +432,22 @@ const ProjectDetail = () => {
                         <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-700/50">
                             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">NTP Document</p>
                             {p.ntpFileUrl ? (
-                                <a href={p.ntpFileUrl} target="_blank" rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-300 text-sm font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors">
+                                <button
+                                    type="button"
+                                    onClick={() => setNtpViewerOpen(true)}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-300 text-sm font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                                    aria-label="Open NTP document viewer"
+                                >
                                     <FileText size={14} />
                                     <span className="truncate max-w-[220px]">{p.ntpFileName || 'View NTP'}</span>
-                                    <ExternalLink size={12} className="shrink-0" />
-                                </a>
+                                </button>
                             ) : (
                                 <p className="text-sm font-medium text-slate-400 dark:text-slate-600">No NTP on file</p>
                             )}
                         </div>
                     </SectionCard>
 
-                    {/* 5 — Accomplishment — full width */}
                     <SectionCard icon={TrendingUp} title="Project Accomplishment" accent={computed.slippage > 0 ? 'amber' : 'teal'} className="lg:col-span-2">
-                        {/* 4 stat tiles */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">
                             <StatTile
                                 label="Time Elapsed"
@@ -469,9 +456,11 @@ const ProjectDetail = () => {
                             />
                             <StatTile
                                 label="Actual Progress"
-                                value={p.actualPercent ?? 0}
-                                good={(p.actualPercent ?? 0) >= (computed.timeElapsed ?? 0)}
-                                sub="% of work completed"
+                                value={Number(project?.actualPercent) || 0}
+                                good={(Number(project?.actualPercent) || 0) >= (computed.timeElapsed ?? 0)}
+                                sub={milestoneProgress.total > 0
+                                    ? `${milestoneProgress.completed} of ${milestoneProgress.total} milestones done`
+                                    : '% of work completed'}
                             />
                             <StatTile
                                 label="Slippage"
@@ -490,7 +479,6 @@ const ProjectDetail = () => {
                             />
                         </div>
 
-                        {/* Progress comparison bars */}
                         <div className="space-y-4">
                             <div>
                                 <div className="flex items-center justify-between mb-2">
@@ -512,15 +500,39 @@ const ProjectDetail = () => {
                                         <span className={`w-3 h-3 rounded-sm bg-gradient-to-r ${st.bar} shrink-0`} />
                                         <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Actual Progress</span>
                                     </div>
-                                    <span className="text-sm font-black text-slate-600 dark:text-slate-300 tabular-nums">{p.actualPercent ?? 0}%</span>
+                                    <span className="text-sm font-black text-slate-600 dark:text-slate-300 tabular-nums">{Number(project?.actualPercent) || 0}%</span>
                                 </div>
                                 <div className="w-full h-4 bg-slate-100 dark:bg-slate-700/60 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full bg-gradient-to-r ${st.bar} transition-all duration-700`}
-                                        style={{ width: `${p.actualPercent ?? 0}%` }} />
+                                        style={{ width: `${Number(project?.actualPercent) || 0}%` }} />
                                 </div>
                             </div>
 
-                            {/* Gap callout — only show if slipping */}
+                            {milestoneProgress.total > 0 && (
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Milestone Progress</span>
+                                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+                                            {milestoneProgress.completed} / {milestoneProgress.total}
+                                        </span>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        {milestones.map((m) => {
+                                            const s = (m.status || '').toLowerCase();
+                                            const done = s === 'done' || s === 'completed';
+                                            const tip = `${m.sequence != null ? `${m.sequence}. ` : ''}${m.title || 'Milestone'} — ${done ? 'Done' : (m.status || 'Pending')}`;
+                                            return (
+                                                <div
+                                                    key={m.id}
+                                                    title={tip}
+                                                    className={`flex-1 h-3 rounded-sm transition-colors ${done ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-slate-200 dark:bg-slate-700'}`}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
                             {computed.slippage > 0 && (
                                 <div className="flex items-center gap-3 mt-1 px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30">
                                     <AlertTriangle size={15} className="text-amber-500 shrink-0" />
@@ -532,23 +544,19 @@ const ProjectDetail = () => {
                         </div>
                     </SectionCard>
 
-                    {/* 6 — Project Orders */}
                     <SectionCard icon={ClipboardList} title="Project Orders">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                            {/* Resume Order */}
                             <div className="space-y-3">
                                 <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border-b border-slate-100 dark:border-slate-700/50 pb-1.5">Resume Order</p>
                                 <Field label="Order Number" value={fmt(p.resumeOrderNumber)} mono />
                                 <Field label="Order Date" value={fmtDate(p.resumeOrderDate)} />
                                 <Field label="Time Extension" value={fmt(p.timeExtensionOnOrder)} />
                             </div>
-                            {/* Validation Order */}
                             <div className="space-y-3">
                                 <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border-b border-slate-100 dark:border-slate-700/50 pb-1.5">Validation Order</p>
                                 <Field label="Order Number" value={fmt(p.validationOrderNumber)} mono />
                                 <Field label="Order Date" value={fmtDate(p.validationOrderDate)} />
                             </div>
-                            {/* Suspension Order */}
                             <div className="space-y-3 sm:col-span-2">
                                 <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest border-b border-slate-100 dark:border-slate-700/50 pb-1.5">Suspension Order</p>
                                 <div className="grid grid-cols-2 gap-x-8 gap-y-3">
@@ -559,7 +567,6 @@ const ProjectDetail = () => {
                         </div>
                     </SectionCard>
 
-                    {/* 7 — Notes */}
                     {(p.remarks || p.actionTaken) && (
                         <SectionCard icon={FileText} title="Remarks & Action Taken">
                             <div className="space-y-5">
@@ -580,7 +587,6 @@ const ProjectDetail = () => {
                     )}
                 </div>
 
-                {/* ── Milestones ── */}
                 <div className="mt-5 bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[20px] shadow-md overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.2s both' }}>
                     <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700/50 bg-white/40 dark:bg-slate-800/20">
@@ -629,9 +635,6 @@ const ProjectDetail = () => {
                             <div className="space-y-3">
                                 {milestones.map((m, i) => {
                                     const weight = m.weightPercentage ?? m.weight;
-                                    // Source of truth: mobile writes `status` on each milestone.
-                                    // Display the Firebase value verbatim; only override with "Late"
-                                    // when a targetDate exists and is past due.
                                     const rawStatus = (m.status || 'Pending').toString();
                                     const statusLower = rawStatus.toLowerCase();
                                     const isComplete = ['done', 'complete', 'completed'].includes(statusLower)
@@ -745,6 +748,13 @@ const ProjectDetail = () => {
                 </div>
             </main>
 
+            <NtpViewerModal
+                isOpen={ntpViewerOpen}
+                fileUrl={p.ntpFileUrl}
+                fileName={p.ntpFileName}
+                onClose={() => setNtpViewerOpen(false)}
+            />
+
             {lightbox && (
                 <div
                     className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
@@ -762,9 +772,6 @@ const ProjectDetail = () => {
                     </button>
                     <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
                         <img src={lightbox.url} alt={lightbox.name} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" />
-                        {/* Capture time + GPS + accuracy live in the burnt-in
-                            banner on the JPEG itself; the only unique value
-                            the web can add is an interactive Maps deep-link. */}
                         {lightbox.gps && (
                             <a
                                 href={`https://www.google.com/maps?q=${lightbox.gps.lat},${lightbox.gps.lng}`}

@@ -137,7 +137,6 @@ const useCreateProject = () => {
         fetchEngineers();
     }, [tenantId]);
 
-    // ── Computed values (never stored) ──────────────────────────────────────────
     const contractDurationDays = useMemo(() => {
         if (!formData.officialDateStarted || !formData.originalDateCompletion) return null;
         const diff = new Date(formData.originalDateCompletion) - new Date(formData.officialDateStarted);
@@ -164,7 +163,6 @@ const useCreateProject = () => {
         return Math.round((slippagePercent / 100) * contractDurationDays);
     }, [slippagePercent, contractDurationDays]);
 
-    // ── Field handlers ───────────────────────────────────────────────────────────
     const handleChange = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }));
         if (errors[field]) setErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
@@ -214,7 +212,6 @@ const useCreateProject = () => {
 
     const handleClearNtpFile = () => { setNtpFile(null); setNtpFileError(''); };
 
-    // ── Validation guards ────────────────────────────────────────────────────────
     const isFormComplete = Boolean(
         formData.projectName &&
         formData.barangay &&
@@ -232,7 +229,6 @@ const useCreateProject = () => {
         return d.toISOString().split('T')[0];
     }, [formData.officialDateStarted]);
 
-    // ── Review / Submit ──────────────────────────────────────────────────────────
     const handleReviewRequest = (e) => {
         e.preventDefault();
         try {
@@ -340,7 +336,6 @@ const useCreateProject = () => {
     };
 };
 
-// ── Shared input classes ─────────────────────────────────────────────────────
 const inputCls = (error) =>
     `w-full p-4 bg-slate-50 border ${error ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-teal-100'} rounded-xl font-semibold text-slate-700 focus:border-teal-500 focus:ring-4 outline-none transition-all`;
 
@@ -398,7 +393,6 @@ const CreateProject = () => {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10 pb-20 md:pb-32">
 
-                {/* ── PAGE HEADER ─────────────────────────────────────────── */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 sm:mb-8">
                     <div className="flex flex-col gap-2">
                         <button onClick={() => navigate('/hcsd/projects')}
@@ -422,7 +416,6 @@ const CreateProject = () => {
                 <form onSubmit={handleReviewRequest} noValidate>
                     <div className="space-y-8">
 
-                        {/* ── SECTION 1: PROJECT DETAILS ──────────────────── */}
                         <SectionCard icon={LayoutDashboard} title="Project Details">
                             <div className="space-y-2">
                                 <label className={labelCls}>Project Name <span className="text-red-400">*</span></label>
@@ -467,7 +460,6 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            {/* Contract Duration (computed) */}
                             {contractDurationDays !== null && (
                                 <div className="p-4 bg-teal-50 border border-teal-100 rounded-xl flex items-center gap-3">
                                     <Clock className="text-teal-600 shrink-0" size={18} />
@@ -478,7 +470,6 @@ const CreateProject = () => {
                             )}
                         </SectionCard>
 
-                        {/* ── SECTION 2: ACCOUNT CODE & FUNDING ───────────── */}
                         <SectionCard icon={FileText} iconColor="text-violet-600" title="Account Code & Funding">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                 <div className="space-y-2">
@@ -507,7 +498,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 3: CONTRACT AMOUNT ───────────────────── */}
                         <SectionCard icon={Banknote} iconColor="text-emerald-600" title="Contract Amount">
                             <div className="space-y-2">
                                 <label className={labelCls}>Contract Amount (Php) <span className="text-red-400">*</span></label>
@@ -525,7 +515,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 4: CONTRACTOR & ASSIGNED PERSONNEL ───── */}
                         <SectionCard icon={Users} iconColor="text-green-600" title="Contractor & Assigned Personnel">
                             <div className="space-y-2">
                                 <label className={labelCls}>Contractor</label>
@@ -545,7 +534,6 @@ const CreateProject = () => {
                             <div className="space-y-3">
                                 <label className={labelCls}>Assigned Personnel</label>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {/* Project Engineer */}
                                     <div className="space-y-1">
                                         <span className="text-xs font-semibold text-slate-500">a. Project Engineer</span>
                                         {loadingEngineers ? (
@@ -570,7 +558,6 @@ const CreateProject = () => {
                                         )}
                                     </div>
 
-                                    {/* Project Inspector */}
                                     <div className="space-y-1">
                                         <span className="text-xs font-semibold text-slate-500">b. Project Inspector</span>
                                         <input
@@ -583,7 +570,6 @@ const CreateProject = () => {
                                         />
                                     </div>
 
-                                    {/* Material Inspector */}
                                     <div className="space-y-1">
                                         <span className="text-xs font-semibold text-slate-500">c. Material Inspector</span>
                                         <input
@@ -596,7 +582,6 @@ const CreateProject = () => {
                                         />
                                     </div>
 
-                                    {/* Electrical Inspector */}
                                     <div className="space-y-1">
                                         <span className="text-xs font-semibold text-slate-500">d. Electrical Inspector</span>
                                         <input
@@ -612,7 +597,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 5: PROJECT TIMELINESS ────────────────── */}
                         <SectionCard icon={Calendar} iconColor="text-blue-600" title="Project Timeliness">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="space-y-1">
@@ -700,7 +684,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 6: PROJECT ACCOMPLISHMENT ────────────── */}
                         <SectionCard icon={TrendingDown} iconColor="text-amber-600" title="Project Accomplishment (%)">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <ReadOnlyField label="Time Elapsed (%)" value={`${timeElapsedPercent}%`} />
@@ -731,10 +714,8 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 7: PROJECT ORDER ─────────────────────── */}
                         <SectionCard icon={ClipboardList} iconColor="text-orange-600" title="Project Order">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {/* Resume Order */}
                                 <div className="space-y-2 p-4 bg-slate-50 rounded-xl border border-slate-100">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Resume Order</p>
                                     <div className="space-y-2">
@@ -757,7 +738,6 @@ const CreateProject = () => {
                                     </div>
                                 </div>
 
-                                {/* Time Extension */}
                                 <div className="space-y-2 p-4 bg-slate-50 rounded-xl border border-slate-100">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Time Extension on Order</p>
                                     <input type="text" value={formData.timeExtensionOnOrder}
@@ -768,7 +748,6 @@ const CreateProject = () => {
                                     />
                                 </div>
 
-                                {/* Validation Order */}
                                 <div className="space-y-2 p-4 bg-slate-50 rounded-xl border border-slate-100">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Validation Order</p>
                                     <div className="space-y-2">
@@ -791,7 +770,6 @@ const CreateProject = () => {
                                     </div>
                                 </div>
 
-                                {/* Suspension Order */}
                                 <div className="space-y-2 p-4 bg-slate-50 rounded-xl border border-slate-100">
                                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Suspension Order</p>
                                     <div className="space-y-2">
@@ -816,7 +794,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── SECTION 8: FUND UTILIZATION & NOTES ────────── */}
                         <SectionCard icon={DollarSign} iconColor="text-indigo-600" title="Fund Utilization & Notes">
                             <div className="space-y-2">
                                 <label className={labelCls}>Incurred (Fund Utilization)</label>
@@ -859,7 +836,6 @@ const CreateProject = () => {
                             </div>
                         </SectionCard>
 
-                        {/* ── GLOBAL ERROR ────────────────────────────────── */}
                         {errors.global && (
                             <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm font-bold">
                                 <AlertCircle size={18} className="shrink-0" />
@@ -867,7 +843,6 @@ const CreateProject = () => {
                             </div>
                         )}
 
-                        {/* ── SUBMIT ───────────────────────────────────────── */}
                         <div className="flex flex-col sm:flex-row gap-3 pt-4">
                             <button type="button"
                                 onClick={() => navigate('/hcsd/projects')}
@@ -889,7 +864,6 @@ const CreateProject = () => {
                 </form>
             </main>
 
-            {/* ── REVIEW MODAL ──────────────────────────────────────────── */}
             {isReviewOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-start justify-center z-50 p-4 pt-16 overflow-y-auto">
                     <div className="bg-white rounded-[24px] max-w-2xl w-full shadow-2xl mb-8">
@@ -901,7 +875,6 @@ const CreateProject = () => {
                         </div>
 
                         <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto">
-                            {/* Project Details */}
                             <div>
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Project Details</p>
                                 <div className="space-y-2 text-sm">
@@ -914,7 +887,6 @@ const CreateProject = () => {
 
                             <hr className="border-slate-100" />
 
-                            {/* Financials */}
                             <div>
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Financials</p>
                                 <div className="space-y-2 text-sm">
@@ -926,7 +898,6 @@ const CreateProject = () => {
 
                             <hr className="border-slate-100" />
 
-                            {/* Personnel */}
                             <div>
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Personnel</p>
                                 <div className="space-y-2 text-sm">
@@ -940,7 +911,6 @@ const CreateProject = () => {
 
                             <hr className="border-slate-100" />
 
-                            {/* Timeliness */}
                             <div>
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Timeliness</p>
                                 <div className="space-y-2 text-sm">

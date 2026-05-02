@@ -1,4 +1,4 @@
-﻿const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten, onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { defineSecret } = require("firebase-functions/params");
@@ -12,11 +12,9 @@ const { z } = require("zod");
 admin.initializeApp();
 setGlobalOptions({ region: "asia-southeast1" });
 
-// â”€â”€â”€ Secrets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const gmailUser = defineSecret("GMAIL_USER");
 const gmailAppPassword = defineSecret("GMAIL_APP_PASSWORD");
 
-// â”€â”€â”€ Email Transport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const createTransporter = () => nodemailer.createTransport({
     service: "gmail",
     auth: {
@@ -25,7 +23,6 @@ const createTransporter = () => nodemailer.createTransport({
     },
 });
 
-// â”€â”€â”€ Zod validation schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
@@ -35,39 +32,24 @@ const createAccountSchema = z.object({
 });
 
 const createProjectSchema = z.object({
-    // Project Details
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
     sitioStreet: z.string().max(200).optional(),
     barangay: z.string().min(1, "Barangay is required").max(100),
-
-    // Account Code & Funding
     accountCode: z.string().max(100).optional(),
     fundingSource: z.string().min(1, "Funding source is required").max(100),
-
-    // Contract Amount
     contractAmount: z.number().min(10000, "Minimum contract amount is â‚±10,000").max(1_000_000_000),
-
-    // Contractor
     contractor: z.string().max(200).optional(),
-
-    // Assigned Personnel
     projectEngineer: z.string().max(200).optional(),
     projectInspector: z.string().max(100).optional(),
     materialInspector: z.string().max(100).optional(),
     electricalInspector: z.string().max(100).optional(),
-
-    // Project Timeliness
     ntpReceivedDate: z.string().min(1, "NTP received date is required"),
     officialDateStarted: z.string().min(1, "Official start date is required"),
     originalDateCompletion: z.string().min(1, "Original completion date is required"),
     revisedDate1: z.string().optional(),
     revisedDate2: z.string().optional(),
     actualDateCompleted: z.string().optional(),
-
-    // Project Accomplishment (only stored field)
     actualPercent: z.number().min(0).max(100).optional(),
-
-    // Project Orders (flat fields)
     resumeOrderNumber: z.string().max(100).optional(),
     resumeOrderDate: z.string().optional(),
     timeExtensionOnOrder: z.string().max(100).optional(),
@@ -75,21 +57,11 @@ const createProjectSchema = z.object({
     validationOrderDate: z.string().optional(),
     suspensionOrderNumber: z.string().max(100).optional(),
     suspensionOrderDate: z.string().optional(),
-
-    // Fund Utilization
     incurredAmount: z.number().min(0).optional(),
-
-    // Remarks & Action
     remarks: z.string().max(1000).optional(),
     actionTaken: z.string().max(1000).optional(),
-
 });
 
-// Tenant provisioning input. tenantId format is {lgu-slug}-{psgc-10-digit},
-// e.g. "cebu-city-0730600000". The slug must be lowercase alphanumeric with
-// hyphens (no leading/trailing hyphen). The 10-digit PSGC code is per PSGC
-// Revision 1, PSA Board Resolution No. 07 Series of 2021. classification
-// must be one of the four LGU classifications recognized by DILG.
 const provisionTenantSchema = z.object({
     tenantId: z.string().min(12).max(100).regex(
         /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-\d{10}$/,
@@ -108,9 +80,6 @@ const provisionTenantSchema = z.object({
     firstMisAdminEmail: z.string().email().max(100),
 });
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-// Cryptographically secure password generator
 const generatePassword = (length = 16) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
     let password = "";
@@ -120,9 +89,6 @@ const generatePassword = (length = 16) => {
     return password;
 };
 
-// Tenant-claim guard. Every authenticated callable that touches Firestore
-// must pass through this so a missing tenantId fails loudly instead of
-// silently writing an unscoped document. Returns the tenantId on success.
 const requireTenantClaim = (auth) => {
     const tenantId = auth?.token?.tenantId;
     if (!tenantId || typeof tenantId !== "string") {
@@ -134,9 +100,6 @@ const requireTenantClaim = (auth) => {
     return tenantId;
 };
 
-// Platform-admin guard for tenant provisioning / lifecycle ops. The
-// platformAdmin claim is granted via scripts/grant-platform-admin.js and
-// never set by any callable, so it cannot be self-elevated.
 const requirePlatformAdmin = (auth) => {
     if (!auth || auth.token?.platformAdmin !== true) {
         throw new HttpsError(
@@ -146,8 +109,6 @@ const requirePlatformAdmin = (auth) => {
     }
 };
 
-// Write an audit trail entry, HCSD-scoped. tenantId is required so the
-// document carries the same tenant stamp the read-side rules check against.
 const logAudit = async (actorUid, actorEmail, action, targetId, details, tenantId) => {
     try {
         if (!tenantId) {
@@ -168,8 +129,6 @@ const logAudit = async (actorUid, actorEmail, action, targetId, details, tenantI
     }
 };
 
-// Write a system-level audit trail entry, MIS-scoped, append-only. tenantId
-// is required.
 const logSystemAudit = async (actorUid, actorEmail, action, target, status, actorName, tenantId) => {
     try {
         if (!tenantId) {
@@ -191,9 +150,6 @@ const logSystemAudit = async (actorUid, actorEmail, action, target, status, acto
     }
 };
 
-// Write a platform-scope audit entry. Used only by tenant provisioning /
-// lifecycle ops. tenantId here is the SUBJECT tenant (the one being
-// provisioned), not the actor's tenant (platform admins have no tenant).
 const logPlatformAudit = async (actorUid, actorEmail, action, target, status, tenantId) => {
     try {
         await admin.firestore().collection("auditTrails").doc("_platform").collection("entries").add({
@@ -209,16 +165,6 @@ const logPlatformAudit = async (actorUid, actorEmail, action, target, status, te
     }
 };
 
-// Write a user-facing notification document. Narrow payload on purpose â€”
-// recipientUid is queried by the client; severity drives the visual variant;
-// isRead/dismissedAt are the only fields the client may mutate (rules enforced).
-//
-// category split:
-//   "system" - admin/operational events from the web side (assignments,
-//              provisioning). Default.
-//   "field"  - mobile PROJ_ENG activity on a project (photo, milestones,
-//              completion submit). Feeds the Notifications page "Field
-//              Activity" tab and never lands in the Audit Trail.
 const createNotification = async ({
     recipientUid,
     action,
@@ -256,8 +202,6 @@ const createNotification = async ({
     }
 };
 
-// Server-side filename hardening for NTP uploads. Client sanitization is a UX
-// nicety; this is the security control. Returns null on pass, or an error msg.
 const validateNtpFilename = (name) => {
     if (!name || typeof name !== "string" || name.length < 1 || name.length > 255) {
         return "Invalid filename length";
@@ -277,12 +221,6 @@ const validateNtpFilename = (name) => {
     return null;
 };
 
-// Per-user rolling-hour rate limit. Guards against compromised or abusive
-// accounts by capping the blast radius of sensitive callables (NTP uploads,
-// project creation). Each collection holds { count, windowStartAt, tenantId,
-// uid } per uid. tenantId is stamped on the doc so rules can scope reads
-// (clients are blocked from these collections anyway, but the field keeps
-// the document model consistent and allows tenant-scoped maintenance ops).
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const enforceRateLimit = async (collection, uid, max, errorMsg, tenantId) => {
     const rlRef = admin.firestore().doc(`${collection}/${uid}`);
@@ -322,7 +260,6 @@ const enforceNtpRateLimit = (uid, tenantId) =>
 const enforceCreateProjectRateLimit = (uid, tenantId) =>
     enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.", tenantId);
 
-// â”€â”€â”€ CLOUD FUNCTION: Send OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to request a verification code.");
@@ -331,7 +268,6 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     const userEmail = auth.token.email;
     if (!userEmail) throw new HttpsError("invalid-argument", "No email address found for this account.");
 
-    // Enforce 60-second cooldown between resend requests
     const existingOtp = await admin.firestore().collection("otpCodes").doc(uid).get();
     if (existingOtp.exists) {
         const { sentAt } = existingOtp.data();
@@ -346,9 +282,6 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     const sentAt = Date.now();
     const expiresAt = sentAt + 5 * 60 * 1000;
 
-    // Derive tenantId for the otpCodes doc stamp. Claim is the primary
-    // source; userDoc is a fallback for accounts whose claim was wiped by
-    // pre-refactor OTP code. New accounts always have the claim.
     const sendOtpUserDoc = await admin.firestore().collection("users").doc(uid).get();
     const sendOtpTenantId = auth.token?.tenantId
         || (sendOtpUserDoc.exists ? sendOtpUserDoc.data().tenantId : null)
@@ -364,10 +297,6 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
         tenantId: sendOtpTenantId,
     });
 
-    // Additive claim update: preserve all existing claims (including
-    // tenantId), only reset the OTP fields. Restore role from Firestore
-    // only if it's missing from claims (covers legacy accounts whose role
-    // got wiped by older OTP code).
     const sendOtpUser = await admin.auth().getUser(uid);
     const sendOtpExisting = sendOtpUser.customClaims || {};
     let sendOtpRole = sendOtpExisting.role;
@@ -383,17 +312,35 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: userEmail,
-            subject: "TranspiraFund â€” Your Verification Code",
-            html: `
-                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
-                    <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Identity Verification</h2>
-                    <p style="color:#475569;font-size:15px;margin-bottom:24px;">Your one-time verification code for the TranspiraFund LGU Portal:</p>
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;text-align:center;margin-bottom:24px;">
-                        <span style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#0f766e;">${otpCode}</span>
-                    </div>
-                    <p style="color:#64748b;font-size:13px;">This code expires in <strong>5 minutes</strong> and can only be used once. If you did not request this, contact system administration immediately.</p>
-                </div>
-            `,
+            subject: "TranspiraFund — Your Verification Code",
+            html: `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F8FAFC;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 32px rgba(0,0,0,0.08);">
+  <tr><td style="background:linear-gradient(135deg,#0f766e,#059669);padding:40px 40px 36px;text-align:center;">
+    <p style="margin:0 0 8px;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.5px;">TranspiraFund</p>
+    <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:0.12em;text-transform:uppercase;font-weight:600;">LGU Transparency Portal</p>
+  </td></tr>
+  <tr><td style="padding:40px 40px 32px;">
+    <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.3px;">Identity Verification</p>
+    <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.7;">Your one-time verification code for the TranspiraFund LGU Portal is below. Enter it within 5 minutes to complete sign-in.</p>
+    <div style="background:#f0fdf9;border:1px solid #99f6e4;border-radius:12px;padding:28px;text-align:center;margin-bottom:28px;">
+      <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:#0f766e;text-transform:uppercase;letter-spacing:0.12em;">Verification Code</p>
+      <p style="margin:0;font-size:40px;font-weight:900;letter-spacing:12px;color:#0f766e;font-family:monospace;">${otpCode}</p>
+    </div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;">
+      <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">Security Notice</p>
+      <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.6;">This code expires in <strong style="color:#64748b;">5 minutes</strong> and can only be used once. If you did not request this, contact system administration immediately.</p>
+    </div>
+  </td></tr>
+  <tr><td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;letter-spacing:0.05em;text-transform:uppercase;">TranspiraFund &bull; Secured LGU Portal &bull; Automated System Email</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`,
         });
     } catch (emailError) {
         logger.error("Failed to send OTP email:", emailError);
@@ -404,7 +351,6 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     return { success: true };
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Verify OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.verifyOtp = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to verify a code.");
@@ -431,7 +377,6 @@ exports.verifyOtp = onCall(async (request) => {
         throw new HttpsError("resource-exhausted", "Too many failed attempts. Please request a new verification code.");
     }
 
-    // Constant-time comparison to prevent timing attacks
     const inputBuf = Buffer.from(code.padEnd(6, "0"));
     const storedBuf = Buffer.from(storedCode.padEnd(6, "0"));
     const codesMatch = inputBuf.length === storedBuf.length && crypto.timingSafeEqual(inputBuf, storedBuf);
@@ -449,16 +394,11 @@ exports.verifyOtp = onCall(async (request) => {
 
     await otpRef.delete();
 
-    // Additive claim update: preserve all existing claims (including
-    // tenantId), only set the OTP verification fields. Restore role from
-    // Firestore only if it's missing from claims (covers legacy accounts
-    // whose role got wiped).
     const userDoc = await admin.firestore().collection("users").doc(uid).get();
     const userRole = userDoc.exists ? userDoc.data().role : null;
     const userName = userDoc.exists
         ? `${userDoc.data().firstName || ""} ${userDoc.data().lastName || ""}`.trim()
         : null;
-    // Tenant resolution: claim first, userDoc fallback for legacy accounts.
     const userTenantId = auth.token?.tenantId
         || (userDoc.exists ? userDoc.data().tenantId : null)
         || null;
@@ -480,21 +420,17 @@ exports.verifyOtp = onCall(async (request) => {
     return { success: true };
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Create Official Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
 
-    // Caller must have a tenantId claim. The new account inherits it.
     const callerTenantId = requireTenantClaim(auth);
 
-    // RBAC check
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists) throw new HttpsError("permission-denied", "User profile not found.");
     const callerRole = callerDoc.data().role;
     if (!["MIS", "HCSD"].includes(callerRole)) throw new HttpsError("permission-denied", "Insufficient permissions to create accounts.");
 
-    // Validate input
     const parsed = createAccountSchema.safeParse(data);
     if (!parsed.success) {
         const msg = parsed.error.errors[0]?.message ?? "Invalid input.";
@@ -515,10 +451,6 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             displayName: `${firstName} ${lastName}`,
         });
 
-        // Additive claim merge. Brand-new users have no existing claims, but
-        // the pattern matches sendOtp / verifyOtp so any future claim added
-        // outside this callable will not get clobbered. tenantId is set here
-        // and never rewritten anywhere else.
         const newUserRecord = await admin.auth().getUser(userRecord.uid);
         const existingClaims = newUserRecord.customClaims || {};
         await admin.auth().setCustomUserClaims(userRecord.uid, {
@@ -543,28 +475,43 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
             createdBy: auth.uid,
         });
 
-        // Send credentials via Gmail
         const transporter = createTransporter();
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: email,
-            subject: "TranspiraFund â€” Your Account Has Been Created",
-            html: `
-                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
-                    <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Welcome, ${firstName}!</h2>
-                    <p style="color:#475569;font-size:15px;margin-bottom:24px;">Your official TranspiraFund LGU Portal account has been created.</p>
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin-bottom:24px;">
-                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Login Email</p>
-                        <p style="margin:0 0 16px;color:#1e293b;font-size:15px;font-weight:600;">${email}</p>
-                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Temporary Password</p>
-                        <p style="margin:0;color:#1e293b;font-size:18px;font-weight:bold;letter-spacing:2px;font-family:monospace;">${tempPassword}</p>
-                    </div>
-                    <p style="color:#dc2626;font-size:13px;font-weight:600;">You will be required to change your password on first login. Do not share this email with anyone.</p>
-                </div>
-            `,
+            subject: "TranspiraFund — Your Account Has Been Created",
+            html: `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F8FAFC;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 32px rgba(0,0,0,0.08);">
+  <tr><td style="background:linear-gradient(135deg,#0f766e,#059669);padding:40px 40px 36px;text-align:center;">
+    <p style="margin:0 0 8px;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.5px;">TranspiraFund</p>
+    <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:0.12em;text-transform:uppercase;font-weight:600;">LGU Transparency Portal</p>
+  </td></tr>
+  <tr><td style="padding:40px 40px 32px;">
+    <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.3px;">Welcome, ${firstName}!</p>
+    <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.7;">Your official TranspiraFund LGU Portal account has been provisioned. Use the credentials below to sign in for the first time.</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin-bottom:24px;">
+      <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Login Email</p>
+      <p style="margin:0 0 20px;font-size:15px;font-weight:700;color:#0f766e;">${email}</p>
+      <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Temporary Password</p>
+      <p style="margin:0;font-size:22px;font-weight:900;letter-spacing:3px;color:#0f172a;font-family:monospace;">${tempPassword}</p>
+    </div>
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;">
+      <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#ea580c;text-transform:uppercase;letter-spacing:0.08em;">Action Required</p>
+      <p style="margin:0;font-size:13px;color:#9a3412;line-height:1.6;">You will be required to change your password on first login. Do not share this email or your credentials with anyone.</p>
+    </div>
+  </td></tr>
+  <tr><td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;letter-spacing:0.05em;text-transform:uppercase;">TranspiraFund &bull; Secured LGU Portal &bull; Automated System Email</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`,
         });
 
-        // Audit trail â€” route by caller role
         const callerName = `${callerDoc.data().firstName} ${callerDoc.data().lastName}`;
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_CREATED",
@@ -587,13 +534,6 @@ exports.createOfficialAccount = onCall({ secrets: [gmailUser, gmailAppPassword] 
     }
 });
 
-// ─── CLOUD FUNCTION: Provision Tenant ─────────────────────────────────────
-// Platform-admin-only. Creates a new tenant document and the first MIS Admin
-// account for that tenant. The platform admin's own session does NOT need a
-// tenantId claim (super-admins have no tenant); the new tenant's id is the
-// one passed in the payload, which is then stamped on the new MIS account's
-// claims and Firestore docs. Bootstrap a platform admin via:
-//   node scripts/grant-platform-admin.js <uid>
 exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -609,8 +549,6 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
         contractReference, firstMisAdminEmail,
     } = parsed.data;
 
-    // Reject if tenant already exists. Idempotency is intentionally not
-    // baked in: a duplicate provision is a mistake worth surfacing.
     const tenantRef = admin.firestore().collection("tenants").doc(tenantId);
     const tenantSnap = await tenantRef.get();
     if (tenantSnap.exists) {
@@ -635,9 +573,6 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
     }
 
     try {
-        // Tenant doc first so the new user's tenantId stamp points at a
-        // real, queryable tenant. Status seeds to "active"; lifecycle ops
-        // (suspend / archive) belong to a separate v2 callable.
         await tenantRef.set({
             tenantId,
             lguName,
@@ -649,7 +584,6 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
             contractReference,
         });
 
-        // Additive claim merge (matches sendOtp / verifyOtp / createOfficialAccount).
         const newUserRecord = await admin.auth().getUser(userRecord.uid);
         const existingClaims = newUserRecord.customClaims || {};
         await admin.auth().setCustomUserClaims(userRecord.uid, {
@@ -678,20 +612,37 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
         await transporter.sendMail({
             from: `"TranspiraFund Platform" <${gmailUser.value()}>`,
             to: firstMisAdminEmail,
-            subject: `TranspiraFund — ${lguName} has been onboarded`,
-            html: `
-                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f8fafc;border-radius:12px;">
-                    <h2 style="color:#0f766e;font-size:22px;margin-bottom:8px;">Welcome to TranspiraFund</h2>
-                    <p style="color:#475569;font-size:15px;margin-bottom:8px;">${lguName} has been onboarded as an LGU on TranspiraFund. You have been provisioned as the first MIS Administrator for this tenant.</p>
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:24px 0;">
-                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Login Email</p>
-                        <p style="margin:0 0 16px;color:#1e293b;font-size:15px;font-weight:600;">${firstMisAdminEmail}</p>
-                        <p style="margin:0 0 8px;color:#64748b;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;">Temporary Password</p>
-                        <p style="margin:0;color:#1e293b;font-size:18px;font-weight:bold;letter-spacing:2px;font-family:monospace;">${tempPassword}</p>
-                    </div>
-                    <p style="color:#dc2626;font-size:13px;font-weight:600;">You will be required to change your password on first login. Do not share this email with anyone.</p>
-                </div>
-            `,
+            subject: `TranspiraFund — ${lguName} Has Been Onboarded`,
+            html: `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F8FAFC;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 32px rgba(0,0,0,0.08);">
+  <tr><td style="background:linear-gradient(135deg,#0f766e,#059669);padding:40px 40px 36px;text-align:center;">
+    <p style="margin:0 0 8px;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.5px;">TranspiraFund</p>
+    <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.7);letter-spacing:0.12em;text-transform:uppercase;font-weight:600;">LGU Transparency Portal</p>
+  </td></tr>
+  <tr><td style="padding:40px 40px 32px;">
+    <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.3px;">Welcome to TranspiraFund</p>
+    <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.7;">${lguName} has been onboarded as a tenant on TranspiraFund. You have been provisioned as the first MIS Administrator for this LGU.</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin-bottom:24px;">
+      <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Login Email</p>
+      <p style="margin:0 0 20px;font-size:15px;font-weight:700;color:#0f766e;">${firstMisAdminEmail}</p>
+      <p style="margin:0 0 4px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;">Temporary Password</p>
+      <p style="margin:0;font-size:22px;font-weight:900;letter-spacing:3px;color:#0f172a;font-family:monospace;">${tempPassword}</p>
+    </div>
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:16px 20px;">
+      <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#ea580c;text-transform:uppercase;letter-spacing:0.08em;">Action Required</p>
+      <p style="margin:0;font-size:13px;color:#9a3412;line-height:1.6;">You will be required to change your password on first login. Do not share this email or your credentials with anyone.</p>
+    </div>
+  </td></tr>
+  <tr><td style="padding:20px 40px 28px;border-top:1px solid #f1f5f9;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#cbd5e1;letter-spacing:0.05em;text-transform:uppercase;">TranspiraFund &bull; Secured LGU Portal &bull; Automated System Email</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`,
         });
 
         await logPlatformAudit(
@@ -707,9 +658,6 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
             message: `${lguName} provisioned. Credentials sent to ${firstMisAdminEmail}.`,
         };
     } catch (error) {
-        // Best-effort rollback so a half-provisioned tenant does not linger.
-        // We only delete the Auth user we created in this invocation; the
-        // tenant doc is removed first since it has no foreign-key tail.
         logger.error("provisionTenant: post-createUser step failed, rolling back:", error);
         try { await tenantRef.delete(); } catch (e) { logger.error("Rollback: tenant doc delete failed:", e); }
         try { await admin.firestore().collection("users").doc(userRecord.uid).delete(); } catch (e) { logger.error("Rollback: user doc delete failed:", e); }
@@ -724,7 +672,6 @@ exports.provisionTenant = onCall({ secrets: [gmailUser, gmailAppPassword] }, asy
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Delete Official Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.deleteOfficialAccount = onCall(async (request) => {
     const { data, auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to delete accounts.");
@@ -738,9 +685,6 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     const { uid } = data;
     if (!uid || typeof uid !== "string") throw new HttpsError("invalid-argument", "User UID is required.");
 
-    // Single read of the target. We need both the role-class check (HCSD may
-    // only delete PROJ_ENG) and the tenant check (no caller may delete
-    // accounts outside their own tenant, even with the role check intact).
     const targetDoc = await admin.firestore().collection("users").doc(uid).get();
     if (!targetDoc.exists) {
         throw new HttpsError("not-found", "Target account not found.");
@@ -760,7 +704,6 @@ exports.deleteOfficialAccount = onCall(async (request) => {
         await admin.auth().deleteUser(uid);
         await admin.firestore().collection("users").doc(uid).delete();
 
-        // Audit trail â€” route by caller role
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED",
                 { uid, email: targetEmail, role: targetRole }, "SUCCESS", null, callerTenantId);
@@ -775,7 +718,6 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Create Project â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.createProject = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to create projects.");
@@ -788,24 +730,19 @@ exports.createProject = onCall(async (request) => {
 
     await enforceCreateProjectRateLimit(auth.uid, callerTenantId);
 
-    // Firebase callable SDK sends null for absent optional fields; convert null â†’ undefined before validation
     const sanitized = Object.fromEntries(
         Object.entries(data || {}).map(([k, v]) => [k, v === null ? undefined : v])
     );
 
-    // Validate project data
     const parsed = createProjectSchema.safeParse(sanitized);
     if (!parsed.success) {
         const msg = parsed.error.errors[0]?.message ?? "Invalid project data.";
         throw new HttpsError("invalid-argument", msg);
     }
-    // Strip undefined/null values â€” Firestore rejects undefined fields
     const projectFields = Object.fromEntries(
         Object.entries(parsed.data).filter(([, v]) => v !== undefined && v !== null)
     );
 
-    // Cross-tenant assignment guard: HCSD can pass any UID for projectEngineer
-    // via the form, but we must reject anyone not in the same tenant.
     if (projectFields.projectEngineer) {
         const peDoc = await admin.firestore().collection("users").doc(projectFields.projectEngineer).get();
         if (!peDoc.exists || peDoc.data().tenantId !== callerTenantId) {
@@ -823,14 +760,12 @@ exports.createProject = onCall(async (request) => {
             tenantId: callerTenantId,
         });
 
-        // Audit trail
         await logAudit(auth.uid, auth.token.email, "PROJECT_CREATED", projectRef.id, {
             projectName: projectFields.projectName,
             contractAmount: projectFields.contractAmount,
             barangay: projectFields.barangay,
         }, callerTenantId);
 
-        // Notify assigned Project Engineer (if any)
         if (projectFields.projectEngineer) {
             await createNotification({
                 recipientUid: projectFields.projectEngineer,
@@ -851,10 +786,6 @@ exports.createProject = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Attach NTP document to a project â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// HCSD uploads the NTP file to Storage at projects/{projectId}/ntp/{fileName}
-// first, then calls this to persist the metadata on the project doc, log the
-// audit entry, and notify the assigned PE.
 const NTP_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const NTP_MAX_BYTES = 10 * 1024 * 1024;
 const NTP_MIN_BYTES = 1024;
@@ -883,7 +814,6 @@ exports.attachNtp = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Only HCSD personnel can attach NTP documents.");
     }
 
-    // Cheap abuse reject before we touch Zod / Storage.
     await enforceNtpRateLimit(auth.uid, callerTenantId);
 
     const parsed = attachNtpSchema.safeParse(data || {});
@@ -913,9 +843,6 @@ exports.attachNtp = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Cannot attach NTP to a project in another tenant.");
     }
 
-    // Magic-byte verification â€” the only check that actually sees the bytes.
-    // Client-reported contentType and file extension are both spoofable; this
-    // proves the uploaded object is plausibly what it claims to be.
     const objectPath = `projects/${projectId}/ntp/${fileName}`;
     const storageFile = admin.storage().bucket().file(objectPath);
     let header;
@@ -950,11 +877,6 @@ exports.attachNtp = onCall(async (request) => {
             ntpUploadedBy: auth.uid,
         });
 
-        // No separate audit row: NTP attachment is part of project creation,
-        // already covered by the `PROJECT_CREATED` entry on the same project.
-        // No PE notification either: NTP upload is a project-creation
-        // requirement on the web side, not a standalone event.
-
         return { success: true };
     } catch (error) {
         logger.error("Error attaching NTP:", error);
@@ -962,7 +884,6 @@ exports.attachNtp = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Change Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.changePassword = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to change password.");
@@ -1000,7 +921,6 @@ exports.changePassword = onCall(async (request) => {
             passwordChangedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
-        // Audit trail — MIS scope always; HCSD scope only when the actor is HCSD.
         await logSystemAudit(auth.uid, auth.token.email, "PASSWORD_CHANGED", {}, "SUCCESS", null, callerTenantId);
         const userDoc = await userRef.get();
         if (userDoc.exists && userDoc.data().role === "HCSD") {
@@ -1016,12 +936,6 @@ exports.changePassword = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Revoke Other Sessions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Invalidates all refresh tokens for the current user. The caller's current
-// session remains active (they keep their ID token until it expires naturally,
-// then their own refresh token is also gone â€” so they'll be forced to re-auth
-// the next time their token refreshes). All OTHER active sessions across devices
-// will be signed out on their next token refresh (within ~1 hour).
 exports.revokeOtherSessions = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -1043,20 +957,10 @@ exports.revokeOtherSessions = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Log User Logout ──────────────────────────────────────────
-// Called from the HCSD sidebar sign-out button immediately before Firebase
-// signOut(). Writes a system-level audit row always, and duplicates to the
-// HCSD scope when the actor is HCSD so the administrative trail records the
-// logout alongside the matching login. Best-effort — never throws, so a slow
-// or failed log write doesn't strand the user on the app.
 exports.logUserLogout = onCall(async (request) => {
     const { auth } = request;
     if (!auth) return { success: false };
     try {
-        // Best-effort tenant resolution: prefer the claim, fall back to the
-        // user doc. We never reject a logout for a missing claim because the
-        // user signs out either way; the only consequence is the audit row
-        // is skipped (the helpers refuse to write without a tenantId).
         const userDoc = await admin.firestore().collection("users").doc(auth.uid).get();
         const role = userDoc.exists ? userDoc.data().role : null;
         const tenantId = auth.token?.tenantId || (userDoc.exists ? userDoc.data().tenantId : null);
@@ -1074,24 +978,6 @@ exports.logUserLogout = onCall(async (request) => {
     }
 });
 
-// ─── CALLABLE: Log a mobile-origin audit trail entry ──────────────────────
-// Mobile PE app calls this on every audit-worthy local event (sign-in/out,
-// milestone confirm/complete, etc). Writes one row to
-// auditTrails/mobile/entries (PROJ_ENG-only read per firestore.rules) with
-// tenantId stamped from the caller's claim.
-//
-// Canonical shape per CLAUDE.md:
-//   { action, actorUid, createdAt, details, tenantId, targetId?, email? }
-//
-// Recreates a deployed nodejs20 ghost function whose source was never in
-// the repo. Adds the tenantId-required invariant via requireTenantClaim
-// so unscoped writes are impossible by construction (matches logAudit at
-// 153-156 and logSystemAudit at 175-178). `details` accepts both object
-// (canonical) and string (legacy) forms — onMobileAuditCreated already
-// tolerates both at line 1628, so we preserve that here. `syncToHCSD` is
-// accepted for backward compatibility with the mobile payload but
-// deliberately ignored: CLAUDE.md forbids mobile-origin actions from
-// bleeding into the HCSD audit trail.
 const logMobileAuditTrailSchema = z.object({
     action: z.string().min(1).max(128),
     details: z.union([z.record(z.any()), z.string()]).optional(),
@@ -1138,11 +1024,6 @@ exports.logMobileAuditTrail = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Backfill projectEngineer field (name → UID) ──────────
-// One-time maintenance op to convert legacy project docs that stored the
-// engineer's display name in `projectEngineer` over to the engineer's UID,
-// so Firestore rules and the mobile app query (`projectEngineer == uid`) match.
-// HCSD-only. Idempotent â€” safe to run multiple times.
 exports.backfillProjectEngineerUids = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -1158,10 +1039,6 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
         .replace(/\s+/g, " ");
 
     try {
-        // Tenant-scoped scans: HCSD-A may only resolve names against PROJ_ENGs
-        // in tenant A, and may only update projects in tenant A. The composite
-        // (role + tenantId) read requires a Firestore index; if it errors,
-        // fall back to filtering in memory after the role-only query.
         const usersSnap = await admin.firestore().collection("users")
             .where("role", "==", "PROJ_ENG")
             .where("tenantId", "==", callerTenantId)
@@ -1197,7 +1074,6 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
             }
         });
 
-        // Commit updates in batches of 400 (Firestore batch limit = 500)
         for (let i = 0; i < updates.length; i += 400) {
             const chunk = updates.slice(i, i + 400);
             const batch = admin.firestore().batch();
@@ -1207,8 +1083,6 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
             await batch.commit();
         }
 
-        // Maintenance op — not logged to the HCSD audit trail; results are
-        // returned to the caller and visible in Cloud Functions logs.
         return {
             success: true,
             scanned: projSnap.size,
@@ -1224,7 +1098,6 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Send Password Reset Email â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data } = request;
     const { email } = data;
@@ -1236,22 +1109,13 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     const cleanEmail = email.trim().toLowerCase();
     const RESET_BASE = "https://transpirafund-webapp.web.app/reset-password";
 
-    // Anti-enumeration tenant lookup: try to resolve email to a tenantId
-    // server-side. If the account does not exist, tenantId stays null and
-    // the cooldown doc is still written so the response timing matches a
-    // hit. The caller never sees the result of this lookup.
     let tenantId = null;
     try {
         const userRecord = await admin.auth().getUserByEmail(cleanEmail);
         const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
         if (userDoc.exists) tenantId = userDoc.data().tenantId || null;
-    } catch (lookupErr) {
-        // Swallow auth/user-not-found; do not let any other error change
-        // the response shape (the next call to generatePasswordResetLink
-        // will hit the same condition and be silently absorbed below).
-    }
+    } catch (lookupErr) {}
 
-    // Rate limiting â€” consistent for registered and unregistered emails (anti-enumeration)
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
     const cooldownRef = admin.firestore().collection("passwordResets").doc(emailHash);
     const cooldownDoc = await cooldownRef.get();
@@ -1284,7 +1148,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
         await transporter.sendMail({
             from: `"TranspiraFund LGU Portal" <${gmailUser.value()}>`,
             to: cleanEmail,
-            subject: "TranspiraFund â€” Password Reset Request",
+            subject: "TranspiraFund — Password Reset Request",
             html: `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F8FAFC;">
@@ -1317,17 +1181,14 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
 </body></html>`,
         });
     } catch (error) {
-        // Silently ignore user-not-found to prevent email enumeration
         if (error.code !== "auth/user-not-found") {
             logger.error("Password reset error:", error);
         }
     }
 
-    // Always return success â€” never reveal whether the email exists
     return { success: true };
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Reset Password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.resetPassword = onCall(async (request) => {
     const { data } = request;
     const { oobCode, newPassword } = data;
@@ -1339,7 +1200,6 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Password is required.");
     }
 
-    // Password rules
     if (newPassword.length < 12) throw new HttpsError("invalid-argument", "Password must be at least 12 characters.");
     if (newPassword.length > 128) throw new HttpsError("invalid-argument", "Password is too long.");
     if (!/[A-Z]/.test(newPassword)) throw new HttpsError("invalid-argument", "Password must contain at least one uppercase letter.");
@@ -1382,8 +1242,6 @@ exports.resetPassword = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to reset password. Please try again.");
     }
 
-    // Audit trail â€” non-blocking. Tenant resolved server-side from the
-    // post-reset email; client never sees or supplies a tenantId.
     const email = resetResult?.email;
     if (email) {
         try {
@@ -1410,9 +1268,6 @@ exports.recalculateStats = onCall(async (request) => {
     }
 
     try {
-        // Per-tenant aggregates land on the tenant document. The global
-        // stats/public counter is maintained separately by onUserWritten /
-        // onProjectWritten triggers and remains cross-tenant by design.
         const [usersSnapshot, projectsSnapshot] = await Promise.all([
             admin.firestore().collection("users").where("tenantId", "==", callerTenantId).get(),
             admin.firestore().collection("projects").where("tenantId", "==", callerTenantId).get(),
@@ -1462,13 +1317,6 @@ exports.recalculateStats = onCall(async (request) => {
     }
 });
 
-// ─── CLOUD FUNCTION: Purge mobile-origin rows from HCSD audit trail ─────────
-// Legacy bleed-through: before the onMobileAuditCreated fan-out trigger
-// shipped, mobile-origin activity was being written directly into
-// auditTrails/hcsd/entries with these exact action strings. The web-side
-// Audit Trails page is strictly "what this HCSD account did"; field
-// activity lives in Notifications. This callable deletes those stray rows.
-// HCSD-only. Idempotent — safe to call any time. Returns the number deleted.
 exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
@@ -1489,10 +1337,6 @@ exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
     ];
 
     try {
-        // Tenant-scoped query: HCSD-A only purges stray rows from their own
-        // tenant. Legacy rows without a tenantId field will not match this
-        // query and remain stranded; that's acceptable for the v1 wipe-and-
-        // reseed migration path.
         const snap = await admin.firestore()
             .collection("auditTrails").doc("hcsd").collection("entries")
             .where("action", "in", MOBILE_ORIGIN_ACTIONS)
@@ -1510,8 +1354,6 @@ exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
             deleted += chunk.length;
         }
 
-        // Maintenance op — not logged to the HCSD audit trail; Cloud
-        // Functions logs retain the invocation record for forensics.
         return { success: true, deleted };
     } catch (error) {
         logger.error("[purgeMobileOriginHcsdAudit] Failed:", error);
@@ -1519,13 +1361,8 @@ exports.purgeMobileOriginHcsdAudit = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ TRIGGER: Recompute public stats on user writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     try {
-        // Cross-tenant scan: stats/public is intentionally global by spec.
-        // Scaling note: every user write in any tenant triggers a full table
-        // scan. Acceptable for v1; v2 should switch to scheduled per-tenant
-        // aggregation if tenant count grows past a few dozen.
         const usersSnapshot = await admin.firestore().collection("users").get();
         const users = usersSnapshot.docs.map(doc => doc.data());
 
@@ -1546,7 +1383,6 @@ exports.onUserWritten = onDocumentWritten("users/{userId}", async () => {
     }
 });
 
-// â”€â”€â”€ TRIGGER: Recompute public stats on project writes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () => {
     try {
         const projectsSnapshot = await admin.firestore().collection("projects").get();
@@ -1574,21 +1410,10 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
     }
 });
 
-// ─── TRIGGER: Fan out mobile PROJ_ENG activity into HCSD notifications ─────
-// The Audit Trails page is strictly "what I (this account) did." Mobile
-// activity lives in `auditTrails/mobile/entries` (PROJ_ENG-only read) and
-// is surfaced to HCSD exclusively as notifications with category "field".
-// Only the whitelisted actions produce notifications — anything else the
-// mobile writes (login, generic updates, draft removal) is ignored here.
-// Mobile currently ships `details` as a plain string: `"<ProjectName> · <MilestoneName>"`
-// (middle-dot U+00B7 separator). Parse that shape first; fall back to object-key
-// scanning for any mobile client that starts sending structured `details`.
 const parseMilestoneFromDetailsString = (s) => {
     if (typeof s !== "string" || !s.trim()) return null;
     const parts = s.split(/\s*[·|]\s*/).map((p) => p.trim()).filter(Boolean);
     if (parts.length === 0) return null;
-    // When there are >=2 parts, last is the milestone name (`Project · Milestone`
-    // or `Project · Phase N · Milestone`). With one part, treat as milestone name.
     const name = parts[parts.length - 1];
     return name ? { name, phase: null, order: null } : null;
 };
@@ -1618,9 +1443,6 @@ const formatMilestoneLabel = ({ name, phase, order }) => {
     return null;
 };
 
-// Prefer the canonical milestone doc (web-authored, stable `title` + `sequence`)
-// when the trigger has FK-resolved it from `details.milestoneId`. Fall back to
-// whatever keys mobile happened to carry.
 const labelFromMilestoneDoc = (milestoneDoc) => {
     if (!milestoneDoc) return null;
     return formatMilestoneLabel({
@@ -1685,9 +1507,6 @@ exports.onMobileAuditCreated = onDocumentCreated(
             const spec = FIELD_NOTIFICATION_SPECS[entry.action];
             if (!spec) return;
 
-            // `details` from mobile is currently a plain string like
-            // `"<ProjectName> · <MilestoneName>"`. Keep it as-is for parsing,
-            // but normalize to an empty object for safe property lookups.
             const rawDetails = entry.details;
             const detailsObj = (rawDetails && typeof rawDetails === "object") ? rawDetails : {};
 
@@ -1705,12 +1524,6 @@ exports.onMobileAuditCreated = onDocumentCreated(
             const project = projectSnap.data();
             const projectName = project.projectName || detailsObj.projectName || "Project";
 
-            // Tenant cross-check. Mobile stamps tenantId on every audit
-            // entry post-refactor; if the entry's tenantId disagrees with
-            // the resolved project's tenantId, refuse to fan out (cannot
-            // happen under correct mobile but worth catching defensively).
-            // The notification stamp uses the project's tenantId as the
-            // source of truth.
             const projectTenantId = project.tenantId || null;
             if (entry.tenantId && projectTenantId && entry.tenantId !== projectTenantId) {
                 logger.warn(`[onMobileAuditCreated] Tenant mismatch on ${entry.action}: entry=${entry.tenantId} project=${projectTenantId}`);
@@ -1721,14 +1534,9 @@ exports.onMobileAuditCreated = onDocumentCreated(
                 return;
             }
 
-            // Deliver to the HCSD who created the project. If missing
-            // (legacy docs), silently skip — no broadcast to every HCSD.
             const recipientUid = project.createdBy;
             if (!recipientUid) return;
 
-            // FK-resolve the milestone when mobile passes milestoneId so the
-            // notification body uses the web-authored canonical title/sequence
-            // instead of whatever free-text keys mobile happened to ship.
             let milestoneDoc = null;
             const milestoneId = detailsObj.milestoneId || null;
             if (milestoneId) {
@@ -1763,9 +1571,6 @@ exports.onMobileAuditCreated = onDocumentCreated(
                 tenantId: projectTenantId,
             });
 
-            // Server-side synthesis: after a phase is marked complete, check
-            // whether ALL sibling milestones are done. If so, emit a second
-            // "Project Completed" notification. No new mobile event needed.
             if (entry.action === "Milestone Completed") {
                 const milestonesSnap = await admin.firestore()
                     .collection(`projects/${projectId}/milestones`)
@@ -1800,19 +1605,6 @@ exports.onMobileAuditCreated = onDocumentCreated(
     }
 );
 
-// Recompute parent project's actualPercent on any milestone write.
-// Mobile engineers modify per-milestone status/actualPercent over the life
-// of a project; the parent projects/{id} doc carries a denormalized
-// actualPercent so that list views (Manage Projects, Dashboard Active
-// Registry) can render progress without an N+1 subcollection read. This
-// trigger keeps that field fresh. Weighted by weightPercentage and
-// normalized to 100 to handle legacy weights that don't sum exactly.
-//
-// Tenant immutability: this trigger only writes `actualPercent`. It never
-// reads, writes, or echoes back the project's tenantId, so the field
-// cannot be rewritten via a milestone update. The Firestore rules also
-// reject any update that changes tenantId, but this function is the
-// internal write path that needs to be careful by construction.
 exports.recomputeProjectActualPercent = onDocumentWritten(
     "projects/{projectId}/milestones/{milestoneId}",
     async (event) => {
@@ -1832,25 +1624,12 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
                 return;
             }
 
-            const totalWeight = confirmed.reduce(
-                (s, m) => s + (Number(m.weightPercentage) || Number(m.weight) || 0),
-                0,
-            );
-
-            let earned = 0;
-            for (const m of confirmed) {
-                const weight = Number(m.weightPercentage) || Number(m.weight) || 0;
+            const completed = confirmed.filter((m) => {
                 const statusLower = (m.status || "").toLowerCase();
-                const isComplete = ["done", "complete", "completed"].includes(statusLower);
-                const contribution = m.actualPercent != null
-                    ? Math.min(Number(m.actualPercent) || 0, weight)
-                    : (isComplete ? weight : 0);
-                earned += contribution;
-            }
+                return ["done", "complete", "completed"].includes(statusLower);
+            }).length;
 
-            const actualPercent = totalWeight > 0
-                ? Math.min(100, Math.round((earned / totalWeight) * 100 * 10) / 10)
-                : 0;
+            const actualPercent = Math.round((completed / confirmed.length) * 100);
 
             await admin.firestore().collection("projects").doc(projectId)
                 .update({ actualPercent });
@@ -1860,7 +1639,6 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
     },
 );
 
-// â”€â”€â”€ CLOUD FUNCTION: Update Profile Photo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updateProfilePhoto = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile photo.");
@@ -1870,7 +1648,6 @@ exports.updateProfilePhoto = onCall(async (request) => {
     if (!photoURL || typeof photoURL !== "string") {
         throw new HttpsError("invalid-argument", "Invalid photo URL.");
     }
-    // Validate URL is a Firebase Storage download URL for this user's profile photo
     if (!photoURL.startsWith("https://firebasestorage.googleapis.com/")) {
         throw new HttpsError("invalid-argument", "Invalid photo source.");
     }
@@ -1912,7 +1689,6 @@ exports.updateProfilePhoto = onCall(async (request) => {
     }
 });
 
-// â”€â”€â”€ CLOUD FUNCTION: Update Profile Name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.updateProfile = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to update profile.");
@@ -1951,12 +1727,9 @@ exports.updateProfile = onCall(async (request) => {
         await userRef.update({ firstName, lastName, nameChangedAt: Date.now() });
         await admin.auth().updateUser(auth.uid, { displayName: `${firstName} ${lastName}` });
         const newName = `${firstName} ${lastName}`;
-        // Name updates are an MIS-only operation (department heads' display
-        // names are maintained by MIS), so no HCSD audit duplicate — only
-        // the MIS observability row is written.
         await logSystemAudit(
             auth.uid, auth.token.email, "PROFILE_UPDATED",
-            { oldName: oldName ?? "â€”", newName },
+            { oldName: oldName ?? "—", newName },
             "SUCCESS", newName, callerTenantId,
         );
         return { success: true };
@@ -1965,12 +1738,6 @@ exports.updateProfile = onCall(async (request) => {
         throw new HttpsError("internal", "Unable to update name. Please try again.");
     }
 });
-
-// â”€â”€â”€ AI-Assisted Milestone Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Generates milestones using Anthropic Claude Haiku 4.5, constrained by a
-// tool-use schema. The assigned Project Engineer reviews and adjusts these
-// suggestions before monitoring begins. Writes to the
-// projects/{projectId}/milestones subcollection.
 
 const Anthropic = require("@anthropic-ai/sdk").default;
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");

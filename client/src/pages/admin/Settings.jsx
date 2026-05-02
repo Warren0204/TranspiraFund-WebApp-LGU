@@ -48,7 +48,6 @@ const Settings = () => {
     const [previewBlob, setPreviewBlob]     = useState(null);
     const [previewURL, setPreviewURL]       = useState('');
 
-    // Phase 1: process image and show preview — no upload yet
     const handlePhotoSelect = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -61,7 +60,6 @@ const Settings = () => {
         setPhotoSuccess(false);
 
         try {
-            // Center-crop and resize to 200×200 JPEG via canvas
             const { dataURL, blob } = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
@@ -76,7 +74,6 @@ const Settings = () => {
                         const sx = (img.width  - min) / 2;
                         const sy = (img.height - min) / 2;
                         ctx.drawImage(img, sx, sy, min, min, 0, 0, SIZE, SIZE);
-                        // Use data URL for preview (blob: URLs are blocked by CSP img-src)
                         const dataURL = canvas.toDataURL('image/jpeg', 0.82);
                         canvas.toBlob((b) => {
                             if (b === null) reject(new Error('Failed to process image. Please try a different file.'));
@@ -97,11 +94,9 @@ const Settings = () => {
         }
     };
 
-    // Phase 2: user confirmed the preview — now upload
     const handleConfirmUpload = async () => {
         if (!previewBlob || photoLoading) return;
 
-        // Capture and clear preview immediately so the UI doesn't linger
         const blobToUpload = previewBlob;
         setPreviewBlob(null);
         setPreviewURL('');
@@ -124,7 +119,6 @@ const Settings = () => {
         }
     };
 
-    // User cancelled the preview
     const handleCancelPreview = () => {
         setPreviewBlob(null);
         setPreviewURL('');

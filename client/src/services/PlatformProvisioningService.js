@@ -1,12 +1,6 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import app from '../config/firebase';
 
-// Wraps the provisionTenant Cloud Function. The callable is gated by the
-// platformAdmin custom claim, which is granted via scripts/grant-platform-admin.js
-// and never set by any callable in this codebase. v1 ships this service so a
-// future tenant-onboarding UI can drop in cleanly; for v1 there is no UI
-// surface and the function is invoked from a dev console or a separate admin
-// tool.
 const PlatformProvisioningService = {
     provisionTenant: async ({
         tenantId,

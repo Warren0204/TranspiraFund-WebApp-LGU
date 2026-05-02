@@ -1,31 +1,3 @@
-/**
- * One-time migration: backfill projects.projectEngineer with engineer UID
- *
- * Context:
- *   Legacy project documents stored the engineer's display name in the
- *   `projectEngineer` field. New projects (created after the CreateProject
- *   fix) store the engineer's Firebase Auth UID instead.
- *
- *   The Firestore rules and the mobile app both filter on
- *   `projectEngineer == auth.uid`, so name-keyed documents are invisible
- *   to the assigned engineer on mobile.
- *
- *   This script scans every document in `projects`, detects entries whose
- *   `projectEngineer` value is NOT a UID, resolves the matching user by
- *   `firstName + lastName`, and rewrites the field to the UID.
- *
- * Prerequisites:
- *   1. Place your Firebase service account key JSON at ./serviceAccountKey.json
- *   2. npm install firebase-admin (in scripts/ or project root)
- *
- * Usage:
- *   node scripts/backfill-project-engineer-uid.js            # dry run (no writes)
- *   node scripts/backfill-project-engineer-uid.js --apply    # actually write
- *
- * Verification:
- *   After running with --apply, re-run without --apply; "would update" should be 0.
- */
-
 const admin = require('firebase-admin');
 const serviceAccount = require('./serviceAccountKey.json');
 

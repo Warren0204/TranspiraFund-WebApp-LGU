@@ -13,7 +13,6 @@ import { useAuth } from '../../context/AuthContext';
 
 const PAGE_SIZE = 30;
 
-// ── Event type registry ───────────────────────────────────────────────────────
 const EVENT_META = {
     USER_LOGIN: {
         label: 'User Login',
@@ -80,9 +79,6 @@ const EVENT_META = {
     },
 };
 
-// Safety fallback for any action not in the registry. The registry above is
-// closed — every HCSD-scoped action should have an entry — so this should
-// never render in practice. If it does, add the action to EVENT_META.
 const defaultMetaFor = () => ({
     label: 'System Event',
     pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
@@ -99,7 +95,6 @@ const FILTERS = [
     { key: 'STAFF',   label: 'Staff Events',   actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
 ];
 
-// ── Derive the "subject / entity" for a log entry ────────────────────────────
 const getSubject = (log) => {
     const d = log.details || {};
     const actorFallback = () => d.actorName || log.actorName || log.actorEmail?.split('@')[0] || 'HCSD User';
@@ -117,7 +112,6 @@ const getSubject = (log) => {
     }
 };
 
-// ── Secondary descriptor line per event type ─────────────────────────────────
 const getSubjectDetail = (log) => {
     const d = log.details || {};
     switch (log.action) {
@@ -138,7 +132,6 @@ const getSubjectDetail = (log) => {
     }
 };
 
-// ── Timestamp formatter ───────────────────────────────────────────────────────
 const fmtDate = (ts) => {
     if (!ts?.toDate) return { date: '—', time: '' };
     const d = ts.toDate();
@@ -148,7 +141,6 @@ const fmtDate = (ts) => {
     };
 };
 
-// ── Actor initials from email ─────────────────────────────────────────────────
 const emailInitials = (email = '') => {
     const local = email.split('@')[0] || '';
     const parts = local.split(/[._\-]/).filter(Boolean);
@@ -156,8 +148,6 @@ const emailInitials = (email = '') => {
     return (local.slice(0, 2) || 'DE').toUpperCase();
 };
 
-// ── Actor avatar: real photo if available, else initials fallback ─────────────
-// Uses inline styles for size so Tailwind purging never strips the dimensions.
 function ActorAvatar({ photoURL, initials, sizePx = 32 }) {
     const style = {
         width: sizePx,
@@ -204,10 +194,6 @@ export default function AuditTrails() {
     const [refreshKey, setRefreshKey] = useState(0);
     const [purging, setPurging] = useState(false);
 
-    // Mobile-origin action strings. These belong in the Notifications "Field
-    // Activity" lane, never the HCSD audit trail. We filter them out of the
-    // UI defensively (belt-and-suspenders alongside the Firestore rule that
-    // already blocks client writes) and expose a one-click purge callable.
     const MOBILE_ORIGIN_ACTIONS = [
         'Proof Uploaded',
         'Milestones Drafted',
@@ -236,12 +222,9 @@ export default function AuditTrails() {
         }
     }, [purging]);
 
-    // Real-time directory — hydrates every actor's current name + photo.
-    // Photo updates propagate instantly (no stale copies in audit entries).
     const { usersMap, displayName: userDisplayName } = useUsers();
     const { tenantId } = useAuth();
 
-    // ── Real-time listener: HCSD entries (project/account/auth events) ────────
     useEffect(() => {
         if (!tenantId) return;
         setLoading(true);
@@ -265,7 +248,6 @@ export default function AuditTrails() {
         return () => unsub();
     }, [refreshKey, tenantId]);
 
-    // ── Load more (older entries, one-time fetch) ─────────────────────────────
     const fetchLogs = useCallback(async (isLoadMore = false) => {
         if (!isLoadMore || !lastDoc || !tenantId) return;
         setLoadingMore(true);
@@ -289,12 +271,9 @@ export default function AuditTrails() {
         }
     }, [lastDoc, tenantId]);
 
-    // Strip any stray mobile-origin rows defensively so the UI never shows
-    // PE field activity here — even if a row slips through the rules.
     const cleanLogs = logs.filter(l => !MOBILE_ORIGIN_ACTIONS.includes(l.action));
     const mobileBleedCount = logs.length - cleanLogs.length;
 
-    // Apply filter
     const activeFilter = FILTERS.find(f => f.key === filter);
     const visible = activeFilter?.actions
         ? cleanLogs.filter(l => activeFilter.actions.includes(l.action))
@@ -306,7 +285,6 @@ export default function AuditTrails() {
 
             <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10">
 
-                {/* ── PAGE HEADER ───────────────────────────────────── */}
                 <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8"
                     style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     <div>
@@ -335,7 +313,6 @@ export default function AuditTrails() {
                     )}
                 </div>
 
-                {/* ── FILTER TABS + REFRESH ─────────────────────────── */}
                 <div className="flex items-center justify-between mb-4 gap-4 flex-wrap"
                     style={{ animation: 'slideUp 0.4s ease-out 0.05s both' }}>
                     <div className="flex items-center gap-1 p-1 bg-white/70 dark:bg-slate-900/50 backdrop-blur border border-white/80 dark:border-white/5 rounded-xl shadow-sm overflow-x-auto">
@@ -365,7 +342,6 @@ export default function AuditTrails() {
                     </button>
                 </div>
 
-                {/* ══ MOBILE / TABLET — vertical cards (< lg) ══════════════════════ */}
                 <div className="lg:hidden space-y-2" style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
                     {loading ? (
                         <div className="bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl flex items-center justify-center py-24 gap-3 text-slate-400 dark:text-slate-500">
@@ -433,11 +409,9 @@ export default function AuditTrails() {
                     )}
                 </div>
 
-                {/* ══ DESKTOP — horizontal table inside glass card (lg+) ════════════ */}
                 <div className="hidden lg:block bg-white/70 dark:bg-slate-900/50 backdrop-blur-xl border border-white/80 dark:border-white/5 rounded-[24px] shadow-xl overflow-hidden"
                     style={{ animation: 'slideUp 0.5s ease-out 0.1s both' }}>
 
-                    {/* Column headers — Event(3) | Subject(4) | Actor(3) | Timestamp(2) */}
                     <div className="grid grid-cols-12 px-6 py-3.5 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/40 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.1em]">
                         <div className="col-span-3">Event</div>
                         <div className="col-span-4">Subject / Entity</div>
@@ -445,7 +419,6 @@ export default function AuditTrails() {
                         <div className="col-span-2 text-right">Timestamp</div>
                     </div>
 
-                    {/* Rows */}
                     <div className="divide-y divide-slate-100/70 dark:divide-slate-700/30">
                         {loading ? (
                             <div className="flex items-center justify-center py-24 gap-3 text-slate-400 dark:text-slate-500">
@@ -476,7 +449,6 @@ export default function AuditTrails() {
                                     className="group grid grid-cols-12 items-center px-6 py-4 hover:bg-teal-500/[0.04] dark:hover:bg-teal-500/[0.06] border-l-2 border-transparent hover:border-teal-500 transition-all duration-200"
                                     style={{ animation: `slideUp 0.4s ease-out ${i * 0.05}s both` }}>
 
-                                    {/* Col 1 — Event type pill with icon embedded */}
                                     <div className="col-span-3 pr-3">
                                         <span className={`inline-flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-xl text-[11px] font-bold border ${meta.pill}`}>
                                             <span className={`w-6 h-6 rounded-lg bg-gradient-to-br ${meta.iconBg} flex items-center justify-center shrink-0 shadow-sm group-hover:scale-110 transition-transform duration-200`}>
@@ -486,7 +458,6 @@ export default function AuditTrails() {
                                         </span>
                                     </div>
 
-                                    {/* Col 2 — Subject + descriptor */}
                                     <div className="col-span-4 pr-4 min-w-0">
                                         <p className="font-bold text-slate-700 dark:text-slate-200 text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-300 transition-colors">
                                             {subject}
@@ -496,7 +467,6 @@ export default function AuditTrails() {
                                         )}
                                     </div>
 
-                                    {/* Col 3 — Actor */}
                                     <div className="col-span-3 flex items-center gap-2.5 min-w-0 pr-3">
                                         <ActorAvatar photoURL={photoURL} initials={initials} sizePx={30} />
                                         <div className="min-w-0">
@@ -505,7 +475,6 @@ export default function AuditTrails() {
                                         </div>
                                     </div>
 
-                                    {/* Col 4 — Timestamp */}
                                     <div className="col-span-2 text-right">
                                         <p className="text-xs font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">{date}</p>
                                         <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 flex items-center justify-end gap-1 whitespace-nowrap">
@@ -517,7 +486,6 @@ export default function AuditTrails() {
                         })}
                     </div>
 
-                    {/* Load more */}
                     {hasMore && !loading && (
                         <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700/40">
                             <button onClick={() => fetchLogs(true)} disabled={loadingMore}
@@ -527,7 +495,6 @@ export default function AuditTrails() {
                         </div>
                     )}
 
-                    {/* Footer */}
                     <div className="px-6 py-3.5 border-t border-slate-100 dark:border-slate-700/40 bg-slate-50/50 dark:bg-slate-800/20 flex items-center justify-center gap-2">
                         <Shield size={13} className="text-slate-400 dark:text-slate-500 shrink-0" />
                         <p className="text-xs font-semibold text-slate-400 dark:text-slate-500">

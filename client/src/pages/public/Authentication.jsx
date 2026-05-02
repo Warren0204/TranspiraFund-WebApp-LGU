@@ -3,16 +3,31 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { ShieldCheck, ArrowLeft, Mail, AlertCircle, RefreshCw, Landmark } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import app from '../../config/firebase';
+import app, { auth } from '../../config/firebase';
 import logo from '../../assets/logo.png';
+
+const roleToDashboard = (role) => {
+  switch ((role || '').toUpperCase()) {
+    case 'MIS': return '/admin/dashboard';
+    case 'HCSD': return '/hcsd/dashboard';
+    case 'DEPW': return '/hcsd/dashboard';
+    default: return '/';
+  }
+};
 
 const useOtpVerification = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { refreshOtpStatus } = useAuth();
+  const { refreshOtpStatus, currentUser, userRole } = useAuth();
 
-  const userEmail = location.state?.email || '';
-  const targetDashboard = location.state?.targetPath || '/';
+  const userEmail =
+    location.state?.email
+    || currentUser?.email
+    || auth.currentUser?.email
+    || '';
+  const targetDashboard =
+    location.state?.targetPath
+    || roleToDashboard(userRole);
 
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [isSending, setIsSending] = useState(false);

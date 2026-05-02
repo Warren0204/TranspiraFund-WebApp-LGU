@@ -51,9 +51,6 @@ export const AuthProvider = ({ children }) => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 try {
-                    // Read claims first. Tenant assignment is the gating
-                    // requirement; an account without a tenantId claim is
-                    // misconfigured (or pre-migration) and gets force-logged-out.
                     const tokenResult = await user.getIdTokenResult();
                     const claims = tokenResult.claims;
 
@@ -63,20 +60,14 @@ export const AuthProvider = ({ children }) => {
                                 'authError',
                                 'Account is not assigned to a tenant. Contact your administrator.',
                             );
-                        } catch { /* sessionStorage may be disabled */ }
+                        } catch {}
                         await signOut(auth);
-                        // onAuthStateChanged will fire again with user=null;
-                        // let that pass clear all the fields.
                         return;
                     }
 
                     setTenantId(claims.tenantId);
                     setClaimRole(typeof claims.role === 'string' ? claims.role : null);
 
-                    // Tenant doc fetch is non-blocking. If it fails (rules
-                    // misconfigured, doc missing), the dashboard still
-                    // renders with a null lguName — the sidebar falls back
-                    // to the department label.
                     try {
                         const tenantDoc = await getDoc(doc(db, 'tenants', claims.tenantId));
                         if (tenantDoc.exists()) {

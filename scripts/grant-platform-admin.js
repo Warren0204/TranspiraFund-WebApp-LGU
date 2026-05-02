@@ -1,29 +1,3 @@
-/**
- * One-time bootstrap: grant the platformAdmin custom claim to a Firebase Auth UID.
- *
- * Context:
- *   The provisionTenant Cloud Function is gated by `auth.token.platformAdmin === true`.
- *   No callable in this codebase ever sets that claim, so it cannot be self-elevated.
- *   The only way to obtain it is via this script, run with a service account key
- *   by someone with operator access to the Firebase project.
- *
- *   Run this once for each TranspiraFund staff member who needs to onboard new
- *   tenants. Revoke by re-running with --revoke.
- *
- * Prerequisites:
- *   1. Place your Firebase service account key JSON at ./serviceAccountKey.json
- *      (download from Firebase Console: Project Settings, Service accounts,
- *      Generate new private key)
- *   2. cd scripts && npm install firebase-admin   (if not already installed)
- *
- * Usage:
- *   node scripts/grant-platform-admin.js <uid>             # grant
- *   node scripts/grant-platform-admin.js <uid> --revoke    # revoke
- *
- * After granting, the user must sign out and sign back in (or refresh their
- * ID token) for the new claim to land on their session token.
- */
-
 const admin = require('firebase-admin');
 const serviceAccount = require('../serviceAccountKey.json');
 
@@ -54,7 +28,6 @@ async function main() {
     const existingClaims = user.customClaims || {};
     console.log(`Existing claims: ${JSON.stringify(existingClaims)}\n`);
 
-    // Additive merge so role / tenantId / OTP claims are never wiped.
     const nextClaims = { ...existingClaims };
     if (revoke) {
         delete nextClaims.platformAdmin;

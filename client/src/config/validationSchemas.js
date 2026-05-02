@@ -29,7 +29,6 @@ export const staffProvisionSchema = z.object({
 });
 
 export const projectSchema = z.object({
-    // Project Details
     projectName: z.string()
         .min(10, "Project name must be at least 10 characters")
         .max(200, "Project name cannot exceed 200 characters")
@@ -39,26 +38,21 @@ export const projectSchema = z.object({
 
     barangay: z.string().min(1, "Barangay is required"),
 
-    // Account Code & Funding
     accountCode: z.string().max(100, "Account code cannot exceed 100 characters").optional(),
 
     fundingSource: z.string().min(1, "Funding source is required"),
 
-    // Contract Amount
     contractAmount: z.number({ invalid_type_error: "Contract amount must be a number" })
         .min(10000, "Minimum contract amount is ₱10,000")
         .max(1_000_000_000, "Maximum contract amount exceeded"),
 
-    // Contractor
     contractor: z.string().max(200, "Contractor name cannot exceed 200 characters").optional(),
 
-    // Assigned Personnel
     projectEngineer: z.string().optional(),
     projectInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
     materialInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
     electricalInspector: z.string().max(100, "Inspector name cannot exceed 100 characters").optional(),
 
-    // Project Timeliness
     ntpReceivedDate: z.string().min(1, "NTP received date is required"),
     officialDateStarted: z.string().min(1, "Official start date is required"),
     originalDateCompletion: z.string().min(1, "Original completion date is required"),
@@ -66,10 +60,8 @@ export const projectSchema = z.object({
     revisedDate2: z.string().optional(),
     actualDateCompleted: z.string().optional(),
 
-    // Project Accomplishment (only actualPercent stored; others computed)
     actualPercent: z.number().min(0, "Cannot be less than 0").max(100, "Cannot exceed 100").optional(),
 
-    // Project Orders (flat fields)
     resumeOrderNumber: z.string().max(100).optional(),
     resumeOrderDate: z.string().optional(),
     timeExtensionOnOrder: z.string().max(100).optional(),
@@ -78,10 +70,8 @@ export const projectSchema = z.object({
     suspensionOrderNumber: z.string().max(100).optional(),
     suspensionOrderDate: z.string().optional(),
 
-    // Fund Utilization
     incurredAmount: z.number().min(0, "Incurred amount cannot be negative").optional(),
 
-    // Remarks & Action
     remarks: z.string().max(1000, "Remarks cannot exceed 1000 characters").optional(),
     actionTaken: z.string().max(1000, "Action taken cannot exceed 1000 characters").optional(),
 

@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://transpirafund-webapp.web.app", "https://transpirafund-webapp.firebaseapp.com", "http://localhost:5173"],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Content-Disposition"]
+  }
+]

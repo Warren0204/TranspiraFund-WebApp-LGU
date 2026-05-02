@@ -12,7 +12,6 @@ const ConfirmAssignmentModal = memo(({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-in fade-in duration-200 p-4">
             <div className="relative bg-white dark:bg-slate-900 rounded-[28px] shadow-2xl w-full max-w-lg animate-in zoom-in-95 duration-200 overflow-hidden border border-slate-200/80 dark:border-white/5">
 
-                {/* Gradient header */}
                 <div className="relative bg-gradient-to-br from-teal-600 via-teal-500 to-emerald-500 px-7 pt-7 pb-12 overflow-hidden">
                     <div className="absolute -top-8 -right-8 w-44 h-44 rounded-full bg-white/10 pointer-events-none" />
                     <div className="absolute -bottom-4 left-8 w-20 h-20 rounded-full bg-white/10 pointer-events-none" />
@@ -36,7 +35,6 @@ const ConfirmAssignmentModal = memo(({
                     </div>
                 </div>
 
-                {/* Account preview card — overlaps the header */}
                 <div className="px-7 -mt-7 relative z-10 mb-5">
                     <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 rounded-2xl p-4 shadow-xl flex items-center gap-4">
                         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-400 flex items-center justify-center font-extrabold text-white text-xl shrink-0 shadow-lg shadow-teal-500/25">
@@ -55,7 +53,6 @@ const ConfirmAssignmentModal = memo(({
                     </div>
                 </div>
 
-                {/* Info grid */}
                 <div className="px-7 mb-5 space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                         <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/50 rounded-xl px-4 py-3.5">
@@ -77,7 +74,6 @@ const ConfirmAssignmentModal = memo(({
                     </div>
                 </div>
 
-                {/* Error */}
                 {error && (
                     <div className="px-7 mb-4">
                         <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-500/20 rounded-xl p-4 flex gap-3">
@@ -87,7 +83,6 @@ const ConfirmAssignmentModal = memo(({
                     </div>
                 )}
 
-                {/* Buttons */}
                 <div className="px-7 pb-7 flex gap-3">
                     <button
                         onClick={onCancel}
