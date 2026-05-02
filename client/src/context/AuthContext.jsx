@@ -15,9 +15,7 @@ export const AuthProvider = ({ children }) => {
     const [otpVerified, setOtpVerified] = useState(false);
     const [mustChangePassword, setMustChangePassword] = useState(false);
     const [tenantId, setTenantId] = useState(null);
-    const [claimRole, setClaimRole] = useState(null);
     const [lguName, setLguName] = useState(null);
-    const [tenantClassification, setTenantClassification] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const refreshOtpStatus = async (forceRefresh = true) => {
@@ -66,21 +64,17 @@ export const AuthProvider = ({ children }) => {
                     }
 
                     setTenantId(claims.tenantId);
-                    setClaimRole(typeof claims.role === 'string' ? claims.role : null);
 
                     try {
                         const tenantDoc = await getDoc(doc(db, 'tenants', claims.tenantId));
                         if (tenantDoc.exists()) {
                             const td = tenantDoc.data();
                             setLguName(td.lguName || null);
-                            setTenantClassification(td.classification || null);
                         } else {
                             setLguName(null);
-                            setTenantClassification(null);
                         }
                     } catch {
                         setLguName(null);
-                        setTenantClassification(null);
                     }
 
                     const userDoc = await getDoc(doc(db, "users", user.uid));
@@ -104,9 +98,7 @@ export const AuthProvider = ({ children }) => {
                     setOtpVerified(false);
                     setMustChangePassword(false);
                     setTenantId(null);
-                    setClaimRole(null);
                     setLguName(null);
-                    setTenantClassification(null);
                 }
             } else {
                 setCurrentUser(null);
@@ -114,9 +106,7 @@ export const AuthProvider = ({ children }) => {
                 setOtpVerified(false);
                 setMustChangePassword(false);
                 setTenantId(null);
-                setClaimRole(null);
                 setLguName(null);
-                setTenantClassification(null);
             }
             setLoading(false);
         });
@@ -130,9 +120,7 @@ export const AuthProvider = ({ children }) => {
         otpVerified,
         mustChangePassword,
         tenantId,
-        claimRole,
         lguName,
-        tenantClassification,
         loading,
         refreshOtpStatus,
         refreshUserData,
