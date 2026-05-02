@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { verifyPasswordResetCode } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { auth } from '../../config/firebase';
-import app from '../../config/firebase';
+import app, { auth } from '../../config/firebase';
 import { ShieldCheck, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, XCircle, Landmark } from 'lucide-react';
 import logo from '../../assets/logo.png';
 

@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { LogOut, ShieldOff } from 'lucide-react';
 
 const LogoutModal = memo(({ isOpen, onConfirm, onCancel, isProcessing }) => {

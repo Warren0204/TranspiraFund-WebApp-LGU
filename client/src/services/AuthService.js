@@ -26,13 +26,6 @@ const AuthService = {
     } catch (error) {
       throw new Error(_mapFirebaseError(error.code));
     }
-  },
-
-  logout: async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-    }
   }
 };
 
