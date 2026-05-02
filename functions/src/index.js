@@ -821,7 +821,7 @@ exports.attachNtp = onCall(async (request) => {
         const msg = parsed.error.errors[0]?.message ?? "Invalid NTP payload.";
         throw new HttpsError("invalid-argument", msg);
     }
-    const { projectId, fileName, fileUrl, sizeBytes, contentType } = parsed.data;
+    const { projectId, fileName, fileUrl, contentType } = parsed.data;
 
     const filenameErr = validateNtpFilename(fileName);
     if (filenameErr) {
@@ -1114,7 +1114,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
         const userRecord = await admin.auth().getUserByEmail(cleanEmail);
         const userDoc = await admin.firestore().collection("users").doc(userRecord.uid).get();
         if (userDoc.exists) tenantId = userDoc.data().tenantId || null;
-    } catch (lookupErr) {}
+    } catch {}
 
     const emailHash = crypto.createHash("sha256").update(cleanEmail).digest("hex");
     const cooldownRef = admin.firestore().collection("passwordResets").doc(emailHash);

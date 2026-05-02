@@ -92,7 +92,7 @@ export const AuthProvider = ({ children }) => {
                         claims.otpVerified === true &&
                         Number(claims.otpVerifiedAtAuthTime) === Number(claims.auth_time);
                     setOtpVerified(isVerified);
-                } catch (error) {
+                } catch {
                     setUserRole(null);
                     setCurrentUser(null);
                     setOtpVerified(false);
