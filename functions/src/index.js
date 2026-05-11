@@ -2316,7 +2316,8 @@ exports.verifyMilestonePhotos = onCall(
     if (!projectSnap.exists) {
       throw new HttpsError("not-found", "Project not found.");
     }
-    if (projectSnap.data().tenantId !== callerTenantId) {
+    const projectData = projectSnap.data();
+    if (projectData.tenantId !== callerTenantId) {
       throw new HttpsError(
         "permission-denied",
         "Project belongs to a different tenant."
@@ -2487,7 +2488,10 @@ The Project Engineer has uploaded ${allProofs.length} photograph(s) for this mil
         targetId: projectId,
         details: {
           projectId,
+          projectName: projectData.projectName || null,
           milestoneId,
+          milestoneTitle: milestone.title || null,
+          milestoneSequence: milestone.sequence ?? null,
           photosVerified: imageBlocks.length,
           overallVerdict: assessment.overall_verdict,
         },
@@ -2539,7 +2543,8 @@ exports.recordVerificationDecision = onCall(async (request) => {
 
   const projectSnap = await admin.firestore().doc(`projects/${projectId}`).get();
   if (!projectSnap.exists) throw new HttpsError("not-found", "Project not found.");
-  if (projectSnap.data().tenantId !== callerTenantId) {
+  const projectData = projectSnap.data();
+  if (projectData.tenantId !== callerTenantId) {
     throw new HttpsError("permission-denied", "Project belongs to a different tenant.");
   }
 
@@ -2549,7 +2554,8 @@ exports.recordVerificationDecision = onCall(async (request) => {
   const milestoneSnap = await milestoneRef.get();
   if (!milestoneSnap.exists) throw new HttpsError("not-found", "Milestone not found.");
 
-  const history = milestoneSnap.data().verificationHistory || [];
+  const milestoneData = milestoneSnap.data();
+  const history = milestoneData.verificationHistory || [];
   if (history.length === 0) {
     throw new HttpsError(
       "failed-precondition",
@@ -2587,7 +2593,10 @@ exports.recordVerificationDecision = onCall(async (request) => {
       targetId: projectId,
       details: {
         projectId,
+        projectName: projectData.projectName || null,
         milestoneId,
+        milestoneTitle: milestoneData.title || null,
+        milestoneSequence: milestoneData.sequence ?? null,
         decision,
         aiVerdict: latest.overallVerdict || null,
       },
