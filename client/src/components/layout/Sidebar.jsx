@@ -132,7 +132,15 @@ const Sidebar = memo(({ brandLabel, navSections, userDisplay, userInitial, userP
                                                 strokeWidth={active ? 2.5 : 2}
                                                 className={active ? 'text-teal-600 dark:text-cyan-400' : ''}
                                             />
-                                            {item.label}
+                                            <span className="flex-1 text-left">{item.label}</span>
+                                            {item.badge > 0 && (
+                                                <span
+                                                    aria-label={`${item.badge} unread`}
+                                                    className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-extrabold flex items-center justify-center shadow-sm shadow-red-500/30 tabular-nums"
+                                                >
+                                                    {item.badge > 99 ? '99+' : item.badge}
+                                                </span>
+                                            )}
                                         </button>
                                     );
                                 })}
