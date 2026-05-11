@@ -180,7 +180,10 @@ The HCSD audit trail is the tamper-proof record of **administrative actions done
 | `SESSIONS_REVOKED` | `revokeOtherSessions` Cloud Function (HCSD actor) | Actor name | Auth |
 | `PHOTO_UPDATED` | `updateProfilePhoto` Cloud Function (HCSD actor) | Actor name | Profile |
 | `PROJECT_CREATED` | `createProject` Cloud Function | Project name | Project |
+| `PROJECT_ROLLED_BACK` | `rollbackOrphanProject` Cloud Function — creation-time recovery when client-side NTP attach fails. Strictly gated: only the creator, only when no NTP is attached and no milestones exist. | Project name | Project |
 | `NTP_REJECTED` | `attachNtp` Cloud Function (filename violation or magic-byte mismatch) | Project name | Project |
+| `Photo Verification Run` | `verifyMilestonePhotos` Cloud Function — HCSD-initiated AI vision check on milestone proof photos (Sonnet 4.6, advisory verdict) | Project name | Project |
+| `Photo Verification Decision` | `recordVerificationDecision` Cloud Function — HCSD's accept/reject decision on the latest AI verdict for a milestone | Project name | Project |
 | `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email | Staff |
 | `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email | Staff |
 

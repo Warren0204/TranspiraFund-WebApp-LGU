@@ -41,7 +41,11 @@ export const AuthProvider = ({ children }) => {
                 setMustChangePassword(userData.mustChangePassword === true);
                 setCurrentUser(prev => ({ ...prev, ...userData }));
             }
-        } catch {
+        } catch (err) {
+            // Profile read failed — could mean revoked permissions or rule denial.
+            // Don't silently retain stale role/tenant state; force re-auth.
+            console.error('[AuthContext] refreshUserData failed; signing out:', err);
+            try { await signOut(auth); } catch {}
         }
     };
 

@@ -75,3 +75,10 @@ client/dist/
 
 # dataconnect generated files
 .dataconnect
+
+# Local editor / migration backups (never commit)
+*.backup
+*.backup[0-9]
+*.backup[0-9][0-9]
+*.bak
+*.orig

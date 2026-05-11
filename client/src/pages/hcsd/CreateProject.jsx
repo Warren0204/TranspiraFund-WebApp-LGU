@@ -310,7 +310,19 @@ const useCreateProject = () => {
                         contentType: ntpFile.type,
                     });
                 } catch (uploadErr) {
-                    setErrors(prev => ({ ...prev, global: `Project created, but NTP upload failed: ${uploadErr.message || 'Unknown error'}. You can attach it later from the project page.` }));
+                    let cleanupNote = '';
+                    try {
+                        const rollbackFn = httpsCallable(functions, 'rollbackOrphanProject');
+                        await rollbackFn({ projectId });
+                        cleanupNote = ' The project draft has been removed — please correct the file and try again.';
+                    } catch (rollbackErr) {
+                        console.error('[CreateProject] rollbackOrphanProject failed:', rollbackErr);
+                        cleanupNote = ' The project draft could not be removed automatically; please contact your administrator.';
+                    }
+                    setErrors(prev => ({
+                        ...prev,
+                        global: `Could not attach NTP: ${uploadErr.message || 'Unknown error'}.${cleanupNote}`,
+                    }));
                     setIsSubmitting(false);
                     return;
                 }

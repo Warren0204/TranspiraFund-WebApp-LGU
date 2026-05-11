@@ -1,5 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentWritten, onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentWritten, onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -109,10 +109,35 @@ const requirePlatformAdmin = (auth) => {
     }
 };
 
+// Canonical HCSD audit-trail action whitelist. Defense-in-depth: prevents any
+// future code path from writing an unknown or user-supplied action string into
+// the HCSD audit collection. Inline .add() writes to auditTrails/hcsd/entries
+// for "Photo Verification Run" / "Photo Verification Decision" use literal
+// strings and are not routed through this helper, but their action strings
+// are listed here so the whitelist remains the single source of truth.
+const HCSD_AUDIT_ACTIONS = new Set([
+    "USER_LOGIN",
+    "USER_LOGOUT",
+    "PASSWORD_CHANGED",
+    "SESSIONS_REVOKED",
+    "PHOTO_UPDATED",
+    "PROJECT_CREATED",
+    "PROJECT_ROLLED_BACK",
+    "NTP_REJECTED",
+    "ACCOUNT_CREATED",
+    "ACCOUNT_DELETED",
+    "Photo Verification Run",
+    "Photo Verification Decision",
+]);
+
 const logAudit = async (actorUid, actorEmail, action, targetId, details, tenantId) => {
     try {
         if (!tenantId) {
             logger.error(`logAudit called without tenantId for action=${action}; refusing to write unscoped doc`);
+            return;
+        }
+        if (!HCSD_AUDIT_ACTIONS.has(action)) {
+            logger.error(`logAudit rejected unknown action="${action}"; refusing to pollute HCSD audit trail`);
             return;
         }
         await admin.firestore().collection("auditTrails").doc("hcsd").collection("entries").add({
@@ -203,20 +228,13 @@ const createNotification = async ({
 };
 
 const validateNtpFilename = (name) => {
-    if (!name || typeof name !== "string" || name.length < 1 || name.length > 255) {
-        return "Invalid filename length";
-    }
-    if (!/^[A-Za-z0-9._-]+$/.test(name)) {
-        return "Filename contains disallowed characters";
-    }
-    if (name.startsWith(".") || name.includes("..")) {
-        return "Invalid filename";
-    }
-    if (/\.(exe|bat|cmd|sh|ps1|js|jar|php|html?)\./i.test(name)) {
-        return "Suspicious double extension";
-    }
-    if (!/\.(pdf|jpe?g|png)$/i.test(name)) {
-        return "Unsupported file extension";
+    if (!name || typeof name !== "string") return "Invalid filename";
+    const trimmed = name.trim();
+    if (trimmed.length < 1 || trimmed.length > 255) return "Invalid filename length";
+    if (trimmed.startsWith(".") || trimmed.includes("..")) return "Invalid filename";
+    // Single whitelist regex: alphanumerics + dot/dash/underscore in the base, allowed extension only.
+    if (!/^[A-Za-z0-9._-]+\.(pdf|jpe?g|png)$/i.test(trimmed)) {
+        return "Filename must be alphanumeric with a .pdf, .jpg, .jpeg, or .png extension";
     }
     return null;
 };
@@ -882,6 +900,78 @@ exports.attachNtp = onCall(async (request) => {
         logger.error("Error attaching NTP:", error);
         throw new HttpsError("internal", "Unable to attach NTP. Please try again.");
     }
+});
+
+// ─── Rollback an orphan project draft ───────────────────────────────────────
+// Recovery path for the create-then-attachNtp two-phase flow. If attachNtp
+// fails in the client, the project doc was already written by createProject
+// and would otherwise become an orphan. HCSD invokes this callable from that
+// failure branch to delete the orphan.
+//
+// Strictly guarded — this is NOT a general delete-project API:
+//   1. Caller must be HCSD and bound to the project's tenant.
+//   2. Caller must be the original creator (createdBy match).
+//   3. Project must have no NTP attached yet (ntpUploadedAt == null).
+//   4. Project must have no milestones (defensive — mobile engineer hasn't
+//      started work). The first three guards already imply this in normal
+//      flow, but the explicit check protects against future code changes
+//      that move milestone creation earlier.
+//
+// Any guard failure throws — the caller should not retry blindly.
+
+exports.rollbackOrphanProject = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Authentication required.");
+    const callerTenantId = requireTenantClaim(auth);
+
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can roll back a project draft.");
+    }
+
+    const { projectId } = data || {};
+    if (!projectId || typeof projectId !== "string") {
+        throw new HttpsError("invalid-argument", "projectId is required.");
+    }
+
+    const projectRef = admin.firestore().collection("projects").doc(projectId);
+    const projectSnap = await projectRef.get();
+    if (!projectSnap.exists) {
+        // Treat as no-op (already gone) rather than error so the client UX
+        // can call this idempotently without distinguishing "first attempt"
+        // from "retry after partial failure".
+        return { success: true, rolledBack: false, reason: "not_found" };
+    }
+    const projectData = projectSnap.data();
+
+    if (projectData.tenantId !== callerTenantId) {
+        throw new HttpsError("permission-denied", "Cannot roll back a project in another tenant.");
+    }
+    if (projectData.createdBy !== auth.uid) {
+        throw new HttpsError("permission-denied", "Only the original creator can roll back this draft.");
+    }
+    if (projectData.ntpUploadedAt != null) {
+        throw new HttpsError("failed-precondition", "Project has an NTP attached; rollback is not allowed.");
+    }
+
+    const milestonesSnap = await projectRef.collection("milestones").limit(1).get();
+    if (!milestonesSnap.empty) {
+        throw new HttpsError("failed-precondition", "Project already has milestones; rollback is not allowed.");
+    }
+
+    try {
+        await projectRef.delete();
+    } catch (err) {
+        logger.error(`rollbackOrphanProject delete failed for ${projectId}:`, err);
+        throw new HttpsError("internal", "Could not delete the orphan project record.");
+    }
+
+    await logAudit(auth.uid, auth.token.email, "PROJECT_ROLLED_BACK", projectId, {
+        projectName: projectData.projectName || null,
+        reason: "ntp_attach_failure",
+    }, callerTenantId);
+
+    return { success: true, rolledBack: true };
 });
 
 exports.changePassword = onCall(async (request) => {
@@ -2025,7 +2115,7 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
         messages: [{ role: "user", content: userMessage }],
       });
     } catch (error) {
-      logger.error("Anthropic API error:", error);
+      logger.error("Anthropic API error:", { status: error?.status, code: error?.code, message: error?.message });
       throw new HttpsError(
         "internal",
         "Failed to generate milestones. You can create milestones manually."
@@ -2103,3 +2193,621 @@ Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
   }
 );
 
+
+// ─── Milestone Photo Verification ─────────────────────────────────────────
+// Server-side photo verification for HCSD. Sends milestone photos to
+// Anthropic Claude Sonnet 4.6 for vision-based alignment assessment.
+// Manual trigger only (one milestone at a time, per HCSD click).
+// Returns structured per-photo and overall verdict, saved to the
+// milestone's verificationHistory array.
+
+const VERIFICATION_SYSTEM_PROMPT = `You are a visual verification assistant for the Cebu City Department of Engineering and Public Works (DEPW), Construction Services Division. Your task is to assess whether photographs uploaded by a Project Engineer for a specific construction milestone visually depict the activity or deliverable described in that milestone.
+
+## Your Role
+
+You are an advisory checker, not a final approver. The Head of Construction Services will review your assessment and make the binding decision. Your job is to surface alignment, ambiguity, or clear mismatch as concretely as possible.
+
+## What You Are Looking At
+
+Each photograph was taken in the field by a DEPW-assigned Project Engineer or Inspector at a barangay-level infrastructure project site in Cebu City. The photographs typically include a tamper-evident burn-in banner showing location name, GPS coordinates, accuracy, capture time, and the engineer''s identity. You may use the burn-in banner as supporting evidence but it is not required for the assessment.
+
+## What You Are Assessing
+
+For each photograph, determine whether the visible content depicts the milestone activity described. Use these verdicts:
+
+- "aligned": The photo clearly depicts the milestone activity in progress or completed. Visible elements match what would be expected for this milestone phase.
+- "partially_aligned": The photo depicts construction activity but does not clearly match the specific milestone, or shows only ancillary elements (materials staged, equipment, partial activity) that are consistent with but not definitive proof of the milestone.
+- "not_aligned": The photo clearly depicts a different activity, a different stage of work, or non-construction content.
+- "insufficient_evidence": The photo is too blurry, too dark, taken at an angle that obscures the activity, or otherwise does not provide enough visual information to make a determination.
+
+After per-photo verdicts, provide an overall verdict for the milestone using the same scale, weighted by your per-photo judgments.
+
+## What You Must Not Do
+
+- Do not invent details that are not visible in the image.
+- Do not assume context that is not shown.
+- Do not be lenient. If you are unsure, say "insufficient_evidence" or "partially_aligned."
+- Do not approve or reject. You assess; the human decides.
+
+## Output Format
+
+You must respond exclusively through the assess_milestone_photos tool. Do not produce plain text. Do not explain your reasoning outside the tool fields.`;
+
+const verificationTool = {
+  name: "assess_milestone_photos",
+  description:
+    "Provides a structured visual assessment of construction milestone photographs. Returns per-photo and overall alignment verdicts with reasoning.",
+  input_schema: {
+    type: "object",
+    properties: {
+      overall_verdict: {
+        type: "string",
+        enum: ["aligned", "partially_aligned", "not_aligned", "insufficient_evidence"],
+      },
+      overall_reasoning: {
+        type: "string",
+        description: "One to three sentences summarizing the milestone-level assessment based on all photos collectively.",
+      },
+      per_photo_assessments: {
+        type: "array",
+        minItems: 1,
+        maxItems: 5,
+        items: {
+          type: "object",
+          properties: {
+            photo_index: { type: "integer", minimum: 0, maximum: 4 },
+            verdict: {
+              type: "string",
+              enum: ["aligned", "partially_aligned", "not_aligned", "insufficient_evidence"],
+            },
+            reasoning: {
+              type: "string",
+              description: "One to two sentences explaining the verdict for this specific photo.",
+            },
+            visible_elements: {
+              type: "array",
+              items: { type: "string" },
+              description: "List of clearly visible construction-related elements in the photo (for example: rebar, formworks, fresh concrete, completed pavement, excavator, workers).",
+            },
+          },
+          required: ["photo_index", "verdict", "reasoning", "visible_elements"],
+        },
+      },
+    },
+    required: ["overall_verdict", "overall_reasoning", "per_photo_assessments"],
+  },
+};
+
+exports.verifyMilestonePhotos = onCall(
+  { secrets: [anthropicApiKey], timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+
+    const callerUid = request.auth.uid;
+    const callerEmail = request.auth.token.email || null;
+    const callerTenantId = request.auth.token.tenantId || null;
+    if (!callerTenantId) {
+      throw new HttpsError("permission-denied", "Caller is not bound to a tenant.");
+    }
+
+    const userSnap = await admin.firestore().doc(`users/${callerUid}`).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("permission-denied", "Caller not provisioned.");
+    }
+    const callerRole = userSnap.data().role;
+    if (callerRole !== "HCSD") {
+      throw new HttpsError(
+        "permission-denied",
+        "Only the Head of Construction Services can run photo verification."
+      );
+    }
+
+    const { projectId, milestoneId } = request.data || {};
+    if (!projectId || !milestoneId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "projectId and milestoneId are required."
+      );
+    }
+
+    const projectSnap = await admin.firestore().doc(`projects/${projectId}`).get();
+    if (!projectSnap.exists) {
+      throw new HttpsError("not-found", "Project not found.");
+    }
+    if (projectSnap.data().tenantId !== callerTenantId) {
+      throw new HttpsError(
+        "permission-denied",
+        "Project belongs to a different tenant."
+      );
+    }
+
+    const milestoneRef = admin
+      .firestore()
+      .doc(`projects/${projectId}/milestones/${milestoneId}`);
+    const milestoneSnap = await milestoneRef.get();
+    if (!milestoneSnap.exists) {
+      throw new HttpsError("not-found", "Milestone not found.");
+    }
+    const milestone = milestoneSnap.data();
+
+    const allProofs = Array.isArray(milestone.proofs) ? milestone.proofs : [];
+    if (allProofs.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "This milestone has no uploaded proofs to verify."
+      );
+    }
+
+    // One AI assessment per milestone. If a prior run already exists (manual or
+    // auto-on-completion), the AI flag is locked — HCSD validates/invalidates
+    // against that single advisory result.
+    if (Array.isArray(milestone.verificationHistory) && milestone.verificationHistory.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Photo verification has already been completed for this milestone."
+      );
+    }
+
+    // Schema caps assessments at 5; send the 5 most recent proofs by capturedAt.
+    const proofs = [...allProofs]
+      .sort((a, b) => {
+        const ta = a?.capturedAt?.toMillis?.() ?? 0;
+        const tb = b?.capturedAt?.toMillis?.() ?? 0;
+        return tb - ta;
+      })
+      .slice(0, 5);
+
+    const milestoneContext = `Milestone Title: ${milestone.title || "Unknown"}
+Milestone Description: ${milestone.description || "No description"}
+Milestone Sequence: ${milestone.sequence || "N/A"}
+Expected Weight Percentage: ${milestone.weightPercentage || "N/A"}
+Suggested Duration: ${milestone.suggestedDurationDays || "N/A"} days
+
+The Project Engineer has uploaded ${allProofs.length} photograph(s) for this milestone${allProofs.length > proofs.length ? `; the ${proofs.length} most recent are attached for review` : ""}. Each photo is attached below in order. Assess each one against the milestone description above, then provide an overall verdict.`;
+
+    const expectedSubpath = `projects/${projectId}/milestones/${milestoneId}/`;
+    const imageBlocks = [];
+    for (let i = 0; i < proofs.length; i++) {
+      const proof = proofs[i];
+      if (!proof.url) {
+        logger.warn(`Proof ${i} on milestone ${milestoneId} has no url; skipping`);
+        continue;
+      }
+
+      // Defense-in-depth: server-side fetch bypasses Firestore/Storage rules, so
+      // verify the URL belongs to this project/milestone's Storage path before reading.
+      let decodedPath;
+      try { decodedPath = decodeURIComponent(new URL(proof.url).pathname); }
+      catch { decodedPath = ""; }
+      if (!decodedPath.includes(expectedSubpath)) {
+        logger.warn(`Proof ${i} URL does not match expected path for ${milestoneId}; skipping`);
+        continue;
+      }
+
+      let imageBase64;
+      try {
+        const fetchResponse = await fetch(proof.url);
+        if (!fetchResponse.ok) {
+          throw new Error(`HTTP ${fetchResponse.status}`);
+        }
+        const arrayBuffer = await fetchResponse.arrayBuffer();
+        imageBase64 = Buffer.from(arrayBuffer).toString("base64");
+      } catch (err) {
+        logger.error(`Failed to fetch proof ${i}:`, err);
+        throw new HttpsError(
+          "internal",
+          `Could not fetch proof photo ${i + 1} for verification.`
+        );
+      }
+
+      imageBlocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: imageBase64,
+        },
+      });
+    }
+
+    if (imageBlocks.length === 0) {
+      throw new HttpsError(
+        "internal",
+        "No photo URLs could be resolved for verification."
+      );
+    }
+
+    const userContent = [
+      { type: "text", text: milestoneContext },
+      ...imageBlocks,
+    ];
+
+    const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+
+    let response;
+    try {
+      response = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2048,
+        system: VERIFICATION_SYSTEM_PROMPT,
+        tools: [verificationTool],
+        tool_choice: { type: "tool", name: "assess_milestone_photos" },
+        messages: [{ role: "user", content: userContent }],
+      });
+    } catch (error) {
+      logger.error("Anthropic vision API error:", { status: error?.status, code: error?.code, message: error?.message });
+      throw new HttpsError(
+        "internal",
+        "Photo verification service is currently unavailable. Please try again or proceed with manual review."
+      );
+    }
+
+    const toolUseBlock = response.content.find(
+      (block) => block.type === "tool_use"
+    );
+    if (!toolUseBlock) {
+      throw new HttpsError(
+        "internal",
+        "No structured assessment was returned by the verification service."
+      );
+    }
+
+    const assessment = toolUseBlock.input;
+
+    const verificationRecord = {
+      runAt: admin.firestore.Timestamp.now(),
+      runByUid: callerUid,
+      runByEmail: callerEmail,
+      model: "claude-sonnet-4-6",
+      photosVerified: imageBlocks.length,
+      overallVerdict: assessment.overall_verdict,
+      overallReasoning: assessment.overall_reasoning,
+      perPhotoAssessments: assessment.per_photo_assessments,
+      hcsdDecision: "pending",
+    };
+
+    await milestoneRef.update({
+      verificationHistory: admin.firestore.FieldValue.arrayUnion(verificationRecord),
+      lastVerificationAt: admin.firestore.FieldValue.serverTimestamp(),
+      verificationDecision: admin.firestore.FieldValue.delete(),
+    });
+
+    await admin
+      .firestore()
+      .collection("auditTrails")
+      .doc("hcsd")
+      .collection("entries")
+      .add({
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        actorUid: callerUid,
+        actorEmail: callerEmail || null,
+        action: "Photo Verification Run",
+        targetId: projectId,
+        details: {
+          projectId,
+          milestoneId,
+          photosVerified: imageBlocks.length,
+          overallVerdict: assessment.overall_verdict,
+        },
+        tenantId: callerTenantId,
+      });
+
+    return {
+      success: true,
+      photosVerified: imageBlocks.length,
+      overallVerdict: assessment.overall_verdict,
+      overallReasoning: assessment.overall_reasoning,
+      perPhotoAssessments: assessment.per_photo_assessments,
+    };
+  }
+);
+
+// ─── Record HCSD Decision on a Verification Result ─────────────────────────
+// HCSD-only callable. Persists HCSD's accept/reject decision on the latest
+// verification run for a milestone. Decision is wiped if a new verification
+// run is recorded (manual or auto), since the verdict it relates to is gone.
+
+exports.recordVerificationDecision = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+
+  const callerUid = request.auth.uid;
+  const callerEmail = request.auth.token.email || null;
+  const callerTenantId = request.auth.token.tenantId || null;
+  if (!callerTenantId) {
+    throw new HttpsError("permission-denied", "Caller is not bound to a tenant.");
+  }
+
+  const userSnap = await admin.firestore().doc(`users/${callerUid}`).get();
+  if (!userSnap.exists || userSnap.data().role !== "HCSD") {
+    throw new HttpsError(
+      "permission-denied",
+      "Only HCSD can record a verification decision."
+    );
+  }
+
+  const { projectId, milestoneId, decision } = request.data || {};
+  if (!projectId || !milestoneId) {
+    throw new HttpsError("invalid-argument", "projectId and milestoneId are required.");
+  }
+  if (!["validated", "invalidated"].includes(decision)) {
+    throw new HttpsError("invalid-argument", "decision must be 'validated' or 'invalidated'.");
+  }
+
+  const projectSnap = await admin.firestore().doc(`projects/${projectId}`).get();
+  if (!projectSnap.exists) throw new HttpsError("not-found", "Project not found.");
+  if (projectSnap.data().tenantId !== callerTenantId) {
+    throw new HttpsError("permission-denied", "Project belongs to a different tenant.");
+  }
+
+  const milestoneRef = admin
+    .firestore()
+    .doc(`projects/${projectId}/milestones/${milestoneId}`);
+  const milestoneSnap = await milestoneRef.get();
+  if (!milestoneSnap.exists) throw new HttpsError("not-found", "Milestone not found.");
+
+  const history = milestoneSnap.data().verificationHistory || [];
+  if (history.length === 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "No verification has been run for this milestone yet."
+    );
+  }
+  const latest = [...history].sort((a, b) => {
+    const ta = a?.runAt?.toMillis?.() ?? 0;
+    const tb = b?.runAt?.toMillis?.() ?? 0;
+    return tb - ta;
+  })[0];
+
+  const now = admin.firestore.Timestamp.now();
+  await milestoneRef.update({
+    verificationDecision: {
+      decision,
+      decidedAt: now,
+      decidedByUid: callerUid,
+      decidedByEmail: callerEmail,
+      decidedAfterRunAt: latest.runAt || null,
+      aiVerdict: latest.overallVerdict || null,
+    },
+  });
+
+  await admin
+    .firestore()
+    .collection("auditTrails")
+    .doc("hcsd")
+    .collection("entries")
+    .add({
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      actorUid: callerUid,
+      actorEmail: callerEmail,
+      action: "Photo Verification Decision",
+      targetId: projectId,
+      details: {
+        projectId,
+        milestoneId,
+        decision,
+        aiVerdict: latest.overallVerdict || null,
+      },
+      tenantId: callerTenantId,
+    });
+
+  return { success: true, decision, decidedAt: now.toMillis() };
+});
+
+// ─── Automatic Milestone Verification Trigger ──────────────────────────────
+// Listens for milestone status changes. When a milestone flips to "Completed",
+// runs photo verification automatically. Result is saved to the milestone's
+// verificationHistory[] array, and a category:"field" notification fires
+// when the verdict is anything other than "aligned".
+
+exports.onMilestoneCompleted = onDocumentUpdated(
+  {
+    document: "projects/{projectId}/milestones/{milestoneId}",
+    region: "asia-southeast1",
+    secrets: [anthropicApiKey],
+    timeoutSeconds: 120,
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+
+    // Only fire when status transitions TO "Completed".
+    const wasCompleted = (before.status || "").toLowerCase() === "completed";
+    const isNowCompleted = (after.status || "").toLowerCase() === "completed";
+    if (wasCompleted || !isNowCompleted) return;
+
+    // Skip if no proofs to verify.
+    const allProofs = Array.isArray(after.proofs) ? after.proofs : [];
+    if (allProofs.length === 0) {
+      logger.info(`Milestone ${event.params.milestoneId} completed with no proofs; skipping verification.`);
+      return;
+    }
+
+    // Skip if verification has already been run for this milestone.
+    if (Array.isArray(after.verificationHistory) && after.verificationHistory.length > 0) {
+      logger.info(`Milestone ${event.params.milestoneId} already has verificationHistory; skipping auto-verification.`);
+      return;
+    }
+
+    const projectId = event.params.projectId;
+    const milestoneId = event.params.milestoneId;
+
+    // Read project to get tenantId for audit consistency.
+    const projectSnap = await admin.firestore().doc(`projects/${projectId}`).get();
+    if (!projectSnap.exists) {
+      logger.error(`Project ${projectId} not found during auto-verification.`);
+      return;
+    }
+    const project = projectSnap.data();
+    const tenantId = project.tenantId || null;
+
+    // Schema caps assessments at 5; send the 5 most recent proofs by capturedAt.
+    const proofs = [...allProofs]
+      .sort((a, b) => {
+        const ta = a?.capturedAt?.toMillis?.() ?? 0;
+        const tb = b?.capturedAt?.toMillis?.() ?? 0;
+        return tb - ta;
+      })
+      .slice(0, 5);
+
+    const milestoneContext = `Milestone Title: ${after.title || "Unknown"}
+Milestone Description: ${after.description || "No description"}
+Milestone Sequence: ${after.sequence || "N/A"}
+Expected Weight Percentage: ${after.weightPercentage || "N/A"}
+Suggested Duration: ${after.suggestedDurationDays || "N/A"} days
+
+The Project Engineer has uploaded ${allProofs.length} photograph(s) for this milestone${allProofs.length > proofs.length ? `; the ${proofs.length} most recent are attached for review` : ""}. Each photo is attached below in order. Assess each one against the milestone description above, then provide an overall verdict.`;
+
+    // Fetch each proof image as base64.
+    const expectedSubpath = `projects/${projectId}/milestones/${milestoneId}/`;
+    const imageBlocks = [];
+    for (let i = 0; i < proofs.length; i++) {
+      const proof = proofs[i];
+      if (!proof.url) continue;
+
+      // Defense-in-depth: server-side fetch bypasses Firestore/Storage rules, so
+      // verify the URL belongs to this project/milestone's Storage path before reading.
+      let decodedPath;
+      try { decodedPath = decodeURIComponent(new URL(proof.url).pathname); }
+      catch { decodedPath = ""; }
+      if (!decodedPath.includes(expectedSubpath)) {
+        logger.warn(`Proof ${i} URL does not match expected path for ${milestoneId}; skipping`);
+        continue;
+      }
+
+      try {
+        const fetchResponse = await fetch(proof.url);
+        if (!fetchResponse.ok) {
+          logger.warn(`Proof ${i} fetch failed with HTTP ${fetchResponse.status}; skipping.`);
+          continue;
+        }
+        const arrayBuffer = await fetchResponse.arrayBuffer();
+        const imageBase64 = Buffer.from(arrayBuffer).toString("base64");
+        imageBlocks.push({
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
+        });
+      } catch (err) {
+        logger.error(`Failed to fetch proof ${i}:`, err);
+      }
+    }
+
+    if (imageBlocks.length === 0) {
+      logger.error(`No proof images could be fetched for milestone ${milestoneId}; aborting verification.`);
+      return;
+    }
+
+    // Call Anthropic Sonnet for vision verification.
+    const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+
+    let response;
+    try {
+      response = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2048,
+        system: VERIFICATION_SYSTEM_PROMPT,
+        tools: [verificationTool],
+        tool_choice: { type: "tool", name: "assess_milestone_photos" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: milestoneContext },
+              ...imageBlocks,
+            ],
+          },
+        ],
+      });
+    } catch (error) {
+      logger.error("Anthropic vision API error during auto-verification:", { status: error?.status, code: error?.code, message: error?.message });
+      return;
+    }
+
+    const toolUseBlock = response.content.find((block) => block.type === "tool_use");
+    if (!toolUseBlock) {
+      logger.error("No structured assessment returned during auto-verification.");
+      return;
+    }
+
+    const assessment = toolUseBlock.input;
+
+    const verificationRecord = {
+      runAt: admin.firestore.Timestamp.now(),
+      runByUid: "system",
+      runByEmail: null,
+      model: "claude-sonnet-4-6",
+      photosVerified: imageBlocks.length,
+      overallVerdict: assessment.overall_verdict,
+      overallReasoning: assessment.overall_reasoning,
+      perPhotoAssessments: assessment.per_photo_assessments,
+      hcsdDecision: "pending",
+      triggeredBy: "auto-on-completion",
+    };
+
+    await admin.firestore().doc(`projects/${projectId}/milestones/${milestoneId}`).update({
+      verificationHistory: admin.firestore.FieldValue.arrayUnion(verificationRecord),
+      lastVerificationAt: admin.firestore.FieldValue.serverTimestamp(),
+      verificationDecision: admin.firestore.FieldValue.delete(),
+    });
+
+    // Audit trail entry — MIS scope (system-triggered computational event).
+    await admin.firestore().collection("auditTrails").doc("mis").collection("entries").add({
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      actorUid: "system",
+      actorEmail: null,
+      tenantId: tenantId,
+      action: "Auto Photo Verification",
+      targetId: projectId,
+      details: {
+        projectId,
+        milestoneId,
+        photosVerified: imageBlocks.length,
+        overallVerdict: assessment.overall_verdict,
+        triggeredBy: "auto-on-completion",
+      },
+    });
+
+    // Fan out a category:"field" notification when AI flags concern.
+    // "aligned" verdicts are silent — no need to interrupt HCSD on the happy path.
+    if (assessment.overall_verdict !== "aligned") {
+      const recipientUid = project.createdBy || null;
+      const verdictLabel = {
+        partially_aligned: "Partially aligned",
+        not_aligned: "Not aligned",
+        insufficient_evidence: "Insufficient evidence",
+      }[assessment.overall_verdict] || assessment.overall_verdict;
+      const severity = assessment.overall_verdict === "not_aligned" ? "error" : "warn";
+      const milestoneLabel = after.sequence != null
+        ? `Phase ${after.sequence} — ${after.title || "Milestone"}`
+        : (after.title || "Milestone");
+      const projectName = project.projectName || "Project";
+
+      await createNotification({
+        recipientUid,
+        action: "Photo Verification Flagged",
+        category: "field",
+        severity,
+        title: `AI flagged photos: ${verdictLabel}`,
+        body: `${projectName}: ${milestoneLabel} — ${assessment.overall_reasoning}`,
+        targetType: "milestone",
+        targetId: milestoneId,
+        metadata: {
+          projectId,
+          milestoneId,
+          milestoneTitle: after.title || null,
+          milestoneSequence: after.sequence ?? null,
+          overallVerdict: assessment.overall_verdict,
+          photosVerified: imageBlocks.length,
+          triggeredBy: "auto-on-completion",
+        },
+        tenantId,
+      });
+    }
+
+    logger.info(`Auto-verification complete for milestone ${milestoneId}: ${assessment.overall_verdict}`);
+  }
+);

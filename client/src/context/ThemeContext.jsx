@@ -6,7 +6,9 @@ export const ThemeProvider = ({ children }) => {
     const [isDark, setIsDark] = useState(() => {
         try {
             const val = localStorage.getItem('hcsd-theme') ?? localStorage.getItem('depw-theme');
-            return val === 'dark';
+            if (val === 'dark') return true;
+            if (val === 'light') return false;
+            return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches === true;
         }
         catch { return false; }
     });

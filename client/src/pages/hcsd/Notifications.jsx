@@ -60,6 +60,13 @@ const Notifications = () => {
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState('ALL');
+    const [actionError, setActionError] = useState(null);
+
+    useEffect(() => {
+        if (!actionError) return;
+        const t = setTimeout(() => setActionError(null), 4000);
+        return () => clearTimeout(t);
+    }, [actionError]);
 
     useEffect(() => {
         if (!currentUser?.uid || !tenantId) return;
@@ -87,7 +94,9 @@ const Notifications = () => {
     const markRead = async (id) => {
         try {
             await updateDoc(doc(db, 'notifications', id), { isRead: true });
-        } catch {
+        } catch (err) {
+            console.error('[Notifications] markRead failed:', err);
+            setActionError('Could not mark this notification as read. Please try again.');
         }
     };
 
@@ -98,7 +107,9 @@ const Notifications = () => {
             const batch = writeBatch(db);
             unread.forEach(a => batch.update(doc(db, 'notifications', a.id), { isRead: true }));
             await batch.commit();
-        } catch {
+        } catch (err) {
+            console.error('[Notifications] markAllRead failed:', err);
+            setActionError('Could not mark all notifications as read. Please try again.');
         }
     };
 
@@ -154,6 +165,13 @@ const Notifications = () => {
                         </button>
                     )}
                 </div>
+
+                {actionError && (
+                    <div role="alert" aria-live="polite"
+                        className="mb-4 px-4 py-3 rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300 text-sm font-semibold">
+                        {actionError}
+                    </div>
+                )}
 
                 <div className="flex flex-wrap gap-2 mb-6" style={{ animation: 'fadeIn 0.4s ease-out both' }}>
                     {TAB_FILTERS.map((t) => {
