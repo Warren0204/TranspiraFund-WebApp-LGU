@@ -118,6 +118,42 @@ export const AuthProvider = ({ children }) => {
         return unsubscribe;
     }, []);
 
+    // Idle auto-logout: 15 minutes of no user activity → forced sign-out.
+    // Throttled to reset at most once every 30s so high-frequency mousemove
+    // events don't thrash the timer. Only armed while a user is signed in.
+    useEffect(() => {
+        if (!currentUser) return;
+
+        const IDLE_MS = 15 * 60 * 1000;
+        const THROTTLE_MS = 30 * 1000;
+
+        const handleIdle = async () => {
+            try {
+                sessionStorage.setItem('authError', 'You have been signed out due to inactivity.');
+            } catch {}
+            try { await signOut(auth); } catch {}
+        };
+
+        let timeoutId = setTimeout(handleIdle, IDLE_MS);
+        let lastReset = Date.now();
+
+        const resetTimer = () => {
+            const now = Date.now();
+            if (now - lastReset < THROTTLE_MS) return;
+            lastReset = now;
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(handleIdle, IDLE_MS);
+        };
+
+        const events = ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'];
+        events.forEach((e) => window.addEventListener(e, resetTimer, { passive: true }));
+
+        return () => {
+            clearTimeout(timeoutId);
+            events.forEach((e) => window.removeEventListener(e, resetTimer));
+        };
+    }, [currentUser]);
+
     const value = {
         currentUser,
         userRole,

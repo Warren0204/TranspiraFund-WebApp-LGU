@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowLeft, Landmark } from 'lucide-react';
 import AuthService from '../../services/AuthService';
@@ -9,6 +9,17 @@ const useLoginLogic = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
+
+  // Surface a stashed sign-out reason (e.g. idle auto-logout, missing tenant).
+  useEffect(() => {
+    try {
+      const stashed = sessionStorage.getItem('authError');
+      if (stashed) {
+        setAuthError(stashed);
+        sessionStorage.removeItem('authError');
+      }
+    } catch {}
+  }, []);
 
   const getRouteByRole = (role) => {
     const safeRole = role?.toUpperCase() || '';
