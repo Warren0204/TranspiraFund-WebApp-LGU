@@ -14,19 +14,23 @@ import { useAuth } from '../../context/AuthContext';
 
 const PAGE_SIZE = 30;
 
+// Each event gets a UNIQUE color family — no two events share a pill color or
+// gradient. 12 events, 12 distinct hues from Tailwind's palette. Icons are
+// also unique per event. This makes scanning the audit list visually
+// unambiguous: every row's color identifies its event class at a glance.
 const EVENT_META = {
     USER_LOGIN: {
         label: 'User Login',
-        pill: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-500/30',
+        pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
         Icon: LogIn,
-        iconBg: 'from-green-500 to-emerald-400',
+        iconBg: 'from-emerald-500 to-green-400',
         role: 'HCSD',
     },
     USER_LOGOUT: {
         label: 'User Logout',
         pill: 'bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
         Icon: LogOut,
-        iconBg: 'from-slate-400 to-slate-500',
+        iconBg: 'from-slate-500 to-slate-600',
         role: 'HCSD',
     },
     PASSWORD_CHANGED: {
@@ -40,28 +44,7 @@ const EVENT_META = {
         label: 'Sessions Revoked',
         pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',
         Icon: ShieldOff,
-        iconBg: 'from-rose-500 to-red-400',
-        role: 'HCSD',
-    },
-    PROJECT_CREATED: {
-        label: 'Project Created',
-        pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30',
-        Icon: FolderKanban,
-        iconBg: 'from-teal-500 to-emerald-400',
-        role: 'HCSD',
-    },
-    ACCOUNT_CREATED: {
-        label: 'Staff Onboarded',
-        pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30',
-        Icon: UserPlus,
-        iconBg: 'from-emerald-500 to-teal-400',
-        role: 'HCSD',
-    },
-    ACCOUNT_DELETED: {
-        label: 'Staff Removed',
-        pill: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-500/30',
-        Icon: UserX,
-        iconBg: 'from-red-500 to-rose-400',
+        iconBg: 'from-rose-500 to-pink-400',
         role: 'HCSD',
     },
     PHOTO_UPDATED: {
@@ -71,32 +54,53 @@ const EVENT_META = {
         iconBg: 'from-violet-500 to-purple-400',
         role: 'HCSD',
     },
-    NTP_REJECTED: {
-        label: 'NTP Rejected',
-        pill: 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30',
-        Icon: FileX2,
-        iconBg: 'from-rose-500 to-red-400',
+    PROJECT_CREATED: {
+        label: 'Project Created',
+        pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30',
+        Icon: FolderKanban,
+        iconBg: 'from-teal-500 to-emerald-400',
         role: 'HCSD',
     },
     PROJECT_ROLLED_BACK: {
         label: 'Project Rolled Back',
-        pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
+        pill: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30',
         Icon: Undo2,
-        iconBg: 'from-amber-500 to-yellow-400',
+        iconBg: 'from-orange-500 to-amber-400',
+        role: 'HCSD',
+    },
+    NTP_REJECTED: {
+        label: 'NTP Rejected',
+        pill: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-500/30',
+        Icon: FileX2,
+        iconBg: 'from-red-500 to-rose-400',
         role: 'HCSD',
     },
     'Photo Verification Run': {
         label: 'AI Photo Verification',
         pill: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
         Icon: ScanEye,
-        iconBg: 'from-indigo-500 to-violet-400',
+        iconBg: 'from-indigo-500 to-blue-400',
         role: 'HCSD',
     },
     'Photo Verification Decision': {
         label: 'Verification Decision',
         pill: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-500/30',
         Icon: Gavel,
-        iconBg: 'from-cyan-500 to-teal-400',
+        iconBg: 'from-cyan-500 to-sky-400',
+        role: 'HCSD',
+    },
+    ACCOUNT_CREATED: {
+        label: 'Staff Onboarded',
+        pill: 'bg-lime-100 dark:bg-lime-900/40 text-lime-700 dark:text-lime-300 border-lime-200 dark:border-lime-500/30',
+        Icon: UserPlus,
+        iconBg: 'from-lime-500 to-green-400',
+        role: 'HCSD',
+    },
+    ACCOUNT_DELETED: {
+        label: 'Staff Removed',
+        pill: 'bg-fuchsia-100 dark:bg-fuchsia-900/40 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-200 dark:border-fuchsia-500/30',
+        Icon: UserX,
+        iconBg: 'from-fuchsia-500 to-pink-400',
         role: 'HCSD',
     },
 };
