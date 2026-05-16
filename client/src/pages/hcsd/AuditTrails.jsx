@@ -6,7 +6,7 @@ import {
     Shield, Clock, Activity, LogIn, LogOut,
     FolderKanban, UserPlus, UserX, UserCircle,
     FileX2, Trash2, KeyRound, ShieldOff,
-    ScanEye, Gavel, Undo2,
+    Undo2,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useUsers } from '../../hooks/useUsers';
@@ -75,20 +75,6 @@ const EVENT_META = {
         iconBg: 'from-red-500 to-rose-400',
         role: 'HCSD',
     },
-    'Photo Verification Run': {
-        label: 'AI Photo Verification',
-        pill: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/30',
-        Icon: ScanEye,
-        iconBg: 'from-indigo-500 to-blue-400',
-        role: 'HCSD',
-    },
-    'Photo Verification Decision': {
-        label: 'Verification Decision',
-        pill: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-500/30',
-        Icon: Gavel,
-        iconBg: 'from-cyan-500 to-sky-400',
-        role: 'HCSD',
-    },
     ACCOUNT_CREATED: {
         label: 'Staff Onboarded',
         pill: 'bg-lime-100 dark:bg-lime-900/40 text-lime-700 dark:text-lime-300 border-lime-200 dark:border-lime-500/30',
@@ -114,20 +100,12 @@ const defaultMetaFor = () => ({
 });
 
 const FILTERS = [
-    { key: 'ALL',          label: 'All',                 actions: null },
-    { key: 'AUTH',         label: 'Auth',                actions: ['USER_LOGIN', 'USER_LOGOUT', 'PASSWORD_CHANGED', 'SESSIONS_REVOKED'] },
-    { key: 'PROFILE',      label: 'Profile',             actions: ['PHOTO_UPDATED'] },
-    { key: 'PROJECT',      label: 'Project',             actions: ['PROJECT_CREATED', 'PROJECT_ROLLED_BACK', 'NTP_REJECTED'] },
-    { key: 'VERIFICATION', label: 'Photo Verification',  actions: ['Photo Verification Run', 'Photo Verification Decision'] },
-    { key: 'STAFF',        label: 'Staff',               actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
+    { key: 'ALL',     label: 'All',     actions: null },
+    { key: 'AUTH',    label: 'Auth',    actions: ['USER_LOGIN', 'USER_LOGOUT', 'PASSWORD_CHANGED', 'SESSIONS_REVOKED'] },
+    { key: 'PROFILE', label: 'Profile', actions: ['PHOTO_UPDATED'] },
+    { key: 'PROJECT', label: 'Project', actions: ['PROJECT_CREATED', 'PROJECT_ROLLED_BACK', 'NTP_REJECTED'] },
+    { key: 'STAFF',   label: 'Staff',   actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
 ];
-
-const VERDICT_LABEL = {
-    aligned: 'Aligned',
-    partially_aligned: 'Partially aligned',
-    not_aligned: 'Not aligned',
-    insufficient_evidence: 'Insufficient evidence',
-};
 
 const getSubject = (log) => {
     const d = log.details || {};
@@ -141,8 +119,6 @@ const getSubject = (log) => {
         case 'PROJECT_CREATED':              return d.projectName || log.targetId || 'Untitled Project';
         case 'PROJECT_ROLLED_BACK':          return d.projectName || log.targetId || 'Untitled Project';
         case 'NTP_REJECTED':                 return d.projectName || d.reason || log.targetId || 'NTP rejected';
-        case 'Photo Verification Run':       return d.projectName || log.targetId || 'Project milestone';
-        case 'Photo Verification Decision':  return d.projectName || log.targetId || 'Project milestone';
         case 'ACCOUNT_CREATED':              return d.email || d.newUserEmail || log.targetId || 'Unknown Engineer';
         case 'ACCOUNT_DELETED':              return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
         default:                             return log.targetId || log.action?.replace(/_/g, ' ') || '—';
@@ -168,21 +144,6 @@ const getSubjectDetail = (log) => {
                 : 'Project creation rolled back';
         }
         case 'NTP_REJECTED': return d.reason ? `Reason: ${d.reason}` : 'NTP upload blocked';
-        case 'Photo Verification Run': {
-            const verdict = VERDICT_LABEL[d.overallVerdict] || 'Run complete';
-            const photos = d.photosVerified != null ? ` · ${d.photosVerified} photo${d.photosVerified !== 1 ? 's' : ''}` : '';
-            return `AI verdict: ${verdict}${photos}`;
-        }
-        case 'Photo Verification Decision': {
-            const decision = d.decision;
-            const verb = decision === 'validated' || decision === 'approved'
-                ? 'Validated by HCSD'
-                : decision === 'invalidated' || decision === 'rejected'
-                    ? 'Invalidated by HCSD'
-                    : 'Decision recorded';
-            const aiNote = d.aiVerdict ? ` · AI flagged ${VERDICT_LABEL[d.aiVerdict] || d.aiVerdict}` : '';
-            return `${verb}${aiNote}`;
-        }
         case 'ACCOUNT_CREATED': return `${d.roleType || d.role || 'PROJ_ENG'} · ${d.department || 'CSDD, DEPW'}`;
         case 'ACCOUNT_DELETED': return 'Account and access permanently removed';
         default: return null;

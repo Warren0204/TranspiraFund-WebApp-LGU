@@ -182,8 +182,6 @@ The HCSD audit trail is the tamper-proof record of **administrative actions done
 | `PROJECT_CREATED` | `createProject` Cloud Function | Project name | Project |
 | `PROJECT_ROLLED_BACK` | `rollbackOrphanProject` Cloud Function — creation-time recovery when client-side NTP attach fails. Strictly gated: only the creator, only when no NTP is attached and no milestones exist. | Project name | Project |
 | `NTP_REJECTED` | `attachNtp` Cloud Function (filename violation or magic-byte mismatch) | Project name | Project |
-| `Photo Verification Run` | `verifyMilestonePhotos` Cloud Function — HCSD-initiated AI vision check on milestone proof photos (Sonnet 4.6, advisory verdict) | Project name | Project |
-| `Photo Verification Decision` | `recordVerificationDecision` Cloud Function — HCSD's accept/reject decision on the latest AI verdict for a milestone | Project name | Project |
 | `ACCOUNT_CREATED` | `createOfficialAccount` Cloud Function | New user email | Staff |
 | `ACCOUNT_DELETED` | `deleteOfficialAccount` Cloud Function | Deleted user email | Staff |
 
@@ -201,25 +199,55 @@ Notifications have a `category` field with two lanes, rendered as tabs on the No
 
 | `category` | Direction | Examples |
 |---|---|---|
-| `"system"` (default) | HCSD → PROJ_ENG | `PROJECT_ASSIGNED` |
-| `"field"` | PROJ_ENG → HCSD | `Proof Uploaded`, `Milestones Drafted`, `Milestones Confirmed`, `Milestone Completed`, `Project Completed` (server-synthesized) |
+| `"system"` (default) | HCSD → PROJ_ENG | `PROJECT_ASSIGNED`, `Proof Assessment` (auto-AI summary delivered to the assigned PE) |
+| `"field"` | PROJ_ENG → HCSD | `Proof Assessment` (auto-AI summary delivered to the HCSD creator), `Milestones Drafted`, `Milestones Confirmed`, `Milestone Completed`, `Project Completed` (server-synthesized) |
+
+The `Proof Assessment` action appears in both lanes because a single AI scan fans out **two** notifications from one trigger run — one to the HCSD creator (read-only awareness, field lane) and one to the assigned Project Engineer (preliminary plain-language framing, system lane). Both rows share the same `tenantId`, `metadata`, and `severity`; they differ only in `recipientUid`, `category`, `title`, and `body`.
 
 NTP attachments deliberately do **not** fan out a notification to the engineer — the NTP upload is a mandatory part of project creation on the web side, not a standalone event worth alerting on.
 
 ## Mobile → Web Notification Fan-Out (`onMobileAuditCreated` trigger)
-Mobile PROJ_ENG writes its own self-audit to `auditTrails/mobile/entries` (PROJ_ENG-only read per rules). A Firestore `onCreate` trigger watches that collection and, for the four whitelisted actions below, creates a `category: "field"` notification for the project's `createdBy` HCSD user. Everything else the mobile writes (login, generic updates, draft removals) is ignored.
+Mobile PROJ_ENG writes its own self-audit to `auditTrails/mobile/entries` (PROJ_ENG-only read per rules). A Firestore `onCreate` trigger watches that collection and, for the whitelisted actions below, creates a `category: "field"` notification for the project's `createdBy` HCSD user. Everything else the mobile writes (login, generic updates, draft removals, **and `Proof Uploaded`**) is ignored — proof-of-work activity surfaces through the AI-summary path below instead.
 
 | Action (exact string) | Mobile trigger | Notification severity |
 |---|---|---|
-| `Proof Uploaded` | Geotagged proof-of-work photo upload (mobile `uploadProofPhoto` callable writes the mobile audit doc) | info |
 | `Milestones Drafted` | AI milestone draft generated | info |
 | `Milestones Confirmed` | Engineer finalizes milestones | success |
 | `Milestone Completed` | Engineer marks a single phase complete on mobile | success |
 | `Project Completed` | Synthesized server-side when `Milestone Completed` brings the done-count to total (no mobile event required) | success |
 
-Action strings are case-sensitive — mobile must emit them exactly as written. Mobile must also include either `targetId: projectId` or `details.projectId` on the audit entry so the trigger can resolve the project's `createdBy`, AND `details.milestoneId: "<firestore-doc-id>"` on all four actions so the trigger can FK-resolve the milestone's canonical `title` + `sequence` and render them into the notification body (e.g. `Construction of Drainage Canal: Phase 2 — "Site Preparation" marked complete`). The resolved milestone is also persisted on the notification as `metadata.milestoneId` / `metadata.milestoneTitle` / `metadata.milestoneSequence` for deep-linking.
+Action strings are case-sensitive — mobile must emit them exactly as written. Mobile must also include either `targetId: projectId` or `details.projectId` on the audit entry so the trigger can resolve the project's `createdBy`, AND `details.milestoneId: "<firestore-doc-id>"` so the trigger can FK-resolve the milestone's canonical `title` + `sequence` and render them into the notification body (e.g. `Construction of Drainage Canal: Phase 2 — "Site Preparation" marked complete`). The resolved milestone is also persisted on the notification as `metadata.milestoneId` / `metadata.milestoneTitle` / `metadata.milestoneSequence` for deep-linking.
+
+`Proof Uploaded` is still emitted by mobile as a log-only audit entry — it is intentionally absent from `FIELD_NOTIFICATION_SPECS` because the `onProofUploaded` trigger (below) owns the proof-upload notification path.
 
 **Canonical mobile audit entry shape:** `{ action, actorUid, createdAt: serverTimestamp(), details: { message, projectId?, milestoneId? }, targetId?, email }`. Dropped from new writes: `uid`, `timestamp`, `platform`, string-form `details`. The trigger only reads `action`, `details`, and `targetId`, and its `typeof rawDetails === "object"` guard tolerates the legacy string form during migration.
+
+## Automatic Photo Verification (`onProofUploaded` trigger)
+Every proof-of-work photo a mobile engineer uploads is auto-scanned. A Firestore `onDocumentUpdated` trigger on `projects/{projectId}/milestones/{milestoneId}` detects when `proofs[]` grows, identifies the newly appended proof(s) (by `id` / `fileName` / `storagePath`, falling back to tail-slice), and sends them to Anthropic Claude Sonnet 4.6 via the `assess_milestone_photos` tool. The structured per-photo + overall verdict is appended to `milestone.verificationHistory[]`, then the trigger fans out **two** `Proof Assessment` notifications from one run — strictly between HCSD and the assigned PE. **No MIS audit row is written.** MIS provisions HCSD as the LGU tenant admin but does not see proof-of-work verification activity; that interaction lives entirely between HCSD and the Project Engineer.
+
+**Dual notification fan-out:**
+
+| Recipient | Source field | `category` | Tone | Body |
+|---|---|---|---|---|
+| HCSD creator | `project.createdBy` | `"field"` | Awareness summary | `{projectName}: {milestoneLabel} — {N} photo(s) scanned. {AI overallReasoning}` |
+| Assigned Project Engineer | `project.projectEngineer` | `"system"` | Preliminary, plain-language, no "HCSD will decide" wording (HCSD has no decision step) | Verdict-keyed copy (see `peCopy` map inside `onProofUploaded`): e.g. `Your proof for {milestoneLabel} has been reviewed automatically and appears aligned with the milestone.` |
+
+Both rows share `tenantId`, `metadata`, and `severity` and use the same `action: "Proof Assessment"`. The PE notification no-ops silently when `project.projectEngineer` is unset (e.g. a `Delayed`-status project with no engineer assigned) — `createNotification` early-returns on null `recipientUid`.
+
+**No HCSD decision step.** HCSD is an observer: the manual `verifyMilestonePhotos` callable, the `recordVerificationDecision` callable, the "Verify Photos with AI" button, and the "Validate / Invalidate proof of work" buttons have all been removed. The Project Detail page renders `verificationHistory[]` as a read-only alignment panel under each milestone — the latest entry's overall verdict, reasoning, and per-photo assessments (each with verdict pill, reasoning, and visible-element tags).
+
+**`verificationHistory[]` entry shape:**
+```
+{ runAt: Timestamp, runByUid: "system", runByEmail: null,
+  model: "claude-sonnet-4-6", photosVerified: number,
+  overallVerdict: "aligned" | "partially_aligned" | "not_aligned" | "insufficient_evidence",
+  overallReasoning: string,
+  perPhotoAssessments: [{ photo_index, verdict, reasoning, visible_elements[] }],
+  triggeredBy: "auto-on-proof-upload",
+  proofKeys: string[] }
+```
+
+Verdict → notification severity: `aligned` → success, `partially_aligned` → warn, `not_aligned` → error, `insufficient_evidence` → info. Every verdict fans out a notification — there is no "silent on happy path" anymore.
 
 ## Data Migration (One-Time)
 Before deploying to production, run `scripts/migrate-depw-to-hcsd.js` to update existing Firestore user documents from `role: 'DEPW'` to `role: 'HCSD'` and refresh Auth custom claims. See script for full instructions.

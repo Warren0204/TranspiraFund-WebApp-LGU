@@ -4,16 +4,14 @@ import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
     Hash, Banknote, Flag, ExternalLink, ChevronDown, ChevronUp,
-    ImageIcon, X as XIcon, Loader2, XCircle, HelpCircle, Sparkles
+    ImageIcon, X as XIcon, XCircle, HelpCircle
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import NtpViewerModal from '../../components/shared/NtpViewerModal';
 import { doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref as storageRef, listAll, getDownloadURL } from 'firebase/storage';
 import exifr from 'exifr';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../../config/firebase';
-import app from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useUsers } from '../../hooks/useUsers';
 
@@ -171,7 +169,7 @@ const ProjectDetail = () => {
     const [notFound, setNotFound] = useState(false);
     const [ntpViewerOpen, setNtpViewerOpen] = useState(false);
 
-    const { tenantId, currentUser } = useAuth();
+    const { tenantId } = useAuth();
     const { usersMap } = useUsers();
 
     useEffect(() => {
@@ -212,12 +210,6 @@ const ProjectDetail = () => {
     const [proofCache, setProofCache] = useState({});
     const [proofLoading, setProofLoading] = useState({});
     const [lightbox, setLightbox] = useState(null);
-    const [verifyingMilestones, setVerifyingMilestones] = useState({});
-    const [verificationResults, setVerificationResults] = useState({});
-    const [verificationErrors, setVerificationErrors] = useState({});
-    const [decisionLoading, setDecisionLoading] = useState({});
-    const [decisionOverrides, setDecisionOverrides] = useState({});
-    const [decisionErrors, setDecisionErrors] = useState({});
 
     const loadProofs = useCallback(async (milestone) => {
         if (!id || !milestone?.id) return;
@@ -272,59 +264,6 @@ const ProjectDetail = () => {
             setProofLoading((s) => ({ ...s, [milestoneId]: false }));
         }
     }, [id]);
-
-    const handleVerifyPhotos = useCallback(async (milestoneId) => {
-        if (!id || !milestoneId) return;
-        setVerifyingMilestones((s) => ({ ...s, [milestoneId]: true }));
-        setVerificationErrors((s) => ({ ...s, [milestoneId]: null }));
-        setDecisionOverrides((s) => {
-            if (!(milestoneId in s)) return s;
-            const next = { ...s };
-            delete next[milestoneId];
-            return next;
-        });
-        try {
-            const fn = httpsCallable(getFunctions(app, 'asia-southeast1'), 'verifyMilestonePhotos');
-            const result = await fn({ projectId: id, milestoneId });
-            setVerificationResults((s) => ({ ...s, [milestoneId]: result.data }));
-        } catch (err) {
-            setVerificationErrors((s) => ({
-                ...s,
-                [milestoneId]: err?.message || 'Verification failed. Please try again.',
-            }));
-        } finally {
-            setVerifyingMilestones((s) => ({ ...s, [milestoneId]: false }));
-        }
-    }, [id]);
-
-    const handleRecordDecision = useCallback(async (milestoneId, decision) => {
-        if (!id || !milestoneId) return;
-        setDecisionLoading((s) => ({ ...s, [milestoneId]: decision }));
-        setDecisionErrors((s) => ({ ...s, [milestoneId]: null }));
-        try {
-            const fn = httpsCallable(getFunctions(app, 'asia-southeast1'), 'recordVerificationDecision');
-            await fn({ projectId: id, milestoneId, decision });
-            setDecisionOverrides((s) => ({
-                ...s,
-                [milestoneId]: {
-                    decision,
-                    decidedAt: new Date(),
-                    decidedByEmail: currentUser?.email || null,
-                },
-            }));
-        } catch (err) {
-            setDecisionErrors((s) => ({
-                ...s,
-                [milestoneId]: err?.message || 'Could not record decision. Please try again.',
-            }));
-        } finally {
-            setDecisionLoading((s) => {
-                const next = { ...s };
-                delete next[milestoneId];
-                return next;
-            });
-        }
-    }, [id, currentUser?.email]);
 
     const toggleProofs = useCallback((milestoneId) => {
         setExpandedProofs((prev) => {
@@ -798,167 +737,70 @@ const ProjectDetail = () => {
                                                             return tb - ta;
                                                         })[0]
                                                         : null;
-                                                    const displayedResult = verificationResults[m.id] || latestHistoryEntry;
-                                                    const isAutoResult = !verificationResults[m.id] && !!latestHistoryEntry;
-                                                    const isVerifying = !!verifyingMilestones[m.id];
-                                                    const verifyError = verificationErrors[m.id];
-                                                    const canVerify = hasCount;
-                                                    const effectiveDecision = verificationResults[m.id]
-                                                        ? (decisionOverrides[m.id] || null)
-                                                        : (decisionOverrides[m.id] || m.verificationDecision || null);
-                                                    // Legacy tolerance: pre-rename docs stored 'approved'/'rejected' instead of 'validated'/'invalidated'.
-                                                    const isValidated = !!effectiveDecision && (effectiveDecision.decision === 'validated' || effectiveDecision.decision === 'approved');
-                                                    const pendingDecision = decisionLoading[m.id] || null;
-                                                    const decisionError = decisionErrors[m.id];
                                                     return (
                                                         <>
-                                                            {canVerify && (
-                                                                <div className="mb-2">
-                                                                    {!displayedResult && !isVerifying && !verifyError && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleVerifyPhotos(m.id)}
-                                                                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-colors"
-                                                                        >
-                                                                            <Sparkles size={14} />
-                                                                            Verify Photos with AI
-                                                                        </button>
-                                                                    )}
-                                                                    {isVerifying && (
-                                                                        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-700/60 text-slate-600 dark:text-slate-300 text-xs font-bold">
-                                                                            <Loader2 size={14} className="animate-spin" />
-                                                                            Analyzing photos…
-                                                                        </div>
-                                                                    )}
-                                                                    {verifyError && !isVerifying && (
-                                                                        <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-500/30">
-                                                                            <AlertTriangle size={14} className="text-rose-500 shrink-0 mt-0.5" />
+                                                            {latestHistoryEntry && (() => {
+                                                                const result = latestHistoryEntry;
+                                                                const style = getVerdictStyle(result.overallVerdict);
+                                                                const VerdictIcon = style.icon;
+                                                                const perPhotoList = result.perPhotoAssessments ?? result.per_photo_assessments;
+                                                                return (
+                                                                    <div className={`mb-2 rounded-xl border p-3 ${style.panel}`}>
+                                                                        <div className="flex items-start gap-2">
+                                                                            <VerdictIcon size={18} className={`${style.iconColor} shrink-0 mt-0.5`} />
                                                                             <div className="flex-1 min-w-0">
-                                                                                <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">{verifyError}</p>
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => handleVerifyPhotos(m.id)}
-                                                                                    className="mt-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline"
-                                                                                >
-                                                                                    Try again
-                                                                                </button>
+                                                                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                                                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${style.pill}`}>
+                                                                                        {style.label}
+                                                                                    </span>
+                                                                                    <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                                                                                        AI assessment · {result.photosVerified} photo{result.photosVerified !== 1 ? 's' : ''} scanned
+                                                                                    </span>
+                                                                                </div>
+                                                                                <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
+                                                                                    {result.overallReasoning}
+                                                                                </p>
                                                                             </div>
                                                                         </div>
-                                                                    )}
-                                                                    {displayedResult && !isVerifying && (() => {
-                                                                        const result = displayedResult;
-                                                                        const style = getVerdictStyle(result.overallVerdict);
-                                                                        const VerdictIcon = style.icon;
-                                                                        const perPhotoList = result.perPhotoAssessments ?? result.per_photo_assessments;
-                                                                        return (
-                                                                            <div className={`rounded-xl border p-3 ${style.panel}`}>
-                                                                                <div className="flex items-start gap-2">
-                                                                                    <VerdictIcon size={18} className={`${style.iconColor} shrink-0 mt-0.5`} />
-                                                                                    <div className="flex-1 min-w-0">
-                                                                                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                                                                                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${style.pill}`}>
-                                                                                                {style.label}
-                                                                                            </span>
-                                                                                            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                                                                                                AI advisory · {result.photosVerified} photo{result.photosVerified !== 1 ? 's' : ''}{isAutoResult && result.triggeredBy === 'auto-on-completion' ? ' · auto-run on completion' : ''}
-                                                                                            </span>
-                                                                                        </div>
-                                                                                        <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
-                                                                                            {result.overallReasoning}
-                                                                                        </p>
-                                                                                    </div>
-                                                                                </div>
 
-                                                                                {Array.isArray(perPhotoList) && perPhotoList.length > 0 && (
-                                                                                    <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60 space-y-2">
-                                                                                        {perPhotoList.map((pa) => {
-                                                                                            const ps = getVerdictStyle(pa.verdict);
-                                                                                            const PIcon = ps.icon;
-                                                                                            return (
-                                                                                                <div key={pa.photo_index} className="flex items-start gap-2">
-                                                                                                    <PIcon size={14} className={`${ps.iconColor} shrink-0 mt-0.5`} />
-                                                                                                    <div className="flex-1 min-w-0">
-                                                                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                                                                            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                                                                                                                Photo {pa.photo_index + 1}
-                                                                                                            </span>
-                                                                                                            <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${ps.pill}`}>
-                                                                                                                {ps.label}
-                                                                                                            </span>
-                                                                                                        </div>
-                                                                                                        <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
-                                                                                                            {pa.reasoning}
-                                                                                                        </p>
-                                                                                                        {Array.isArray(pa.visible_elements) && pa.visible_elements.length > 0 && (
-                                                                                                            <div className="mt-1 flex flex-wrap gap-1">
-                                                                                                                {pa.visible_elements.map((el, idx) => (
-                                                                                                                    <span key={idx} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                                                                                                                        {el}
-                                                                                                                    </span>
-                                                                                                                ))}
-                                                                                                            </div>
-                                                                                                        )}
-                                                                                                    </div>
+                                                                        {Array.isArray(perPhotoList) && perPhotoList.length > 0 && (
+                                                                            <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60 space-y-2">
+                                                                                {perPhotoList.map((pa) => {
+                                                                                    const ps = getVerdictStyle(pa.verdict);
+                                                                                    const PIcon = ps.icon;
+                                                                                    return (
+                                                                                        <div key={pa.photo_index} className="flex items-start gap-2">
+                                                                                            <PIcon size={14} className={`${ps.iconColor} shrink-0 mt-0.5`} />
+                                                                                            <div className="flex-1 min-w-0">
+                                                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                                                    <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                                                                                        Photo {pa.photo_index + 1}
+                                                                                                    </span>
+                                                                                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${ps.pill}`}>
+                                                                                                        {ps.label}
+                                                                                                    </span>
                                                                                                 </div>
-                                                                                            );
-                                                                                        })}
-                                                                                    </div>
-                                                                                )}
-
-                                                                                <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60">
-                                                                                    {effectiveDecision ? (
-                                                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                                                            <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-md border ${isValidated
-                                                                                                ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30'
-                                                                                                : 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30'
-                                                                                                }`}>
-                                                                                                {isValidated ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                                                                                                Proof {isValidated ? 'validated' : 'invalidated'} by HCSD
-                                                                                            </span>
-                                                                                            {(effectiveDecision.decidedByEmail || effectiveDecision.decidedAt) && (
-                                                                                                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                                                                                                    {effectiveDecision.decidedByEmail || ''}
-                                                                                                    {effectiveDecision.decidedByEmail && effectiveDecision.decidedAt ? ' · ' : ''}
-                                                                                                    {effectiveDecision.decidedAt
-                                                                                                        ? fmtDate(effectiveDecision.decidedAt.toDate ? effectiveDecision.decidedAt.toDate() : effectiveDecision.decidedAt)
-                                                                                                        : ''}
-                                                                                                </span>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    ) : (
-                                                                                        <div>
-                                                                                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">HCSD decision</p>
-                                                                                            <div className="flex items-center gap-2 flex-wrap">
-                                                                                                <button
-                                                                                                    type="button"
-                                                                                                    onClick={() => handleRecordDecision(m.id, 'validated')}
-                                                                                                    disabled={!!pendingDecision}
-                                                                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-bold transition-colors"
-                                                                                                >
-                                                                                                    {pendingDecision === 'validated' ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-                                                                                                    Validate proof of work
-                                                                                                </button>
-                                                                                                <button
-                                                                                                    type="button"
-                                                                                                    onClick={() => handleRecordDecision(m.id, 'invalidated')}
-                                                                                                    disabled={!!pendingDecision}
-                                                                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[11px] font-bold transition-colors"
-                                                                                                >
-                                                                                                    {pendingDecision === 'invalidated' ? <Loader2 size={12} className="animate-spin" /> : <XCircle size={12} />}
-                                                                                                    Invalidate proof of work
-                                                                                                </button>
+                                                                                                <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
+                                                                                                    {pa.reasoning}
+                                                                                                </p>
+                                                                                                {Array.isArray(pa.visible_elements) && pa.visible_elements.length > 0 && (
+                                                                                                    <div className="mt-1 flex flex-wrap gap-1">
+                                                                                                        {pa.visible_elements.map((el, idx) => (
+                                                                                                            <span key={idx} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                                                                                                                {el}
+                                                                                                            </span>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                )}
                                                                                             </div>
-                                                                                            {decisionError && (
-                                                                                                <p className="mt-1.5 text-[11px] font-semibold text-rose-700 dark:text-rose-300">{decisionError}</p>
-                                                                                            )}
                                                                                         </div>
-                                                                                    )}
-                                                                                </div>
+                                                                                    );
+                                                                                })}
                                                                             </div>
-                                                                        );
-                                                                    })()}
-                                                                </div>
-                                                            )}
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                             <div className="mb-2">
                                                                 <button
                                                                     type="button"
