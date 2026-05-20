@@ -10,11 +10,14 @@ import { useAuth } from '../../context/AuthContext';
 import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { ROLES } from '../../config/roles';
-import { computeSlippage } from '../../utils/slippage';
+import { computeSlippage, deriveStatus } from '../../utils/slippage';
 
+// Three visually distinct hues so the donut + pill legend never collapses
+// to "two greens": Delayed = warm amber (caution), Ongoing = cool sky
+// (active in-progress), Completed = emerald (success).
 const SEGMENTS = [
     { label: 'Delayed',   color: '#f59e0b', dark: '#fbbf24' },
-    { label: 'Ongoing',   color: '#14b8a6', dark: '#2dd4bf' },
+    { label: 'Ongoing',   color: '#0ea5e9', dark: '#38bdf8' },
     { label: 'Completed', color: '#10b981', dark: '#34d399' },
 ];
 
@@ -98,7 +101,7 @@ const statusStyle = (status) => {
         return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20';
     if (s === 'DELAYED')
         return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20';
-    return 'bg-teal-50 text-teal-700 ring-1 ring-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:ring-teal-500/20';
+    return 'bg-sky-50 text-sky-700 ring-1 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/20';
 };
 
 const HcsdDashboard = () => {
@@ -139,11 +142,20 @@ const HcsdDashboard = () => {
             (snap) => {
                 const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                 const budget = data.reduce((a, c) => a + (Number(c.contractAmount) || 0), 0);
+                // Project counts as Delayed if either (a) its persisted
+                // status is "Delayed" (no engineer assigned, or the daily
+                // detectProjectSlippage cron has flipped it), or (b) it's
+                // still persisted as "Ongoing" but slippage > 0 — the cron
+                // hasn't run since the project started slipping. The cron
+                // catches up within 24h; this render-time fallback keeps the
+                // donut, the Slippage Alerts widget, and the persisted state
+                // in agreement immediately.
                 const dist = { delayed: 0, ongoing: 0, done: 0 };
                 data.forEach(p => {
                     const s = normalizeStatus(p.status).toUpperCase();
-                    if (s === 'COMPLETED') dist.done++;
-                    else if (s === 'DELAYED') dist.delayed++;
+                    if (s === 'COMPLETED') { dist.done++; return; }
+                    if (s === 'DELAYED')   { dist.delayed++; return; }
+                    if (computeSlippage(p).slippage > 0) dist.delayed++;
                     else dist.ongoing++;
                 });
                 setStats(p => ({ ...p, budget, projects: data.length }));
@@ -158,7 +170,10 @@ const HcsdDashboard = () => {
         return () => { unsubEng(); unsubProj(); };
     }, [tenantId]);
 
-    const recentProjects = useMemo(() => projects.slice(0, 5), [projects]);
+    // Show every tenant project — Status Distribution counts already
+    // reflect the full set, so the table must too. Long lists scroll
+    // inside the panel via the max-height on the wrapper below.
+    const recentProjects = projects;
 
     const slippingProjects = useMemo(() => {
         return projects
@@ -293,14 +308,16 @@ const HcsdDashboard = () => {
                             <div className="hidden sm:block sm:col-span-2 text-right">Progress</div>
                         </div>
 
-                        <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
+                        <div className="divide-y divide-slate-50 dark:divide-slate-700/50 max-h-[420px] overflow-y-auto">
                             {recentProjects.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-14 gap-2.5 text-slate-300 dark:text-slate-600">
                                     <FolderKanban size={36} strokeWidth={1.2} />
                                     <p className="text-sm font-medium text-slate-400 dark:text-slate-500">No active projects found.</p>
                                 </div>
                             ) : (
-                                recentProjects.map((project, i) => (
+                                recentProjects.map((project, i) => {
+                                    const displayStatus = deriveStatus(project);
+                                    return (
                                     <button
                                         key={i}
                                         type="button"
@@ -314,12 +331,17 @@ const HcsdDashboard = () => {
                                             {project.barangay ? `Brgy. ${project.barangay}` : '—'}
                                         </div>
                                         <div className="col-span-4 sm:col-span-2 flex items-center">
-                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold uppercase tracking-wide truncate ${statusStyle(project.status)}`}>
-                                                {normalizeStatus(project.status)}
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-bold uppercase tracking-wide truncate ${statusStyle(displayStatus)}`}>
+                                                {displayStatus}
                                             </span>
                                         </div>
                                         {(() => {
                                             const pct = project.actualPercent ?? project.progress ?? 0;
+                                            const s = displayStatus.toUpperCase();
+                                            const grad =
+                                                s === 'COMPLETED' ? 'linear-gradient(to right, #10b981, #34d399)' :
+                                                s === 'DELAYED'   ? 'linear-gradient(to right, #f59e0b, #fbbf24)' :
+                                                                    'linear-gradient(to right, #0ea5e9, #38bdf8)';
                                             return (
                                                 <div className="hidden sm:flex sm:col-span-2 items-center justify-end gap-2">
                                                     <div className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -327,7 +349,7 @@ const HcsdDashboard = () => {
                                                             className="h-full rounded-full transition-all duration-700"
                                                             style={{
                                                                 width: `${pct}%`,
-                                                                background: 'linear-gradient(to right, #0d9488, #10b981)',
+                                                                background: grad,
                                                             }}
                                                         />
                                                     </div>
@@ -338,7 +360,8 @@ const HcsdDashboard = () => {
                                             );
                                         })()}
                                     </button>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     </div>

@@ -8,6 +8,7 @@ import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestor
 import { db } from '../../config/firebase';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useAuth } from '../../context/AuthContext';
+import { deriveStatus } from '../../utils/slippage';
 
 const useProjectRegistry = () => {
     const navigate = useNavigate();
@@ -28,12 +29,17 @@ const useProjectRegistry = () => {
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const fetchedProjects = snapshot.docs.map(doc => {
                 const data = doc.data();
+                // Use the shared deriveStatus rule so the registry's
+                // status column matches the dashboard donut/Active
+                // Registry — including projects that slipped before the
+                // daily detectProjectSlippage cron caught up.
+                const displayStatus = deriveStatus(data);
                 return {
                     id: doc.id,
                     name: data.projectName,
                     barangay: data.barangay,
-                    status: normalizeStatus(data.status),
-                    statusColor: getStatusMeta(data.status),
+                    status: displayStatus,
+                    statusColor: getStatusMeta(displayStatus),
                     contractAmount: data.contractAmount,
                     progress: data.actualPercent || data.progress || 0,
                     contractor: data.contractor || null,
@@ -67,8 +73,8 @@ const useProjectRegistry = () => {
 
     const getStatusMeta = (status) => {
         switch (normalizeStatus(status).toLowerCase()) {
-            case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-teal-400' };
-            case 'ongoing':   return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30', bar: 'from-teal-500 to-emerald-400' };
+            case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-green-400' };
+            case 'ongoing':   return { pill: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30', bar: 'from-sky-500 to-cyan-400' };
             case 'delayed':   return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
             default:          return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300' };
         }

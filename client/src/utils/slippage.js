@@ -1,7 +1,9 @@
-// Single source of truth for project slippage math. Consumed by HCSD
-// Project Detail (Slippage / Days Delay stat tiles) and the HCSD
-// Dashboard Slippage Alerts widget. Kept dependency-free so both
-// surfaces compute identical numbers from the same project doc.
+// Single source of truth for project slippage math AND the derived
+// "display status" rule. Consumed by HCSD Project Detail (Slippage /
+// Days Delay stat tiles), HCSD Dashboard (Slippage Alerts widget,
+// Active Registry row pills, donut chart), and the HCSD Project
+// Registry (status column + status filter). Kept dependency-free so
+// every surface computes identical numbers from the same project doc.
 
 const diffDays = (a, b) => {
     if (!a || !b) return null;
@@ -36,4 +38,22 @@ export const computeSlippage = (project) => {
         slippage:    Math.round(slippage    * 10) / 10,
         daysDelay,
     };
+};
+
+// Returns the *display* status for a project — one of "Completed",
+// "Delayed", or "Ongoing". Rules:
+//   1. Completed (persisted) → "Completed"
+//   2. Delayed   (persisted) → "Delayed"
+//   3. Persisted "Ongoing" but slippage > 0 → "Delayed" (the daily
+//      detectProjectSlippage cron hasn't caught up yet; this keeps the
+//      UI in agreement with reality immediately)
+//   4. Anything else → "Ongoing"
+// Mirrors the donut-counter rule in HcsdDashboard so the row pill,
+// progress bar tint, status column, and donut all show one truth.
+export const deriveStatus = (project) => {
+    const raw = (project?.status || '').toLowerCase();
+    if (raw === 'completed') return 'Completed';
+    if (raw === 'delayed')   return 'Delayed';
+    if (computeSlippage(project).slippage > 0) return 'Delayed';
+    return 'Ongoing';
 };

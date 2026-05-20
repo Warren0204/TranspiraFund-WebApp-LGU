@@ -6,7 +6,7 @@ import {
     Shield, Clock, Activity, LogIn, LogOut,
     FolderKanban, UserPlus, UserX, UserCircle,
     FileX2, Trash2, KeyRound, ShieldOff,
-    Undo2,
+    Undo2, UserCog,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import { useUsers } from '../../hooks/useUsers';
@@ -68,6 +68,13 @@ const EVENT_META = {
         iconBg: 'from-orange-500 to-amber-400',
         role: 'HCSD',
     },
+    PROJECT_REASSIGNED: {
+        label: 'Engineer Reassigned',
+        pill: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',
+        Icon: UserCog,
+        iconBg: 'from-sky-500 to-cyan-400',
+        role: 'HCSD',
+    },
     NTP_REJECTED: {
         label: 'NTP Rejected',
         pill: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-500/30',
@@ -103,7 +110,7 @@ const FILTERS = [
     { key: 'ALL',     label: 'All',     actions: null },
     { key: 'AUTH',    label: 'Auth',    actions: ['USER_LOGIN', 'USER_LOGOUT', 'PASSWORD_CHANGED', 'SESSIONS_REVOKED'] },
     { key: 'PROFILE', label: 'Profile', actions: ['PHOTO_UPDATED'] },
-    { key: 'PROJECT', label: 'Project', actions: ['PROJECT_CREATED', 'PROJECT_ROLLED_BACK', 'NTP_REJECTED'] },
+    { key: 'PROJECT', label: 'Project', actions: ['PROJECT_CREATED', 'PROJECT_ROLLED_BACK', 'PROJECT_REASSIGNED', 'NTP_REJECTED'] },
     { key: 'STAFF',   label: 'Staff',   actions: ['ACCOUNT_CREATED', 'ACCOUNT_DELETED'] },
 ];
 
@@ -118,6 +125,7 @@ const getSubject = (log) => {
         case 'PHOTO_UPDATED':                return actorFallback();
         case 'PROJECT_CREATED':              return d.projectName || log.targetId || 'Untitled Project';
         case 'PROJECT_ROLLED_BACK':          return d.projectName || log.targetId || 'Untitled Project';
+        case 'PROJECT_REASSIGNED':           return d.projectName || log.targetId || 'Untitled Project';
         case 'NTP_REJECTED':                 return d.projectName || d.reason || log.targetId || 'NTP rejected';
         case 'ACCOUNT_CREATED':              return d.email || d.newUserEmail || log.targetId || 'Unknown Engineer';
         case 'ACCOUNT_DELETED':              return d.deletedEmail || d.email || log.targetId || 'Unknown Engineer';
@@ -143,9 +151,20 @@ const getSubjectDetail = (log) => {
                 ? 'Creation rolled back — NTP attach failed'
                 : 'Project creation rolled back';
         }
+        case 'PROJECT_REASSIGNED': {
+            return d.newEngineerEmail
+                ? `New engineer: ${d.newEngineerEmail}`
+                : 'Project Engineer reassigned';
+        }
         case 'NTP_REJECTED': return d.reason ? `Reason: ${d.reason}` : 'NTP upload blocked';
         case 'ACCOUNT_CREATED': return `${d.roleType || d.role || 'PROJ_ENG'} · ${d.department || 'CSDD, DEPW'}`;
-        case 'ACCOUNT_DELETED': return 'Account and access permanently removed';
+        case 'ACCOUNT_DELETED': {
+            const n = Number(d.unassignedActiveProjects) || 0;
+            if (n > 0) {
+                return `Account removed · ${n} active project${n !== 1 ? 's' : ''} unassigned`;
+            }
+            return 'Account and access permanently removed';
+        }
         default: return null;
     }
 };

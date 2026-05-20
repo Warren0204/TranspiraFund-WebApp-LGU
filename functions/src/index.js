@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten, onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2/options");
 const { defineSecret } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
@@ -120,6 +121,7 @@ const HCSD_AUDIT_ACTIONS = new Set([
     "PHOTO_UPDATED",
     "PROJECT_CREATED",
     "PROJECT_ROLLED_BACK",
+    "PROJECT_REASSIGNED",
     "NTP_REJECTED",
     "ACCOUNT_CREATED",
     "ACCOUNT_DELETED",
@@ -761,6 +763,98 @@ exports.deleteOfficialAccount = onCall(async (request) => {
     } catch (error) {
         logger.error("Error deleting user:", error);
         throw new HttpsError("internal", "Unable to delete account. Please try again.");
+    }
+});
+
+// Reassigns a project's Project Engineer. Used to recover orphaned projects
+// after a PE deletion (see deleteOfficialAccount above) — HCSD picks a
+// replacement PE from the Project Detail page's engineer card dropdown. Also
+// usable for routine reassignments. Validates the new PE is in the caller's
+// tenant, clears the unassignment audit fields, flips status back to Ongoing,
+// fires a PROJECT_ASSIGNED notification to the new engineer, and writes a
+// PROJECT_REASSIGNED HCSD audit row.
+const reassignProjectEngineerSchema = z.object({
+    projectId: z.string().min(1).max(128),
+    newEngineerUid: z.string().min(1).max(128),
+});
+
+exports.reassignProjectEngineer = onCall(async (request) => {
+    const { auth, data } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
+
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists || callerDoc.data().role !== "HCSD") {
+        throw new HttpsError("permission-denied", "Only HCSD personnel can reassign engineers.");
+    }
+
+    const parsed = reassignProjectEngineerSchema.safeParse(data);
+    if (!parsed.success) {
+        throw new HttpsError("invalid-argument", parsed.error.errors[0]?.message ?? "Invalid input.");
+    }
+    const { projectId, newEngineerUid } = parsed.data;
+
+    const projectRef = admin.firestore().collection("projects").doc(projectId);
+    const projectSnap = await projectRef.get();
+    if (!projectSnap.exists) {
+        throw new HttpsError("not-found", "Project not found.");
+    }
+    const project = projectSnap.data();
+    if (project.tenantId !== callerTenantId) {
+        throw new HttpsError("permission-denied", "Project belongs to a different tenant.");
+    }
+    if ((project.status || "").toLowerCase() === "completed") {
+        throw new HttpsError("failed-precondition", "Cannot reassign engineer on a Completed project.");
+    }
+    if (project.projectEngineer === newEngineerUid) {
+        throw new HttpsError("failed-precondition", "That engineer is already assigned.");
+    }
+
+    const peSnap = await admin.firestore().collection("users").doc(newEngineerUid).get();
+    if (!peSnap.exists) {
+        throw new HttpsError("not-found", "Engineer not found.");
+    }
+    const pe = peSnap.data();
+    if (pe.tenantId !== callerTenantId) {
+        throw new HttpsError("permission-denied", "Engineer is not in your tenant.");
+    }
+    if (pe.role !== "PROJ_ENG") {
+        throw new HttpsError("failed-precondition", "Target user is not a Project Engineer.");
+    }
+
+    const previousEngineer = project.projectEngineer || null;
+
+    try {
+        await projectRef.update({
+            projectEngineer: newEngineerUid,
+            status: "Ongoing",
+            engineerReassignedAt: admin.firestore.FieldValue.serverTimestamp(),
+            engineerUnassignedAt: admin.firestore.FieldValue.delete(),
+            engineerUnassignedReason: admin.firestore.FieldValue.delete(),
+        });
+
+        await logAudit(auth.uid, auth.token.email, "PROJECT_REASSIGNED", projectId, {
+            projectName: project.projectName,
+            previousEngineer,
+            newEngineer: newEngineerUid,
+            newEngineerEmail: pe.email || null,
+        }, callerTenantId);
+
+        await createNotification({
+            recipientUid: newEngineerUid,
+            action: "PROJECT_ASSIGNED",
+            severity: "info",
+            title: "New project assigned",
+            body: `${project.projectName}, ${project.barangay}`,
+            targetType: "project",
+            targetId: projectId,
+            tenantId: callerTenantId,
+        });
+
+        return { success: true };
+    } catch (error) {
+        logger.error("Error reassigning project engineer:", error);
+        throw new HttpsError("internal", "Unable to reassign engineer. Please try again.");
     }
 });
 
@@ -1776,6 +1870,149 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
         }
     },
 );
+
+// Daily slippage detector. Runs at 8 AM Manila time and flips any active
+// project whose computed slippage > 0 from "Ongoing" to "Delayed", stamping
+// slippageDetectedAt + slippagePercent. Fires a "system"-category
+// notification to both the HCSD creator and the assigned PE every morning
+// the project is still slipping — a daily reminder until the slippage is
+// resolved. (Recipients see one row per morning, severity warn; the title
+// distinguishes first-detection from a reminder so the inbox doesn't read
+// like an exact duplicate.) On recovery (slippage <= 0), clears the
+// slippage fields and restores status to "Ongoing" — only if no other
+// delay reason lingers (e.g. engineerUnassignedAt). Mirrors the slippage
+// formula in client/src/utils/slippage.js so the dashboard widget and the
+// persisted status field stay in agreement.
+const computeSlippagePercent = (project, now) => {
+    const start = project.officialDateStarted;
+    const end = project.originalDateCompletion;
+    if (!start || !end) return null;
+    const s = new Date(start).getTime();
+    const e = new Date(end).getTime();
+    if (isNaN(s) || isNaN(e) || e <= s) return null;
+    const timeElapsed = Math.min(100, Math.max(0, ((now - s) / (e - s)) * 100));
+    const actual = Number(project.actualPercent) || 0;
+    return Math.round((timeElapsed - actual) * 10) / 10;
+};
+
+const runSlippageScan = async () => {
+    const db = admin.firestore();
+    const snap = await db.collection("projects").get();
+    const now = Date.now();
+
+    let detected = 0;
+    let recovered = 0;
+    let stillSlipping = 0;
+
+    for (const doc of snap.docs) {
+        const p = doc.data();
+        const statusLower = (p.status || "").toLowerCase();
+
+        // Skip Completed (terminal) and projects with no assigned engineer
+        // (their Delayed state already reflects a different reason).
+        if (statusLower === "completed") continue;
+        if (!p.projectEngineer) continue;
+
+        const slippage = computeSlippagePercent(p, now);
+        if (slippage === null) continue;
+
+        const wasSlipping = !!p.slippageDetectedAt;
+        const isSlipping = slippage > 0;
+
+        if (isSlipping) {
+            // Persist the slippage state. Only stamp slippageDetectedAt on
+            // the first detection so it remains a record of when the
+            // project started slipping, but refresh slippagePercent every
+            // run so the latest number is on the doc.
+            const updates = { slippagePercent: slippage };
+            if (!wasSlipping) {
+                updates.status = "Delayed";
+                updates.slippageDetectedAt = admin.firestore.FieldValue.serverTimestamp();
+            }
+            await doc.ref.update(updates);
+
+            // Daily nag: notify both HCSD creator + PE every morning the
+            // project is still slipping. The first notification uses a
+            // "now Delayed" title; subsequent ones use "still Delayed"
+            // so the inbox reads naturally over multiple days.
+            const title = wasSlipping ? "Project still Delayed" : "Project is now Delayed";
+            const body = `${p.projectName || "Project"} is ${slippage}% behind schedule.`;
+            const baseNotif = {
+                action: "PROJECT_DELAYED",
+                severity: "warn",
+                category: "system",
+                title,
+                body,
+                targetType: "project",
+                targetId: doc.id,
+                metadata: {
+                    projectId: doc.id,
+                    projectName: p.projectName || null,
+                    slippagePercent: slippage,
+                    reminder: wasSlipping,
+                },
+                tenantId: p.tenantId,
+            };
+
+            if (p.createdBy) {
+                await createNotification({ ...baseNotif, recipientUid: p.createdBy });
+            }
+            if (p.projectEngineer && p.projectEngineer !== p.createdBy) {
+                await createNotification({ ...baseNotif, recipientUid: p.projectEngineer });
+            }
+
+            if (wasSlipping) stillSlipping++; else detected++;
+        } else if (wasSlipping) {
+            const updates = {
+                slippageDetectedAt: admin.firestore.FieldValue.delete(),
+                slippagePercent: admin.firestore.FieldValue.delete(),
+            };
+            if (!p.engineerUnassignedAt && p.projectEngineer) {
+                updates.status = "Ongoing";
+            }
+            await doc.ref.update(updates);
+            recovered++;
+        }
+    }
+
+    logger.info(`[detectProjectSlippage] detected=${detected} recovered=${recovered} stillSlipping=${stillSlipping}`);
+    return { detected, recovered, stillSlipping };
+};
+
+exports.detectProjectSlippage = onSchedule({
+    schedule: "0 8 * * *",
+    timeZone: "Asia/Manila",
+    region: "asia-southeast1",
+}, async () => {
+    try {
+        await runSlippageScan();
+    } catch (err) {
+        logger.error("[detectProjectSlippage] scan failed:", err);
+    }
+});
+
+// Manual trigger so HCSD can force a slippage refresh on demand (e.g.
+// immediately after deploying the auto-detector, or when an HCSD user
+// wants to validate state without waiting for the next 8 AM cron). MIS or
+// HCSD can call this; same tenant isolation as the cron's per-project
+// notification fan-out.
+exports.runSlippageScanNow = onCall(async (request) => {
+    const { auth } = request;
+    if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
+    if (!callerDoc.exists) throw new HttpsError("permission-denied", "User not found.");
+    const role = callerDoc.data().role;
+    if (role !== "HCSD" && role !== "MIS") {
+        throw new HttpsError("permission-denied", "Only HCSD or MIS can trigger this scan.");
+    }
+    try {
+        const result = await runSlippageScan();
+        return { success: true, ...result };
+    } catch (err) {
+        logger.error("[runSlippageScanNow] failed:", err);
+        throw new HttpsError("internal", "Slippage scan failed.");
+    }
+});
 
 exports.updateProfilePhoto = onCall(async (request) => {
     const { auth, data } = request;

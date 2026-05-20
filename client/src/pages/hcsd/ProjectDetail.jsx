@@ -1,20 +1,21 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
     Hash, Banknote, Flag, ExternalLink, ChevronDown, ChevronUp,
-    ImageIcon, X as XIcon, XCircle, HelpCircle
+    ImageIcon, X as XIcon, XCircle, HelpCircle, Check,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import NtpViewerModal from '../../components/shared/NtpViewerModal';
 import { doc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref as storageRef, listAll, getDownloadURL } from 'firebase/storage';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import exifr from 'exifr';
-import { db } from '../../config/firebase';
+import app, { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useUsers } from '../../hooks/useUsers';
-import { computeSlippage } from '../../utils/slippage';
+import { computeSlippage, deriveStatus } from '../../utils/slippage';
 
 const normalizeProof = (p) => {
     if (!p || typeof p !== 'object') return null;
@@ -53,8 +54,8 @@ const fmtCurrency = (amt) => {
 
 const statusMeta = (s) => {
     switch ((s || '').toLowerCase()) {
-        case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-teal-400', dot: 'bg-emerald-500' };
-        case 'ongoing':   return { pill: 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30',    bar: 'from-teal-500 to-emerald-400',  dot: 'bg-teal-500' };
+        case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-green-400', dot: 'bg-emerald-500' };
+        case 'ongoing':   return { pill: 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/30',                bar: 'from-sky-500 to-cyan-400',      dot: 'bg-sky-500' };
         case 'delayed':   return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300',  dot: 'bg-amber-400' };
         default:          return { pill: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30', bar: 'from-amber-400 to-yellow-300',  dot: 'bg-amber-400' };
     }
@@ -163,7 +164,58 @@ const ProjectDetail = () => {
     const [ntpViewerOpen, setNtpViewerOpen] = useState(false);
 
     const { tenantId } = useAuth();
-    const { usersMap } = useUsers();
+    const { users, usersMap, loading: usersLoading } = useUsers();
+
+    const [reassignTargetUid, setReassignTargetUid] = useState('');
+    const [isReassigning, setIsReassigning] = useState(false);
+    const [reassignError, setReassignError] = useState('');
+
+    const availableEngineers = useMemo(() => {
+        return users
+            .filter((u) => u.role === 'PROJ_ENG' && u.id !== project?.projectEngineer)
+            .map((u) => ({
+                id: u.id,
+                name: `Engr. ${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || u.id,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [users, project?.projectEngineer]);
+
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const pickerRef = useRef(null);
+    useEffect(() => {
+        if (!pickerOpen) return;
+        const onDocClick = (e) => {
+            if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') setPickerOpen(false); };
+        document.addEventListener('mousedown', onDocClick);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocClick);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [pickerOpen]);
+
+    const selectedEngineer = useMemo(
+        () => availableEngineers.find((e) => e.id === reassignTargetUid) || null,
+        [availableEngineers, reassignTargetUid],
+    );
+
+    const handleReassign = useCallback(async () => {
+        if (!reassignTargetUid || !id || isReassigning) return;
+        setIsReassigning(true);
+        setReassignError('');
+        try {
+            const functions = getFunctions(app, 'asia-southeast1');
+            const reassignFn = httpsCallable(functions, 'reassignProjectEngineer');
+            await reassignFn({ projectId: id, newEngineerUid: reassignTargetUid });
+            setReassignTargetUid('');
+        } catch (err) {
+            setReassignError(err?.message || 'Failed to reassign engineer.');
+        } finally {
+            setIsReassigning(false);
+        }
+    }, [reassignTargetUid, id, isReassigning]);
 
     useEffect(() => {
         if (!id) return;
@@ -281,6 +333,14 @@ const ProjectDetail = () => {
         return () => window.removeEventListener('keydown', onKey);
     }, [lightbox]);
 
+    // Orphan detection: a project can carry a `projectEngineer` UID whose
+    // user doc no longer exists — pre-existing data from before the
+    // auto-unassign side-effect shipped in `deleteOfficialAccount`. In that
+    // case the lookup returns nothing and we must NOT render the raw UID
+    // (terrible UX) — we treat it as "no engineer" so the reassignment
+    // dropdown surfaces, exactly as if `projectEngineer` were empty. We
+    // gate this on `usersLoading` to avoid flickering the dropdown during
+    // the initial users-snapshot fetch.
     const engineer = useMemo(() => {
         const pe = project?.projectEngineer;
         if (!pe) return null;
@@ -290,8 +350,9 @@ const ProjectDetail = () => {
             photoURL: u.photoURL || null,
             email: u.email || null,
         };
-        return { name: pe, photoURL: null, email: null };
-    }, [project?.projectEngineer, usersMap]);
+        if (usersLoading) return { name: '…', photoURL: null, email: null, _resolving: true };
+        return null;
+    }, [project?.projectEngineer, usersMap, usersLoading]);
 
     const milestoneProgress = useMemo(() => {
         const total = milestones.length;
@@ -305,7 +366,12 @@ const ProjectDetail = () => {
 
     const computed = useMemo(() => computeSlippage(project), [project, milestoneProgress]);
 
-    const st = statusMeta(project?.status);
+    // Header pill, status dot, and accomplishment progress bar all key off
+    // the *derived* status — same rule the dashboard donut and the registry
+    // status column use. Keeps the surfaces in sync immediately while the
+    // daily detectProjectSlippage cron catches up the persisted field.
+    const displayStatus = deriveStatus(project);
+    const st = statusMeta(displayStatus);
 
     if (loading) return (
         <div className="min-h-screen hcsd-bg font-sans">
@@ -358,7 +424,7 @@ const ProjectDetail = () => {
                         <div className="flex items-center gap-2.5 flex-wrap mb-2">
                             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border ${st.pill}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
-                                {p.status}
+                                {displayStatus}
                             </span>
                             {p.barangay && (
                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -420,11 +486,88 @@ const ProjectDetail = () => {
                                         </p>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30">
-                                        <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0" />
-                                        <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 leading-snug">
-                                            No engineer assigned — project needs reassignment
-                                        </p>
+                                    <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30 p-3 space-y-2.5">
+                                        <div className="flex items-center gap-2">
+                                            <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                                            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 leading-snug">
+                                                No engineer assigned — pick a replacement
+                                            </p>
+                                        </div>
+                                        {availableEngineers.length === 0 ? (
+                                            <p className="text-[11px] font-medium text-amber-700/80 dark:text-amber-300/80">
+                                                No Project Engineers available in this tenant. Create one in Staff Management first.
+                                            </p>
+                                        ) : (
+                                            <div className="flex flex-col sm:flex-row gap-2">
+                                                <div ref={pickerRef} className="relative flex-1 min-w-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => !isReassigning && setPickerOpen((o) => !o)}
+                                                        disabled={isReassigning}
+                                                        aria-haspopup="listbox"
+                                                        aria-expanded={pickerOpen}
+                                                        className="w-full inline-flex items-center justify-between gap-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-white dark:bg-slate-800 px-3 py-2 text-left hover:border-amber-400 dark:hover:border-amber-400/60 focus:outline-none focus:ring-2 focus:ring-teal-500/40 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                                    >
+                                                        {selectedEngineer ? (
+                                                            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">
+                                                                {selectedEngineer.name}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs font-medium text-slate-400 dark:text-slate-500">
+                                                                Select engineer…
+                                                            </span>
+                                                        )}
+                                                        <ChevronDown size={14} className={`shrink-0 text-slate-400 dark:text-slate-500 transition-transform duration-150 ${pickerOpen ? 'rotate-180' : ''}`} />
+                                                    </button>
+                                                    {pickerOpen && (
+                                                        <ul role="listbox"
+                                                            className="absolute z-30 left-0 right-0 mt-1.5 max-h-56 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg shadow-slate-900/10 dark:shadow-black/40 py-1"
+                                                        >
+                                                            {availableEngineers.map((eng) => {
+                                                                const isSelected = eng.id === reassignTargetUid;
+                                                                return (
+                                                                    <li key={eng.id} role="option" aria-selected={isSelected}>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setReassignTargetUid(eng.id);
+                                                                                setReassignError('');
+                                                                                setPickerOpen(false);
+                                                                            }}
+                                                                            className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition-colors ${
+                                                                                isSelected
+                                                                                    ? 'bg-teal-50 dark:bg-teal-900/30'
+                                                                                    : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                                                                            }`}
+                                                                        >
+                                                                            <span className={`text-xs font-semibold ${isSelected ? 'text-teal-700 dark:text-teal-300' : 'text-slate-700 dark:text-slate-200'}`}>
+                                                                                {eng.name}
+                                                                            </span>
+                                                                            {isSelected && (
+                                                                                <Check size={13} className="text-teal-600 dark:text-teal-400 shrink-0" />
+                                                                            )}
+                                                                        </button>
+                                                                    </li>
+                                                                );
+                                                            })}
+                                                        </ul>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleReassign}
+                                                    disabled={!reassignTargetUid || isReassigning}
+                                                    className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-bold transition-colors"
+                                                >
+                                                    {isReassigning ? 'Reassigning…' : 'Reassign'}
+                                                </button>
+                                            </div>
+                                        )}
+                                        {reassignError && (
+                                            <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                                                {reassignError}
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
