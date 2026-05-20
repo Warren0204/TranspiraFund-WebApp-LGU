@@ -714,17 +714,50 @@ exports.deleteOfficialAccount = onCall(async (request) => {
         const targetEmail = targetData.email ?? null;
         const targetRole = targetData.role ?? null;
 
+        // Auto-unassign active projects assigned to a PE being deleted. Runs
+        // BEFORE Auth + Firestore user delete so a partial failure leaves the
+        // call retryable without an orphaned Auth user. Completed projects
+        // keep the dangling UID as a historical "who did this work" record.
+        let unassignedActiveProjects = 0;
+        if (targetData.role === "PROJ_ENG") {
+            const assignedSnap = await admin.firestore().collection("projects")
+                .where("tenantId", "==", callerTenantId)
+                .where("projectEngineer", "==", uid)
+                .get();
+
+            const activeDocs = assignedSnap.docs.filter((d) => {
+                const status = (d.data().status || "").toLowerCase();
+                return status !== "completed";
+            });
+
+            for (let i = 0; i < activeDocs.length; i += 400) {
+                const chunk = activeDocs.slice(i, i + 400);
+                const batch = admin.firestore().batch();
+                chunk.forEach((d) => {
+                    batch.update(d.ref, {
+                        projectEngineer: "",
+                        status: "Delayed",
+                        engineerUnassignedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        engineerUnassignedReason: "PE account deleted",
+                    });
+                });
+                await batch.commit();
+            }
+            unassignedActiveProjects = activeDocs.length;
+        }
+
         await admin.auth().deleteUser(uid);
         await admin.firestore().collection("users").doc(uid).delete();
 
         if (callerRole === "MIS") {
             await logSystemAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED",
-                { uid, email: targetEmail, role: targetRole }, "SUCCESS", null, callerTenantId);
+                { uid, email: targetEmail, role: targetRole, unassignedActiveProjects }, "SUCCESS", null, callerTenantId);
         } else {
-            await logAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED", uid, { deletedEmail: targetEmail }, callerTenantId);
+            await logAudit(auth.uid, auth.token.email, "ACCOUNT_DELETED", uid,
+                { deletedEmail: targetEmail, unassignedActiveProjects }, callerTenantId);
         }
 
-        return { success: true, message: "Account deleted successfully." };
+        return { success: true, message: "Account deleted successfully.", unassignedActiveProjects };
     } catch (error) {
         logger.error("Error deleting user:", error);
         throw new HttpsError("internal", "Unable to delete account. Please try again.");
@@ -1476,12 +1509,18 @@ exports.onProjectWritten = onDocumentWritten("projects/{projectId}", async () =>
         const projectCount = projects.length;
         const totalBudget = projects.reduce((acc, p) => acc + (Number(p.contractAmount) || 0), 0);
 
+        // Case-insensitive status matching — keeps stats accurate even if a
+        // legacy/manually-edited doc carries "completed", "ONGOING", etc.
+        // Mirrors the comparison style used everywhere else (statusMeta,
+        // normalizeStatus, recomputeProjectActualPercent's rollup guard).
+        const statusOf = (p) => (p.status || "").toLowerCase();
+
         const now = new Date();
-        const done = projects.filter(p => p.status === "Completed").length;
-        const delayed = projects.filter(p => p.status === "Delayed").length;
-        const ongoing = projects.filter(p => p.status === "Ongoing").length;
+        const done = projects.filter(p => statusOf(p) === "completed").length;
+        const delayed = projects.filter(p => statusOf(p) === "delayed").length;
+        const ongoing = projects.filter(p => statusOf(p) === "ongoing").length;
         const delay = projects.filter(p => {
-            if (p.status === "Completed") return false;
+            if (statusOf(p) === "completed") return false;
             const completionDate = p.originalDateCompletion || p.revisedDate2 || p.revisedDate1;
             return completionDate ? new Date(completionDate) < now : false;
         }).length;
@@ -1707,9 +1746,31 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
             }).length;
 
             const actualPercent = Math.round((completed / confirmed.length) * 100);
+            const updates = { actualPercent };
+
+            // Forward-only status rollup: when all confirmed milestones are
+            // done, persist project.status = "Completed" so every consumer
+            // (HCSD filters, dashboards, deleteOfficialAccount's
+            // active-vs-completed filter) sees one source of truth. Mobile's
+            // client-side deriveStatus() already returns "Completed" in this
+            // state; this just makes the persisted field catch up. We don't
+            // auto-revert Completed → Ongoing if a milestone gets un-marked
+            // — that's rare and slightly destructive; HCSD can change it
+            // manually if needed.
+            if (actualPercent === 100) {
+                const projectSnap = await admin.firestore()
+                    .collection("projects").doc(projectId).get();
+                const current = projectSnap.data() || {};
+                if ((current.status || "").toLowerCase() !== "completed") {
+                    updates.status = "Completed";
+                    if (!current.actualDateCompleted) {
+                        updates.actualDateCompleted = new Date().toISOString().split("T")[0];
+                    }
+                }
+            }
 
             await admin.firestore().collection("projects").doc(projectId)
-                .update({ actualPercent });
+                .update(updates);
         } catch (err) {
             logger.error(`[recomputeProjectActualPercent] ${projectId}:`, err);
         }
