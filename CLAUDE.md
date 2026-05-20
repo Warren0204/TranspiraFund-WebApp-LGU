@@ -139,6 +139,8 @@ All fields stored on the project document:
 - **Notes**: `remarks`, `actionTaken`
 - **System**: `status` ("Delayed" if no engineer assigned, "Ongoing" if engineer assigned), `progress` (0), `createdBy`, `createdAt`
 
+**PE deletion side-effect.** When HCSD deletes a Project Engineer via `deleteOfficialAccount`, every active (non-Completed) project assigned to them is auto-unassigned in the same call: `projectEngineer` is cleared to `""`, `status` reverts to `"Delayed"`, and `engineerUnassignedAt` / `engineerUnassignedReason` are stamped. Completed projects keep the deleted engineer's UID as a historical "who did this work" record. The `ACCOUNT_DELETED` audit entry includes `unassignedActiveProjects` for forensic traceability, and the callable returns the count so the Staff Management page can surface a "N project(s) need a new engineer" toast. The Project Detail page renders an amber "No engineer assigned — project needs reassignment" prompt in place of the engineer card whenever `projectEngineer` is empty.
+
 ### Proof-of-Work Photos
 Mobile engineers upload geotagged phase photos to Storage at `projects/{projectId}/milestones/{milestoneId}/proofs/{capturedAt}.jpg` (filename pattern enforced by `storage.rules`) and append a metadata entry to the parent milestone's `proofs[]` array in Firestore.
 
@@ -158,6 +160,8 @@ Mobile engineers upload geotagged phase photos to Storage at `projects/{projectI
 
 ## Project Status Workflow
 Valid project statuses: `Delayed` → `Ongoing` → `Completed`. `Returned` is used when a project is sent back for revision. `Delayed` means created but no engineer assigned yet; `Ongoing` means an engineer is assigned and work is active. The former `"Draft"` and `"For Mayor"` statuses are retired — both normalize to `Ongoing` for display. New projects auto-set to `"Delayed"` (no engineer) or `"Ongoing"` (engineer assigned) on creation.
+
+**Milestone-driven completion rollup.** When every confirmed milestone is marked done (`actualPercent` reaches 100%), the `recomputeProjectActualPercent` trigger also persists `status="Completed"` and stamps `actualDateCompleted` (if missing). The rollup is **forward-only** — un-marking a milestone does not auto-revert `Completed` back to `Ongoing`, since that scenario is rare and HCSD can adjust manually. All `onProjectWritten` status counters are case-insensitive so a manually-edited legacy doc carrying `"completed"` / `"ONGOING"` still rolls up correctly. To reconcile pre-existing projects that hit 100% before this trigger extension was deployed, run `scripts/backfill-completed-status.js` (defaults to dry run; pass `--apply` to commit).
 
 ## Key Conventions
 - Cloud Functions use **v2 API** (`firebase-functions/v2`)

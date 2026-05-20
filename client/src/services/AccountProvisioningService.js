@@ -31,7 +31,8 @@ const AccountProvisioningService = {
     deleteAccount: async (uid) => {
         const functions = getFunctions(app, 'asia-southeast1');
         const deleteOfficialAccount = httpsCallable(functions, 'deleteOfficialAccount');
-        await deleteOfficialAccount({ uid });
+        const result = await deleteOfficialAccount({ uid });
+        return result.data ?? {};
     },
 };
 

@@ -34,9 +34,18 @@ const useOtpVerification = () => {
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [resendCountdown, setResendCountdown] = useState(0);
 
   const inputRefs = useRef([]);
   const hasSent = useRef(false);
+
+  useEffect(() => {
+    if (resendCountdown <= 0) return undefined;
+    const id = setInterval(() => {
+      setResendCountdown((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resendCountdown]);
 
   useEffect(() => {
     if (!userEmail) {
@@ -58,6 +67,7 @@ const useOtpVerification = () => {
   }, [isSending]);
 
   const sendOtpCode = async () => {
+    if (resendCountdown > 0) return;
     setIsSending(true);
     setError('');
     setSuccessMsg('');
@@ -67,8 +77,19 @@ const useOtpVerification = () => {
       const sendOtp = httpsCallable(functions, 'sendOtp');
       await sendOtp();
       setSuccessMsg('Verification code sent to your email.');
+      setResendCountdown(60);
     } catch (err) {
-      setError(err.message || 'Unable to send verification code. Please try again.');
+      const message = err.message || 'Unable to send verification code. Please try again.';
+      setError(message);
+      // Server enforces the cooldown too — if it rejects us with
+      // "Please wait X second(s)…" (the sendOtp Cloud Function's
+      // resource-exhausted error), seed the client timer from it so the
+      // UI stays in sync even after a reload.
+      const match = /(\d+)\s*second/i.exec(message);
+      if (match) {
+        const secs = Math.min(60, Math.max(1, Number(match[1]) || 0));
+        setResendCountdown(secs);
+      }
     } finally {
       setIsSending(false);
     }
@@ -140,7 +161,7 @@ const useOtpVerification = () => {
   };
 
   return {
-    otp, userEmail, isSending, isVerifying, error, successMsg,
+    otp, userEmail, isSending, isVerifying, error, successMsg, resendCountdown,
     inputRefs, handleDigitChange, handleKeyDown, handleVerify, sendOtpCode, handlePaste
   };
 };
@@ -148,7 +169,7 @@ const useOtpVerification = () => {
 const Authentication = () => {
   const navigate = useNavigate();
   const {
-    otp, userEmail, isSending, isVerifying, error, successMsg,
+    otp, userEmail, isSending, isVerifying, error, successMsg, resendCountdown,
     inputRefs, handleDigitChange, handleKeyDown, handleVerify, sendOtpCode, handlePaste
   } = useOtpVerification();
 
@@ -276,12 +297,16 @@ const Authentication = () => {
 
           <button
             onClick={sendOtpCode}
-            disabled={isSending}
-            className="mt-6 text-sm font-semibold text-teal-700 hover:text-teal-800 transition-colors flex items-center justify-center gap-2 mx-auto"
+            disabled={isSending || resendCountdown > 0}
+            className={`mt-6 text-sm font-semibold transition-colors flex items-center justify-center gap-2 mx-auto ${
+              isSending || resendCountdown > 0
+                ? 'text-slate-400 cursor-not-allowed'
+                : 'text-teal-700 hover:text-teal-800'
+            }`}
             aria-label="Resend verification code"
           >
             <RefreshCw size={14} className={isSending ? 'animate-spin' : ''} aria-hidden="true" />
-            Resend Code
+            {resendCountdown > 0 ? `Resend in ${resendCountdown}s` : 'Resend Code'}
           </button>
 
           <div className="mt-10 flex items-center justify-center gap-2 text-xs text-slate-400 font-semibold tracking-wide uppercase">

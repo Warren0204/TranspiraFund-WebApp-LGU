@@ -105,7 +105,11 @@ const useStaffLogic = () => {
                     s.email.toLowerCase().includes(lowerTerm)
                 );
             })();
-        return base.map(s => ({ ...s, projects: projectsByEngineer[s.id] || [] }));
+        return base.map(s => {
+            const projects = projectsByEngineer[s.id] || [];
+            const activeCount = projects.filter(p => (p.status || '').toLowerCase() !== 'completed').length;
+            return { ...s, projects, activeCount };
+        });
     }, [staff, debouncedSearchTerm, projectsByEngineer]);
 
     const [provisionForm, setProvisionForm] = useState({ firstName: '', lastName: '', email: '' });
@@ -122,8 +126,19 @@ const useStaffLogic = () => {
     const legacyKeyCount = useMemo(() => {
         if (staff.length === 0) return 0;
         const uidSet = new Set(staff.map(s => s.id));
-        return Object.keys(projectsByEngineer).filter(k => !uidSet.has(k)).length;
+        // Genuine legacy data uses display-name strings ("Engr. Juan Cruz",
+        // "Maria Santos"). Firebase Auth UIDs are 28-char alphanumeric and
+        // contain neither whitespace nor the "Engr." honorific — so orphan
+        // UIDs left on Completed projects after a PE deletion no longer get
+        // mislabeled as legacy.
+        const looksLikeDisplayName = (k) => /\s/.test(k) || /^engr\.?\s/i.test(k);
+        return Object.keys(projectsByEngineer)
+            .filter(k => !uidSet.has(k) && looksLikeDisplayName(k))
+            .length;
     }, [staff, projectsByEngineer]);
+
+    const [deleteToast, setDeleteToast] = useState(null);
+    const dismissDeleteToast = () => setDeleteToast(null);
 
     const [isBackfilling, setIsBackfilling] = useState(false);
     const [backfillResult, setBackfillResult] = useState(null);
@@ -151,9 +166,16 @@ const useStaffLogic = () => {
         setIsRevoking(true);
         setProvisionError(null);
         try {
-            await AccountProvisioningService.deleteAccount(deleteCandidateId);
+            const result = await AccountProvisioningService.deleteAccount(deleteCandidateId);
             setIsRevoking(false);
             setDeleteCandidateId(null);
+            const n = Number(result?.unassignedActiveProjects) || 0;
+            if (n > 0) {
+                setDeleteToast({
+                    count: n,
+                    message: `Engineer deleted. ${n} project${n !== 1 ? 's' : ''} ${n !== 1 ? 'are' : 'is'} now unassigned and need${n === 1 ? 's' : ''} a new engineer assignment.`,
+                });
+            }
         } catch (error) {
             setIsRevoking(false);
             setProvisionError(error.message || "Failed to revoke access.");
@@ -227,7 +249,8 @@ const useStaffLogic = () => {
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
         confirmingAccount, isSending, credentialsSent, handleGenerateCredentials, handleCloseSuccess, cancelProvision,
         provisionError, successEmail,
-        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult
+        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult,
+        deleteToast, dismissDeleteToast,
     };
 };
 
@@ -595,7 +618,8 @@ const StaffManagement = () => {
         deleteCandidateId, confirmRevoke, cancelRevoke, isRevoking,
         confirmingAccount, isSending, credentialsSent, handleGenerateCredentials, handleCloseSuccess, cancelProvision,
         provisionError, successEmail,
-        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult
+        legacyKeyCount, isBackfilling, backfillResult, backfillError, runBackfill, dismissBackfillResult,
+        deleteToast, dismissDeleteToast,
     } = useStaffLogic();
 
     const [selectedEngineer, setSelectedEngineer] = useState(null);
@@ -635,6 +659,27 @@ const StaffManagement = () => {
                         </button>
                     </div>
                 </div>
+
+                {deleteToast && (
+                    <div className="mb-6 rounded-2xl border border-teal-200 dark:border-teal-500/30 bg-teal-50/80 dark:bg-teal-900/20 p-4 sm:p-5 flex items-start gap-4"
+                        style={{ animation: 'fadeIn 0.4s ease-out both' }}>
+                        <div className="w-10 h-10 rounded-xl bg-teal-500/15 dark:bg-teal-400/20 flex items-center justify-center shrink-0">
+                            <AlertTriangle size={18} className="text-teal-700 dark:text-teal-300" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-teal-900 dark:text-teal-100">
+                                {deleteToast.count} project{deleteToast.count !== 1 ? 's' : ''} need{deleteToast.count === 1 ? 's' : ''} a new engineer
+                            </p>
+                            <p className="text-xs font-medium text-teal-800/80 dark:text-teal-200/80 mt-0.5">
+                                {deleteToast.message}
+                            </p>
+                        </div>
+                        <button onClick={dismissDeleteToast} aria-label="Dismiss"
+                            className="shrink-0 w-8 h-8 rounded-lg hover:bg-teal-500/15 dark:hover:bg-teal-400/20 flex items-center justify-center text-teal-700 dark:text-teal-300 transition-colors">
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
 
                 {legacyKeyCount > 0 && !backfillResult && (
                     <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-900/20 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4"
@@ -781,9 +826,16 @@ const StaffManagement = () => {
                                     </div>
 
                                     <div className="col-span-4 sm:col-span-2 flex items-center justify-end gap-2">
-                                        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-bold text-xs transition-all ${s.projects.length > 0 ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'}`}>
-                                            <FolderKanban size={11} />
-                                            <span>{s.projects.length}</span>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide border whitespace-nowrap ${s.activeCount > 0
+                                                ? 'bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-500/30'
+                                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600'}`}>
+                                                {s.activeCount > 0 ? `Engaged · ${s.activeCount}` : 'Available'}
+                                            </span>
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg font-bold text-[11px] transition-all ${s.projects.length > 0 ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                                                <FolderKanban size={10} />
+                                                <span>{s.projects.length}</span>
+                                            </div>
                                         </div>
                                         <ArrowRight size={14} className="text-slate-300 dark:text-slate-600 group-hover:text-teal-500 dark:group-hover:text-teal-400 transition-colors shrink-0" />
                                     </div>

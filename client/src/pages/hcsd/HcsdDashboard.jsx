@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Wallet, Users, FolderKanban, ArrowRight,
@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { ROLES } from '../../config/roles';
+import { computeSlippage } from '../../utils/slippage';
 
 const SEGMENTS = [
     { label: 'Delayed',   color: '#f59e0b', dark: '#fbbf24' },
@@ -64,7 +65,6 @@ const DonutChart = ({ statusDist, total, isDark }) => {
             <div className="grid grid-cols-3 gap-2">
                 {SEGMENTS.map((seg, i) => {
                     const count = values[i] || 0;
-                    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                     return (
                         <div key={i} className="flex flex-col items-center gap-1 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40">
                             <span className="w-2 h-2 rounded-full shrink-0"
@@ -74,7 +74,6 @@ const DonutChart = ({ statusDist, total, isDark }) => {
                             </span>
                             <span className="text-sm font-black text-slate-700 dark:text-slate-200 tabular-nums">
                                 {count}
-                                <span className="text-[10px] font-semibold text-slate-400 ml-0.5">({pct}%)</span>
                             </span>
                         </div>
                     );
@@ -108,7 +107,7 @@ const HcsdDashboard = () => {
     const navigate = useNavigate();
 
     const [stats, setStats]           = useState({ budget: 0, engineers: 0, projects: 0 });
-    const [recentProjects, setRecent] = useState([]);
+    const [projects, setProjects]     = useState([]);
     const [statusDist, setDist]       = useState({ delayed: 0, ongoing: 0, done: 0 });
 
     useEffect(() => {
@@ -148,7 +147,7 @@ const HcsdDashboard = () => {
                     else dist.ongoing++;
                 });
                 setStats(p => ({ ...p, budget, projects: data.length }));
-                setRecent(data.slice(0, 5));
+                setProjects(data);
                 setDist(dist);
             },
             (error) => {
@@ -158,6 +157,16 @@ const HcsdDashboard = () => {
 
         return () => { unsubEng(); unsubProj(); };
     }, [tenantId]);
+
+    const recentProjects = useMemo(() => projects.slice(0, 5), [projects]);
+
+    const slippingProjects = useMemo(() => {
+        return projects
+            .filter(p => (p.status || '').toLowerCase() !== 'completed')
+            .map(p => ({ ...p, _slip: computeSlippage(p) }))
+            .filter(p => p._slip.slippage > 0)
+            .sort((a, b) => b._slip.slippage - a._slip.slippage);
+    }, [projects]);
 
     const fmtBudget = (val) => {
         if (val >= 1_000_000_000) return `₱${(val / 1_000_000_000).toFixed(2)}B`;
@@ -292,9 +301,11 @@ const HcsdDashboard = () => {
                                 </div>
                             ) : (
                                 recentProjects.map((project, i) => (
-                                    <div
+                                    <button
                                         key={i}
-                                        className="grid grid-cols-12 items-center px-4 sm:px-6 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer group transition-colors duration-150"
+                                        type="button"
+                                        onClick={() => navigate(`/hcsd/projects/${project.id}`)}
+                                        className="w-full text-left grid grid-cols-12 items-center px-4 sm:px-6 py-3.5 hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer group transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60 focus-visible:ring-inset"
                                     >
                                         <div className="col-span-8 sm:col-span-5 text-sm font-semibold text-slate-800 dark:text-slate-200 truncate pr-2 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors duration-150">
                                             {project.projectName || 'Untitled Project'}
@@ -326,7 +337,7 @@ const HcsdDashboard = () => {
                                                 </div>
                                             );
                                         })()}
-                                    </div>
+                                    </button>
                                 ))
                             )}
                         </div>
@@ -340,16 +351,50 @@ const HcsdDashboard = () => {
                                     <AlertTriangle size={15} className="text-red-500 shrink-0" />
                                     <span className="truncate">Slippage Alerts</span>
                                 </h3>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-600 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20 shrink-0 whitespace-nowrap">
-                                    0 Critical
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ring-1 shrink-0 whitespace-nowrap ${
+                                    slippingProjects.length > 0
+                                        ? 'bg-red-50 text-red-600 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20'
+                                        : 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20'
+                                }`}>
+                                    {slippingProjects.length} Critical
                                 </span>
                             </div>
-                            <div className="flex flex-col items-center justify-center py-8 gap-2.5 text-slate-300 dark:text-slate-600">
-                                <AlertTriangle size={30} strokeWidth={1.2} />
-                                <p className="text-xs font-medium text-slate-400 dark:text-slate-500 text-center">
-                                    No critical alerts detected.
-                                </p>
-                            </div>
+                            {slippingProjects.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-8 gap-2.5 text-slate-300 dark:text-slate-600">
+                                    <AlertTriangle size={30} strokeWidth={1.2} />
+                                    <p className="text-xs font-medium text-slate-400 dark:text-slate-500 text-center">
+                                        No critical alerts detected.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col gap-1.5">
+                                    {slippingProjects.slice(0, 5).map((project) => (
+                                        <button
+                                            key={project.id}
+                                            type="button"
+                                            onClick={() => navigate(`/hcsd/projects/${project.id}`)}
+                                            className="w-full text-left flex items-center justify-between gap-3 px-2.5 py-2 rounded-lg hover:bg-red-50/60 dark:hover:bg-red-500/5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+                                        >
+                                            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate group-hover:text-red-600 min-w-0 flex-1">
+                                                {project.projectName || 'Untitled Project'}
+                                            </span>
+                                            <span className="flex items-baseline gap-1.5 shrink-0">
+                                                <span className="text-xs font-black text-red-600 dark:text-red-400 tabular-nums">
+                                                    +{project._slip.slippage}%
+                                                </span>
+                                                <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 tabular-nums">
+                                                    · {project._slip.daysDelay}d
+                                                </span>
+                                            </span>
+                                        </button>
+                                    ))}
+                                    {slippingProjects.length > 5 && (
+                                        <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 text-center pt-1.5">
+                                            +{slippingProjects.length - 5} more behind schedule
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div className="bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-white/[0.07] shadow-md shadow-slate-200/50 dark:shadow-black/20 p-5">

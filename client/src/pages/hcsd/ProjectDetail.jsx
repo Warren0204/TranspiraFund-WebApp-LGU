@@ -14,6 +14,7 @@ import exifr from 'exifr';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useUsers } from '../../hooks/useUsers';
+import { computeSlippage } from '../../utils/slippage';
 
 const normalizeProof = (p) => {
     if (!p || typeof p !== 'object') return null;
@@ -49,14 +50,6 @@ const fmtCurrency = (amt) => {
     if (!amt && amt !== 0) return '—';
     return `₱${Number(amt).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 };
-
-const diffDays = (a, b) => {
-    if (!a || !b) return null;
-    const ms = new Date(b) - new Date(a);
-    return isNaN(ms) ? null : Math.round(ms / 86400000);
-};
-
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const statusMeta = (s) => {
     switch ((s || '').toLowerCase()) {
@@ -310,32 +303,7 @@ const ProjectDetail = () => {
         return { total, completed, percent };
     }, [milestones]);
 
-    const computed = useMemo(() => {
-        if (!project) return {};
-        const start = project.officialDateStarted;
-        const end   = project.originalDateCompletion;
-        const actual = Number(project.actualPercent) || 0;
-        const durationDays = diffDays(start, end);
-
-        let timeElapsed = 0;
-        if (start && end) {
-            const now = Date.now();
-            const s = new Date(start).getTime();
-            const e = new Date(end).getTime();
-            timeElapsed = clamp(((now - s) / (e - s)) * 100, 0, 100);
-        }
-        const slippage = timeElapsed - actual;
-        const daysDelay = slippage > 0 && durationDays
-            ? Math.round((slippage / 100) * durationDays)
-            : 0;
-
-        return {
-            durationDays,
-            timeElapsed: Math.round(timeElapsed * 10) / 10,
-            slippage:    Math.round(slippage    * 10) / 10,
-            daysDelay,
-        };
-    }, [project, milestoneProgress]);
+    const computed = useMemo(() => computeSlippage(project), [project, milestoneProgress]);
 
     const st = statusMeta(project?.status);
 
@@ -452,7 +420,12 @@ const ProjectDetail = () => {
                                         </p>
                                     </div>
                                 ) : (
-                                    <p className="text-sm font-medium text-slate-400 dark:text-slate-600">—</p>
+                                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30">
+                                        <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                                        <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 leading-snug">
+                                            No engineer assigned — project needs reassignment
+                                        </p>
+                                    </div>
                                 )}
                             </div>
                             <Field label="Project Inspector" value={fmt(p.projectInspector)} />
