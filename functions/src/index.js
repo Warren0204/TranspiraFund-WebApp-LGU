@@ -24,6 +24,22 @@ const createTransporter = () => nodemailer.createTransport({
     },
 });
 
+// Pure helpers + canonical constants for classification and milestone coherence.
+// Kept in a dependency-free module so they can be unit-tested without mocking
+// firebase-admin or the Anthropic SDK.
+const {
+    PROJECT_TYPE_ENUM,
+    TYPICAL_DURATION_DAYS,
+    VOCAB_TERMS,
+    VOCAB_REGEX,
+    computeDurationFlag,
+    decideClassification,
+    checkVocabulary,
+    checkDurationSum,
+    classificationGatePasses,
+    parseAndValidateDuration,
+} = require("./lib/classification");
+
 const createAccountSchema = z.object({
     email: z.string().email().max(100),
     firstName: z.string().min(2).max(50).regex(/^[a-zA-Z\s\-']+$/, "First name contains invalid characters"),
@@ -61,6 +77,8 @@ const createProjectSchema = z.object({
     incurredAmount: z.number().min(0).optional(),
     remarks: z.string().max(1000).optional(),
     actionTaken: z.string().max(1000).optional(),
+    projectType: z.enum(PROJECT_TYPE_ENUM).optional(),
+    classificationConfidence: z.number().min(0).max(1).optional(),
 });
 
 const provisionTenantSchema = z.object({
@@ -883,6 +901,14 @@ exports.createProject = onCall(async (request) => {
         Object.entries(parsed.data).filter(([, v]) => v !== undefined && v !== null)
     );
 
+    // Default classification fields when client omits them (e.g. legacy clients
+    // not yet updated to call validateProjectClassification first). Treated as
+    // "unverified" by generateMilestones, which will gate on these values.
+    projectFields.projectType = projectFields.projectType || "unknown";
+    projectFields.classificationConfidence = typeof projectFields.classificationConfidence === "number"
+        ? projectFields.classificationConfidence
+        : 0;
+
     if (projectFields.projectEngineer) {
         const peDoc = await admin.firestore().collection("users").doc(projectFields.projectEngineer).get();
         if (!peDoc.exists || peDoc.data().tenantId !== callerTenantId) {
@@ -904,6 +930,8 @@ exports.createProject = onCall(async (request) => {
             projectName: projectFields.projectName,
             contractAmount: projectFields.contractAmount,
             barangay: projectFields.barangay,
+            projectType: projectFields.projectType,
+            classificationConfidence: projectFields.classificationConfidence,
         }, callerTenantId);
 
         if (projectFields.projectEngineer) {
@@ -2117,6 +2145,191 @@ exports.updateProfile = onCall(async (request) => {
 const Anthropic = require("@anthropic-ai/sdk").default;
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 
+// ─── Project-name classifier (gatekeeper for project creation) ─────────────
+// Two-tier semantic validation: before HCSD writes a project document, the
+// project name is sent to Haiku 4.5 with a forced classification tool. The
+// classifier judges category (infrastructure scope) only; funding source is
+// captured elsewhere on the form.
+
+const CLASSIFIER_SYSTEM_PROMPT = `You are a project intake gatekeeper for the Construction Services Division of the Cebu City Department of Engineering and Public Works (DEPW). Your role is to classify whether a proposed project name describes a barangay-level infrastructure project that the division would supervise after a Notice to Proceed, and to compare its contract duration against the typical duration band for that type.
+
+## What You Are Judging
+
+You are judging category — the scope of physical work the project name implies. You are NOT judging funding source. The funding source (city budget, barangay budget, national, ODA, etc.) is captured elsewhere on the form and is not your concern. A barangay-level project may legitimately be funded from many sources.
+
+## What Counts As Barangay-Level Infrastructure
+
+Any of the following physical works at barangay scale:
+- Road concreting, asphalt overlay, or paving of barangay-level roads or alleys.
+- Drainage construction: canals, culverts, catch basins, pipe drainage lines.
+- Multi-purpose buildings: barangay halls, community centers, multi-use single-story civic buildings.
+- Covered courts: open-frame structures with steel trusses, roofing, and a concrete playing slab, with or without a stage.
+- Day care centers: small single-story buildings for early-childhood services.
+- Footbridges: pedestrian bridges over creeks, drainage, or roads, in steel-truss or reinforced concrete.
+- Slope protection: riprap walls, reinforced concrete retaining walls, gabion baskets.
+- Waterworks: distribution pipelines, tapping stands, elevated water storage tanks.
+- Electrification: streetlight installation, low-voltage roughing-in, panel-board installation.
+
+## What Does NOT Count
+
+- Procurement of goods (laptops, furniture, supplies, vehicles).
+- Service contracts (cleaning, security, training).
+- Pure planning/design or feasibility studies (no physical deliverable).
+- Cash assistance, scholarship, or welfare programs.
+- Software, IT systems, websites.
+
+If the project name describes any of the above non-infrastructure categories, set isInfrastructure to false and projectType to "unknown" with high confidence (>= 0.8) and a clear reason.
+
+## Project Type Enum
+
+- road_concreting
+- drainage_construction
+- multi_purpose_building
+- covered_court
+- day_care_center
+- footbridge
+- slope_protection
+- waterworks
+- electrification
+- unknown
+
+## Typical Contract Duration Bands
+
+Use these bands verbatim, derived from the worked-example library used by the milestone planner. When you classify a type, also return its band. For "unknown", return null.
+
+road_concreting:        min 60, max 180
+drainage_construction:  min 45, max 120
+multi_purpose_building: min 90, max 365
+covered_court:          min 60, max 180
+day_care_center:        min 75, max 240
+footbridge:             min 45, max 120
+slope_protection:       min 45, max 150
+waterworks:             min 45, max 180
+electrification:        min 30, max 120
+
+## Confidence
+
+Express your confidence as a decimal between 0 and 1. Use >= 0.8 when the project name unambiguously fits one type. Use 0.6 to 0.8 when the type is probable but the name leaves room for interpretation. Use < 0.6 when you are guessing. If you are below 0.6 and projectType is "unknown", the gatekeeper will reject the project automatically.
+
+## Reason Field
+
+One to two short sentences (max 240 characters) that explain the classification verdict in language a Head of Construction Services would write in an internal note. If you are rejecting, name the concrete reason (e.g., "Project name describes procurement of office equipment, not physical infrastructure"). If you are accepting but the duration looks unusual for the type, you may note that in the reason but do not modify the duration band — the gatekeeper does the comparison.
+
+## Output
+
+You must respond exclusively through the classify_infrastructure_project tool. Do not produce plain text. Do not explain your reasoning outside the tool fields.`;
+
+const classifyInfrastructureTool = {
+  name: "classify_infrastructure_project",
+  description:
+    "Classifies a proposed Cebu City DEPW project by infrastructure type and returns the typical duration band for that type.",
+  input_schema: {
+    type: "object",
+    properties: {
+      isInfrastructure: {
+        type: "boolean",
+        description: "True if the project name describes a barangay-level physical infrastructure project.",
+      },
+      projectType: {
+        type: "string",
+        enum: PROJECT_TYPE_ENUM,
+      },
+      confidence: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Classifier confidence between 0 and 1.",
+      },
+      typicalDurationDays: {
+        type: ["object", "null"],
+        properties: {
+          min: { type: "number" },
+          max: { type: "number" },
+        },
+        required: ["min", "max"],
+        description: "Typical duration band in days for this project type, or null when projectType is 'unknown'.",
+      },
+      reason: {
+        type: "string",
+        maxLength: 240,
+        description: "Human-readable explanation of the classification, max 240 chars.",
+      },
+    },
+    required: ["isInfrastructure", "projectType", "confidence", "typicalDurationDays", "reason"],
+  },
+};
+
+const validateProjectClassificationSchema = z.object({
+    projectName: z.string().min(10).max(200),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "startDate must be YYYY-MM-DD"),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "endDate must be YYYY-MM-DD"),
+});
+
+exports.validateProjectClassification = onCall(
+  { secrets: [anthropicApiKey], timeoutSeconds: 30 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required.");
+    }
+    requireTenantClaim(request.auth);
+    if (request.auth.token.role !== "HCSD") {
+      throw new HttpsError(
+        "permission-denied",
+        "Only HCSD personnel can validate project classification."
+      );
+    }
+
+    const parsed = validateProjectClassificationSchema.safeParse(request.data || {});
+    if (!parsed.success) {
+      throw new HttpsError(
+        "invalid-argument",
+        parsed.error.errors[0]?.message || "Invalid classifier payload."
+      );
+    }
+    const { projectName, startDate, endDate } = parsed.data;
+
+    let durationDays;
+    try {
+      durationDays = parseAndValidateDuration(startDate, endDate);
+    } catch (err) {
+      throw new HttpsError(err.code || "invalid-argument", err.message);
+    }
+
+    const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+
+    let response;
+    try {
+      response = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 512,
+        system: CLASSIFIER_SYSTEM_PROMPT,
+        tools: [classifyInfrastructureTool],
+        tool_choice: { type: "tool", name: "classify_infrastructure_project" },
+        messages: [
+          {
+            role: "user",
+            content: `Project name: ${projectName}\nStart date: ${startDate}\nEnd date: ${endDate}\nDuration: ${durationDays} days`,
+          },
+        ],
+      });
+    } catch (error) {
+      logger.error("[validateProjectClassification] Anthropic error:", {
+        status: error?.status,
+        code: error?.code,
+        message: error?.message,
+      });
+      throw new HttpsError("internal", "Classifier unavailable. Please try again.");
+    }
+
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse) {
+      throw new HttpsError("internal", "Classifier returned no structured output.");
+    }
+
+    return decideClassification(toolUse.input, durationDays);
+  }
+);
+
 const MILESTONE_SYSTEM_PROMPT = `You are a senior construction planning assistant for the Construction Services Division of the Cebu City Department of Engineering and Public Works (DEPW). Your role is to generate standardized physical construction milestones for city-funded barangay-level infrastructure projects that have already completed procurement under Republic Act No. 12009 (New Government Procurement Act) and have received the Notice to Proceed.
 
 ## Institutional Context
@@ -2184,6 +2397,31 @@ Example B: Construction of a 100-meter reinforced concrete pipe drainage line, 5
 
 ### MULTI_PURPOSE_BUILDING
 
+Example A: Construction of a 10-meter by 12-meter single-story barangay hall with office spaces and a multi-purpose meeting area, 180-day duration, PHP 3,200,000 contract amount.
+1. Mobilization, site clearing, and foundation layout staking (5%, 8 days)
+2. Excavation for footings, columns, and tie beams (7%, 12 days)
+3. Concrete pouring of footings, column footings, and tie beams (12%, 18 days)
+4. Masonry works for perimeter and interior partition walls (16%, 28 days)
+5. Roof framing, purlins, and roofing sheet installation (12%, 20 days)
+6. Concrete slab flooring with steel reinforcement and finishing (12%, 18 days)
+7. Plastering of walls, ceiling installation, and door/window framing (10%, 22 days)
+8. Plumbing roughing-in, electrical wiring, and fixture installation (10%, 18 days)
+9. Tiling, painting, and interior finishing works (10%, 22 days)
+10. Final inspection, electrical testing, cleanup, and turnover readiness (6%, 16 days)
+
+Example B: Construction of an 8-meter by 12-meter two-room barangay community hall, 120-day duration, PHP 2,100,000 contract amount.
+1. Mobilization, site clearing, and excavation for foundations (8%, 10 days)
+2. Concrete pouring of footings, columns, and ground beams (14%, 16 days)
+3. Masonry works for exterior and partition walls (18%, 22 days)
+4. Roof framing, purlins, and metal roofing installation (14%, 16 days)
+5. Concrete slab flooring with finishing (12%, 14 days)
+6. Plastering, doors, windows, and ceiling installation (12%, 16 days)
+7. Plumbing fixtures and electrical roughing-in (8%, 10 days)
+8. Painting, tiling, and finishing works (8%, 12 days)
+9. Final inspection, cleanup, and turnover readiness (6%, 4 days)
+
+### COVERED_COURT
+
 Example A: Construction of a single-story 12-meter by 10-meter multi-purpose covered court with stage, 150-day duration, PHP 2,800,000 contract amount.
 1. Mobilization, site clearing, and layout staking (5%, 7 days)
 2. Excavation for footings and foundations (7%, 10 days)
@@ -2196,7 +2434,19 @@ Example A: Construction of a single-story 12-meter by 10-meter multi-purpose cov
 9. Painting of steel members, trimmings, and surfaces (6%, 12 days)
 10. Final cleanup, electrical testing, and turnover readiness (5%, 13 days)
 
-Example B: Construction of a 6-meter by 8-meter barangay day care center, one story, 120-day duration, PHP 1,800,000 contract amount.
+Example B: Construction of a 10-meter by 8-meter open covered court without stage, 60-day duration, PHP 950,000 contract amount.
+1. Mobilization, site clearing, and layout staking (8%, 5 days)
+2. Excavation for column footings (10%, 5 days)
+3. Concrete pouring of column footings and pedestals (15%, 7 days)
+4. Erection of steel columns, trusses, and purlins (22%, 12 days)
+5. Installation of metal roofing sheets and gutters (15%, 8 days)
+6. Concrete flooring with steel reinforcement and finishing (18%, 12 days)
+7. Painting of steel framing and final finishing (7%, 7 days)
+8. Cleanup, lighting installation, and turnover readiness (5%, 4 days)
+
+### DAY_CARE_CENTER
+
+Example A: Construction of a 6-meter by 8-meter barangay day care center, one story, 120-day duration, PHP 1,800,000 contract amount.
 1. Site clearing, excavation, and foundation layout (7%, 10 days)
 2. Footings, column footings, and ground beam pouring (12%, 14 days)
 3. Masonry works for exterior and interior walls (20%, 25 days)
@@ -2206,6 +2456,40 @@ Example B: Construction of a 6-meter by 8-meter barangay day care center, one st
 7. Plumbing fixtures and electrical wiring installation (10%, 12 days)
 8. Tiling, painting, and interior finishing (7%, 8 days)
 9. Final inspection, cleanup, and turnover readiness (3%, 3 days)
+
+Example B: Construction of a 5-meter by 7-meter single-room day care extension with covered play porch, 90-day duration, PHP 1,200,000 contract amount.
+1. Mobilization, site clearing, and excavation (8%, 8 days)
+2. Concrete pouring of footings, column footings, and ground beams (14%, 12 days)
+3. Masonry works for perimeter walls (20%, 18 days)
+4. Roof framing and roofing installation (14%, 12 days)
+5. Concrete slab flooring with finishing (12%, 10 days)
+6. Plastering, doors, windows, and ceiling installation (12%, 12 days)
+7. Plumbing fixtures and electrical wiring installation (10%, 8 days)
+8. Painting, tiling, and finishing of play porch (7%, 6 days)
+9. Final inspection, cleanup, and turnover readiness (3%, 4 days)
+
+### FOOTBRIDGE
+
+Example A: Construction of a 25-meter steel-truss pedestrian footbridge over a barangay creek with reinforced concrete abutments, 90-day duration, PHP 1,500,000 contract amount.
+1. Mobilization, site clearing, and abutment layout staking (6%, 5 days)
+2. Excavation for abutment foundations on both banks (10%, 8 days)
+3. Reinforcement and formworks for abutment footings (12%, 10 days)
+4. Concrete pouring of abutment footings and walls (16%, 14 days)
+5. Fabrication and delivery of steel truss sections (12%, 12 days)
+6. Erection and bolting of steel truss spans across creek (18%, 12 days)
+7. Installation of decking plates, railings, and approach steps (12%, 12 days)
+8. Painting of steel members and corrosion protection coating (8%, 10 days)
+9. Final inspection, load testing, and turnover readiness (6%, 7 days)
+
+Example B: Construction of an 18-meter reinforced-concrete footbridge with cast-in-place deck slab and concrete railings, 60-day duration, PHP 850,000 contract amount.
+1. Mobilization, site clearing, and abutment staking (8%, 4 days)
+2. Excavation for abutments and pier foundations (12%, 7 days)
+3. Reinforcement and formworks for abutments and footings (15%, 8 days)
+4. Concrete pouring of abutments and footings (18%, 8 days)
+5. Formworks and reinforcement for deck slab (15%, 8 days)
+6. Concrete pouring and finishing of deck slab (15%, 7 days)
+7. Construction of concrete railings and approach ramps (10%, 10 days)
+8. Final inspection, cleanup, and turnover readiness (7%, 8 days)
 
 ### SLOPE_PROTECTION
 
@@ -2299,10 +2583,12 @@ const milestoneTool = {
           "road_concreting",
           "drainage_construction",
           "multi_purpose_building",
+          "covered_court",
+          "day_care_center",
+          "footbridge",
           "slope_protection",
           "waterworks",
           "electrification",
-          "other",
         ],
       },
       milestones: {
@@ -2377,6 +2663,29 @@ exports.generateMilestones = onCall(
       );
     }
 
+    // Pre-flight: require a verified classification before generating milestones.
+    // validateProjectClassification persists projectType + confidence on the
+    // project doc at creation time; this gate ensures the PE cannot generate
+    // milestones for an unverified or low-confidence project.
+    if (!classificationGatePasses(project)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "This project's classification is incomplete. Please contact the Head of Construction Services to re-verify the project name before generating milestones."
+      );
+    }
+    const projectType = project.projectType;
+
+    const startMs = project.officialDateStarted
+      ? new Date(project.officialDateStarted).getTime()
+      : NaN;
+    const endMs = project.originalDateCompletion
+      ? new Date(project.originalDateCompletion).getTime()
+      : NaN;
+    const durationDays =
+      Number.isNaN(startMs) || Number.isNaN(endMs)
+        ? null
+        : Math.round((endMs - startMs) / 86_400_000);
+
     const userMessage = `Generate milestones for the following project:
 
 Project Name: ${project.projectName || "Unknown"}
@@ -2385,39 +2694,109 @@ Sitio/Street: ${project.sitioStreet || "N/A"}
 Contract Amount (for reference only): PHP ${project.contractAmount || "N/A"}
 Contractor: ${project.contractor || "N/A"}
 Official Start Date: ${project.officialDateStarted || "N/A"}
-Original Completion Date: ${project.originalDateCompletion || "N/A"}`;
+Original Completion Date: ${project.originalDateCompletion || "N/A"}
+
+Classified project type: ${projectType}.
+Contract duration: ${durationDays != null ? durationDays : "unknown"} days.
+
+You MUST use the milestone phase structure typical for ${projectType} and the per-phase duration ratios shown in the worked examples for that type. Do NOT distribute duration evenly across milestones; honor the realistic engineering ratio (e.g., concrete curing, mobilization, finishing, inspection each take their typical share, not equal shares).`;
 
     const client = new Anthropic({ apiKey: anthropicApiKey.value() });
 
-    let response;
-    try {
-      response = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 2048,
-        system: MILESTONE_SYSTEM_PROMPT,
-        tools: [milestoneTool],
-        tool_choice: { type: "tool", name: "generate_project_milestones" },
-        messages: [{ role: "user", content: userMessage }],
-      });
-    } catch (error) {
-      logger.error("Anthropic API error:", { status: error?.status, code: error?.code, message: error?.message });
-      throw new HttpsError(
-        "internal",
-        "Failed to generate milestones. You can create milestones manually."
-      );
+    // Single-attempt helper that calls Haiku with an arbitrary messages array
+    // and returns the parsed milestones array (or throws). Used twice: once
+    // for the initial generation, once for the corrective retry.
+    const callMilestoneTool = async (messages) => {
+      let response;
+      try {
+        response = await client.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 2048,
+          system: MILESTONE_SYSTEM_PROMPT,
+          tools: [milestoneTool],
+          tool_choice: { type: "tool", name: "generate_project_milestones" },
+          messages,
+        });
+      } catch (error) {
+        logger.error("Anthropic API error:", { status: error?.status, code: error?.code, message: error?.message });
+        throw new HttpsError(
+          "internal",
+          "Failed to generate milestones. You can create milestones manually."
+        );
+      }
+      const toolUseBlock = response.content.find((block) => block.type === "tool_use");
+      if (!toolUseBlock) {
+        throw new HttpsError("internal", "No structured milestone output was returned.");
+      }
+      return { milestones: toolUseBlock.input.milestones, raw: response };
+    };
+
+    const initialMessages = [{ role: "user", content: userMessage }];
+    let { milestones, raw: rawResponse } = await callMilestoneTool(initialMessages);
+
+    // Post-generation coherence checks. The vocabulary check catches generic
+    // titles ("Construction Phase 1"); the duration-sum check catches LLM
+    // drift on calendar math. One corrective retry per failure mode.
+    const buildCorrection = (vocabFailed, durationFailed) => {
+      const notes = [];
+      if (vocabFailed) {
+        notes.push(`Every milestone title must include at least one infrastructure-specific term from this vocabulary: ${VOCAB_TERMS.join(", ")}. Avoid generic titles like "Construction Phase 1" or "Work Progress 50%".`);
+      }
+      if (durationFailed) {
+        const got = milestones.reduce((s, m) => s + (m.suggested_duration_days || 0), 0);
+        notes.push(`The sum of suggested_duration_days must equal the contract duration of ${durationDays} days (within ±2). You returned a total of ${got} days. Redistribute the durations across the same phases without changing their order or count.`);
+      }
+      return notes.join("\n\n");
+    };
+
+    let vocabOk = checkVocabulary(milestones);
+    let durationOk = durationDays == null ? true : checkDurationSum(milestones, durationDays);
+
+    if (!vocabOk || !durationOk) {
+      const correction = buildCorrection(!vocabOk, !durationOk);
+      const retryMessages = [
+        ...initialMessages,
+        // Preserve the model's previous tool_use turn so the conversation is
+        // coherent. Tool-use response handed back verbatim.
+        { role: "assistant", content: rawResponse.content },
+        { role: "user", content: `Your previous milestone output did not meet the coherence checks.\n\n${correction}\n\nReturn a corrected milestones array via the same tool. Keep the same milestone count.` },
+      ];
+      const retry = await callMilestoneTool(retryMessages);
+      milestones = retry.milestones;
+      vocabOk = checkVocabulary(milestones);
+      durationOk = durationDays == null ? true : checkDurationSum(milestones, durationDays);
     }
 
-    const toolUseBlock = response.content.find(
-      (block) => block.type === "tool_use"
-    );
-    if (!toolUseBlock) {
+    if (!vocabOk || !durationOk) {
+      const failureReason = !vocabOk && !durationOk
+        ? "vocabulary_and_duration"
+        : !vocabOk
+          ? "vocabulary_check"
+          : "duration_sum";
+      try {
+        await admin
+          .firestore()
+          .collection("auditTrails")
+          .doc("mobile")
+          .collection("entries")
+          .add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            actorUid: request.auth.uid,
+            actorEmail: request.auth.token.email || null,
+            action: "Milestones Generation Failed",
+            target: `Milestones Generation Failed for ${projectId} | Reason: ${failureReason}`,
+            details: { projectId, reason: failureReason },
+            success: false,
+            tenantId: callerTenantId,
+          });
+      } catch (auditErr) {
+        logger.error("[generateMilestones] Failed to write audit row:", auditErr);
+      }
       throw new HttpsError(
         "internal",
-        "No structured milestone output was returned."
+        "Generated milestones failed quality checks (vocabulary or duration coherence) after one retry. Please create milestones manually."
       );
     }
-
-    const { milestones } = toolUseBlock.input;
 
     const totalWeight = milestones.reduce(
       (sum, m) => sum + m.weight_percentage,

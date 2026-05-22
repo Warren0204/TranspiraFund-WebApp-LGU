@@ -63,12 +63,19 @@ const projectSchema = z.object({
     ntpReceivedDate: z.string().min(1, "NTP received date is required"),
     officialDateStarted: z.string().min(1, "Official start date is required"),
     originalDateCompletion: z.string().min(1, "Original completion date is required"),
+    projectType: z.string().optional(),
+    classificationConfidence: z.number().min(0).max(1).optional(),
 }).refine((data) => {
     if (data.officialDateStarted && data.originalDateCompletion) {
         return new Date(data.originalDateCompletion) > new Date(data.officialDateStarted);
     }
     return true;
 }, { message: "Completion date must be after the official start date", path: ["originalDateCompletion"] });
+
+const formatProjectTypeLabel = (t) => {
+    if (!t) return "Project";
+    return t.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+};
 
 const useCreateProject = () => {
     const navigate = useNavigate();
@@ -112,7 +119,10 @@ const useCreateProject = () => {
 
     const [errors, setErrors] = useState({});
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isValidating, setIsValidating] = useState(false);
     const [isReviewOpen, setIsReviewOpen] = useState(false);
+    const [classification, setClassification] = useState(null);
+    const [durationConfirmOpen, setDurationConfirmOpen] = useState(false);
 
     const [engineers, setEngineers] = useState([]);
     const [loadingEngineers, setLoadingEngineers] = useState(true);
@@ -254,7 +264,10 @@ const useCreateProject = () => {
         }
     };
 
-    const handleConfirmSubmission = async () => {
+    // Inner step: actually create the project (and attach NTP). Called from
+    // either the within_range happy path (handleConfirmSubmission) or after
+    // the user accepts the duration-confirm modal.
+    const runCreateProject = async (classifierResult) => {
         if (isSubmitting) return;
         setIsSubmitting(true);
         try {
@@ -290,6 +303,10 @@ const useCreateProject = () => {
                 incurredAmount: formData.incurredAmount ? Number(formData.incurredAmount) : undefined,
                 remarks: formData.remarks || undefined,
                 actionTaken: formData.actionTaken || undefined,
+                projectType: classifierResult?.projectType || undefined,
+                classificationConfidence: typeof classifierResult?.confidence === 'number'
+                    ? classifierResult.confidence
+                    : undefined,
             });
 
             const projectId = result?.data?.projectId;
@@ -335,13 +352,69 @@ const useCreateProject = () => {
         }
     };
 
+    // Entry point from the Review modal "Confirm & Submit" button. Runs the
+    // classifier first; on accept-within-range, proceeds straight to create;
+    // on accept-out-of-band, opens the duration-confirm modal; on reject,
+    // surfaces the reason on the projectName field and closes review.
+    const handleConfirmSubmission = async () => {
+        if (isSubmitting || isValidating) return;
+        setIsValidating(true);
+        setErrors(prev => ({ ...prev, global: undefined, projectName: undefined }));
+        try {
+            const functions = getFunctions(app, 'asia-southeast1');
+            const classifyFn = httpsCallable(functions, 'validateProjectClassification');
+            const { data: result } = await classifyFn({
+                projectName: formData.projectName,
+                startDate: formData.officialDateStarted,
+                endDate: formData.originalDateCompletion,
+            });
+
+            if (!result?.accepted) {
+                const reason = result?.reason || 'This project name was not recognized as a barangay-level infrastructure project.';
+                setErrors(prev => ({ ...prev, projectName: reason, global: reason }));
+                setIsValidating(false);
+                setIsReviewOpen(false);
+                return;
+            }
+
+            setClassification(result);
+
+            if (result.durationFlag && result.durationFlag !== 'within_range') {
+                setDurationConfirmOpen(true);
+                setIsValidating(false);
+                return;
+            }
+
+            setIsValidating(false);
+            await runCreateProject(result);
+        } catch (err) {
+            setErrors(prev => ({ ...prev, global: err.message || 'Classification failed. Please try again.' }));
+            setIsValidating(false);
+        }
+    };
+
+    // Duration-confirm modal "Yes, proceed" handler.
+    const handleProceedWithDurationOverride = async () => {
+        setDurationConfirmOpen(false);
+        if (classification) {
+            await runCreateProject(classification);
+        }
+    };
+
+    const handleCancelDurationConfirm = () => {
+        setDurationConfirmOpen(false);
+        setClassification(null);
+    };
+
     return {
-        formData, errors, isSubmitting,
+        formData, errors, isSubmitting, isValidating,
         engineers, loadingEngineers,
         ntpFile, ntpFileError, handleNtpFileChange, handleClearNtpFile,
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
+        classification, durationConfirmOpen,
+        handleProceedWithDurationOverride, handleCancelDurationConfirm,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
         CEBU_CITY_BARANGAYS
@@ -388,12 +461,14 @@ const LoaderSpinner = () => (
 
 const CreateProject = () => {
     const {
-        formData, errors, isSubmitting,
+        formData, errors, isSubmitting, isValidating,
         engineers, loadingEngineers,
         ntpFile, ntpFileError, handleNtpFileChange, handleClearNtpFile,
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
+        classification, durationConfirmOpen,
+        handleProceedWithDurationOverride, handleCancelDurationConfirm,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
         CEBU_CITY_BARANGAYS
@@ -943,16 +1018,64 @@ const CreateProject = () => {
                         )}
 
                         <div className="p-6 border-t border-slate-100 flex gap-3">
-                            <button type="button" onClick={() => setIsReviewOpen(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors">
+                            <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting || isValidating} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50">
                                 Edit
                             </button>
                             <button
                                 type="button"
                                 onClick={handleConfirmSubmission}
-                                disabled={isSubmitting}
+                                disabled={isSubmitting || isValidating}
                                 className="flex-1 py-3 bg-gradient-to-r from-teal-600 to-emerald-500 hover:from-teal-700 hover:to-emerald-600 text-white font-extrabold rounded-xl shadow-lg shadow-teal-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
                             >
-                                {isSubmitting ? <><LoaderSpinner /> Submitting...</> : <><CheckCircle size={18} /> Confirm & Submit</>}
+                                {isValidating
+                                    ? <><LoaderSpinner /> Verifying project classification...</>
+                                    : isSubmitting
+                                        ? <><LoaderSpinner /> Submitting...</>
+                                        : <><CheckCircle size={18} /> Confirm & Submit</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {durationConfirmOpen && classification && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-white rounded-[24px] max-w-lg w-full shadow-2xl">
+                        <div className="p-6 border-b border-slate-100 flex items-center gap-3">
+                            <Clock className="text-amber-500" size={24} />
+                            <h2 className="text-xl font-extrabold text-slate-900">Confirm project duration</h2>
+                        </div>
+                        <div className="p-6 space-y-3 text-sm">
+                            <p className="text-slate-700 font-semibold leading-relaxed">
+                                {formatProjectTypeLabel(classification.projectType)} projects typically take{' '}
+                                <span className="text-amber-700 font-extrabold">
+                                    {classification.typicalDurationDays?.min} to {classification.typicalDurationDays?.max} days
+                                </span>.
+                                You entered <span className="text-amber-700 font-extrabold">{contractDurationDays} days</span>.
+                                Are you sure this duration is correct?
+                            </p>
+                            {classification.reason && (
+                                <p className="text-slate-400 font-medium italic leading-relaxed text-xs">
+                                    Reason from classifier: {classification.reason}
+                                </p>
+                            )}
+                        </div>
+                        <div className="p-6 border-t border-slate-100 flex gap-3">
+                            <button
+                                type="button"
+                                onClick={handleCancelDurationConfirm}
+                                disabled={isSubmitting}
+                                className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleProceedWithDurationOverride}
+                                disabled={isSubmitting}
+                                className="flex-1 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-extrabold rounded-xl shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+                            >
+                                {isSubmitting ? <><LoaderSpinner /> Submitting...</> : <><CheckCircle size={18} /> Yes, proceed</>}
                             </button>
                         </div>
                     </div>
