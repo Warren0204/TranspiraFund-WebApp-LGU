@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Bell, Check, CheckCheck, Radio, Settings as SettingsIcon
 } from 'lucide-react';
@@ -9,6 +10,24 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
+
+const routeForAlert = (alert) => {
+    if (!alert) return null;
+    const targetType = alert.targetType;
+    const targetId = alert.targetId;
+    const metaProjectId = alert.metadata?.projectId || null;
+
+    if (targetType === 'milestone' && metaProjectId && targetId) {
+        return `/hcsd/projects/${metaProjectId}#milestone-${targetId}`;
+    }
+    if (targetType === 'project' && targetId) {
+        return `/hcsd/projects/${targetId}`;
+    }
+    if (metaProjectId) {
+        return `/hcsd/projects/${metaProjectId}`;
+    }
+    return null;
+};
 
 const fmtTime = (ts) => {
     if (!ts) return '';
@@ -56,6 +75,7 @@ const TAB_ICON = {
 };
 
 const Notifications = () => {
+    const navigate = useNavigate();
     const { currentUser, tenantId } = useAuth();
     const [alerts, setAlerts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -98,6 +118,15 @@ const Notifications = () => {
             console.error('[Notifications] markRead failed:', err);
             setActionError('Could not mark this notification as read. Please try again.');
         }
+    };
+
+    const handleOpenAlert = (alert) => {
+        const route = routeForAlert(alert);
+        if (!alert.isRead) {
+            updateDoc(doc(db, 'notifications', alert.id), { isRead: true })
+                .catch((err) => console.error('[Notifications] auto-mark on open failed:', err));
+        }
+        if (route) navigate(route);
     };
 
     const markAllRead = async () => {
@@ -208,9 +237,23 @@ const Notifications = () => {
                 <div className="space-y-4">
                     {visibleAlerts.map((alert, i) => {
                         const meta = getAlertMeta(alert.isRead);
+                        const route = routeForAlert(alert);
+                        const clickable = !!route;
+                        const handleKey = (e) => {
+                            if (!clickable) return;
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleOpenAlert(alert);
+                            }
+                        };
                         return (
                             <div key={alert.id}
-                                className={`relative rounded-[20px] border overflow-hidden transition-all ${meta.wrapper}`}
+                                role={clickable ? 'button' : undefined}
+                                tabIndex={clickable ? 0 : undefined}
+                                aria-label={clickable ? `Open ${alert.title}` : undefined}
+                                onClick={clickable ? () => handleOpenAlert(alert) : undefined}
+                                onKeyDown={handleKey}
+                                className={`group relative rounded-[20px] border overflow-hidden transition-all duration-200 ease-out ${meta.wrapper} ${clickable ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-xl hover:shadow-slate-200/60 dark:hover:shadow-black/40 hover:border-teal-300/70 dark:hover:border-cyan-400/40 active:translate-y-0 active:scale-[0.998] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent' : ''}`}
                                 style={{ animation: `slideUp 0.4s ease-out ${i * 0.05}s both` }}>
 
                                 {meta.leftBar && (
@@ -237,7 +280,8 @@ const Notifications = () => {
                                         </p>
 
                                         {!alert.isRead && (
-                                            <button onClick={() => markRead(alert.id)}
+                                            <button type="button"
+                                                onClick={(e) => { e.stopPropagation(); markRead(alert.id); }}
                                                 className="mt-3 text-xs font-bold flex items-center gap-1.5 transition-colors text-teal-700 dark:text-cyan-400 opacity-80 hover:opacity-100">
                                                 <Check size={13} strokeWidth={3} />
                                                 Mark as Read

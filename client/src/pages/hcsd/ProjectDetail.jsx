@@ -251,6 +251,21 @@ const ProjectDetail = () => {
         return () => unsub();
     }, [id, tenantId]);
 
+    useEffect(() => {
+        if (loading || milestones.length === 0) return;
+        const hash = window.location.hash;
+        if (!hash || !hash.startsWith('#milestone-')) return;
+        const raf = requestAnimationFrame(() => {
+            const el = document.getElementById(hash.slice(1));
+            if (!el) return;
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('hash-target-pulse');
+            const t = setTimeout(() => el.classList.remove('hash-target-pulse'), 2400);
+            return () => clearTimeout(t);
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [loading, milestones.length]);
+
     const [expandedProofs, setExpandedProofs] = useState(() => new Set());
     const [proofCache, setProofCache] = useState({});
     const [proofLoading, setProofLoading] = useState({});
@@ -801,7 +816,8 @@ const ProjectDetail = () => {
                                     const pillLabel = isLate ? 'Late' : (isComplete ? 'Done' : rawStatus);
                                     return (
                                         <div key={m.id}
-                                            className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${isComplete ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-500/30' : isLate ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-500/30' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/50'}`}
+                                            id={`milestone-${m.id}`}
+                                            className={`flex items-start gap-4 p-4 rounded-2xl border transition-all scroll-mt-24 ${isComplete ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-500/30' : isLate ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-500/30' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/50'}`}
                                             style={{ animation: `slideUp 0.35s ease-out ${i * 0.05}s both` }}>
                                             <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${isComplete ? 'bg-emerald-500' : isLate ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600'}`}>
                                                 {isComplete
