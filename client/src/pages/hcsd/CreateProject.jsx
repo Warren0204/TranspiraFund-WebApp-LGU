@@ -336,10 +336,8 @@ const useCreateProject = () => {
                         console.error('[CreateProject] rollbackOrphanProject failed:', rollbackErr);
                         cleanupNote = ' The project draft could not be removed automatically; please contact your administrator.';
                     }
-                    setErrors(prev => ({
-                        ...prev,
-                        global: `Could not attach NTP: ${uploadErr.message || 'Unknown error'}.${cleanupNote}`,
-                    }));
+                    setNtpFileError(`Could not attach NTP: ${uploadErr.message || 'Unknown error'}.${cleanupNote}`);
+                    setIsReviewOpen(false);
                     setIsSubmitting(false);
                     return;
                 }
@@ -371,9 +369,16 @@ const useCreateProject = () => {
 
             if (!result?.accepted) {
                 const reason = result?.reason || 'This project name was not recognized as a barangay-level infrastructure project.';
-                setErrors(prev => ({ ...prev, projectName: reason, global: reason }));
+                setErrors(prev => ({ ...prev, projectName: reason, global: undefined }));
                 setIsValidating(false);
                 setIsReviewOpen(false);
+                requestAnimationFrame(() => {
+                    const el = document.getElementById('projectName-input');
+                    if (!el) return;
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('hash-target-pulse');
+                    setTimeout(() => el.classList.remove('hash-target-pulse'), 2400);
+                });
                 return;
             }
 
@@ -388,7 +393,14 @@ const useCreateProject = () => {
             setIsValidating(false);
             await runCreateProject(result);
         } catch (err) {
-            setErrors(prev => ({ ...prev, global: err.message || 'Classification failed. Please try again.' }));
+            const msg = err?.message || 'Classification failed. Please try again.';
+            const isDateShaped = /\b(duration|days|start[ _-]?date|end[ _-]?date|completion)\b/i.test(msg);
+            if (isDateShaped) {
+                setErrors(prev => ({ ...prev, originalDateCompletion: msg, global: undefined }));
+                setIsReviewOpen(false);
+            } else {
+                setErrors(prev => ({ ...prev, global: msg }));
+            }
             setIsValidating(false);
         }
     };
@@ -507,12 +519,13 @@ const CreateProject = () => {
                             <div className="space-y-2">
                                 <label className={labelCls}>Project Name <span className="text-red-400">*</span></label>
                                 <input
+                                    id="projectName-input"
                                     type="text"
                                     value={formData.projectName}
                                     onChange={(e) => handleChange('projectName', e.target.value)}
                                     placeholder="e.g. Construction of Multi-Purpose Building Phase 1"
                                     maxLength={200}
-                                    className={inputCls(errors.projectName)}
+                                    className={`${inputCls(errors.projectName)} scroll-mt-24`}
                                 />
                                 <FieldError msg={errors.projectName} />
                             </div>
@@ -547,14 +560,6 @@ const CreateProject = () => {
                                 </div>
                             </div>
 
-                            {contractDurationDays !== null && (
-                                <div className="p-4 bg-teal-50 border border-teal-100 rounded-xl flex items-center gap-3">
-                                    <Clock className="text-teal-600 shrink-0" size={18} />
-                                    <span className="text-sm font-bold text-teal-700">
-                                        Contract Duration: <span className="text-teal-900">{contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}</span>
-                                    </span>
-                                </div>
-                            )}
                         </SectionCard>
 
                         <SectionCard icon={FileText} iconColor="text-violet-600" title="Account Code & Funding">
