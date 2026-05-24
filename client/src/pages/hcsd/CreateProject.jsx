@@ -307,6 +307,16 @@ const useCreateProject = () => {
                 classificationConfidence: typeof classifierResult?.confidence === 'number'
                     ? classifierResult.confidence
                     : undefined,
+                classification: classifierResult ? {
+                    projectType: classifierResult.projectType,
+                    confidence: classifierResult.confidence,
+                    durationFlag: classifierResult.durationFlag,
+                    typicalDurationDays: classifierResult.typicalDurationDays,
+                    reason: classifierResult.reason,
+                    classifierVersion: classifierResult.classifierVersion,
+                    classifiedAtISO: classifierResult.classifiedAtISO,
+                    verdict: classifierResult.verdict,
+                } : undefined,
             });
 
             const projectId = result?.data?.projectId;
