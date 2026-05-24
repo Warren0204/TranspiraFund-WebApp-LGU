@@ -2180,6 +2180,23 @@ Any of the following physical works at barangay scale:
 
 If the project name describes any of the above non-infrastructure categories, set isInfrastructure to false and projectType to "unknown" with high confidence (>= 0.8) and a clear reason.
 
+## Spelling and Terminology
+
+Reject project names that contain an obvious misspelling of a common English or Filipino construction/infrastructure term — for example "mprovement" (Improvement), "Conscreting" (Concreting), "Multi-Purpse" (Multi-Purpose), "Drainge" (Drainage), "Brangay" (Barangay), "Constructon" (Construction), "Foothbridge" (Footbridge), "Pavment" (Pavement). When you detect such a typo:
+
+- Set isInfrastructure to false, projectType to "unknown", confidence >= 0.85.
+- Put the corrected version in the reason field using EXACTLY this format and nothing else: \`Possible typo — did you mean: "<corrected full project name>"?\`
+- Preserve everything in the original name except the misspelled word(s). Do not rephrase, add, or remove other words.
+
+Do NOT flag the following as misspellings:
+- Filipino words spelled correctly (e.g., "Sitio", "Sitio Bagong Pag-asa", "Barangay", "Kalubihan", "Sambag", "Pardo").
+- Barangay proper names from Cebu City, including hyphenated and unusual ones (e.g., "Pung-ol-Sibugay", "Buot-Taup Pardo", "Kinasang-an Pardo", "Sudlon I", "Sudlon II", "Pung-ol", "T. Padilla", "Quiot Pardo").
+- Abbreviations and ordinals (Phase 1, Lot 3, Rd, St.).
+- Personal/contractor names embedded in the project name.
+- Casing differences only (e.g., "improvement" vs "Improvement" — accept it; do not flag casing alone).
+
+When in doubt, accept and classify normally — false typo rejections are worse than missed ones.
+
 ## Project Type Enum
 
 - road_concreting
@@ -2290,7 +2307,10 @@ exports.validateProjectClassification = onCall(
 
     let durationDays;
     try {
-      durationDays = parseAndValidateDuration(startDate, endDate);
+      // Loose bounds: the AI's durationFlag is the sole "is this realistic"
+      // judge, so the classifier must see every plausible duration (incl.
+      // very short ones like 7 days) and let the client's overlay handle it.
+      durationDays = parseAndValidateDuration(startDate, endDate, { minDays: 1, maxDays: 3650 });
     } catch (err) {
       throw new HttpsError(err.code || "invalid-argument", err.message);
     }
