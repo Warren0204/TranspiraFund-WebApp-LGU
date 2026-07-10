@@ -57,11 +57,18 @@ describe("generateMilestones — classification gate", () => {
         })).toBe(true);
     });
 
-    test("confidence at 0.6 boundary passes", () => {
+    test("confidence at 0.8 boundary passes", () => {
         expect(classificationGatePasses({
             projectType: "drainage_construction",
-            classificationConfidence: 0.6,
+            classificationConfidence: 0.8,
         })).toBe(true);
+    });
+
+    test("confidence just below 0.8 boundary blocks generation", () => {
+        expect(classificationGatePasses({
+            projectType: "drainage_construction",
+            classificationConfidence: 0.79,
+        })).toBe(false);
     });
 });
 

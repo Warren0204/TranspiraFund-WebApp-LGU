@@ -55,11 +55,18 @@ const parseFormattedNumber = (value) => {
 
 const projectSchema = z.object({
     projectName: z.string().min(10, "Project name must be at least 10 characters").max(200),
+    projectDescription: z.string()
+        .max(1000, "Project description must be at most 1000 characters")
+        .optional(),
     barangay: z.string().min(1, "Barangay is required"),
-    fundingSource: z.string().min(1, "Funding source is required"),
+    sitioStreet: z.string().min(1, "Sitio / Street is required").max(200),
+    accountCode: z.string().min(1, "Account Code is required").max(100),
+    fundingSource: z.string().max(100).optional(),
     contractAmount: z.number({ invalid_type_error: "Contract amount must be a number" })
         .min(10000, "Minimum contract amount is ₱10,000")
         .max(1_000_000_000, "Maximum contract amount exceeded"),
+    contractor: z.string().min(1, "Contractor is required").max(200),
+    projectEngineer: z.string().min(1, "Project Engineer is required").max(200),
     ntpReceivedDate: z.string().min(1, "NTP received date is required"),
     officialDateStarted: z.string().min(1, "Official start date is required"),
     originalDateCompletion: z.string().min(1, "Original completion date is required"),
@@ -86,6 +93,7 @@ const useCreateProject = () => {
 
     const [formData, setFormData] = useState({
         projectName: '',
+        projectDescription: '',
         sitioStreet: '',
         barangay: '',
         accountCode: '',
@@ -225,11 +233,15 @@ const useCreateProject = () => {
     const isFormComplete = Boolean(
         formData.projectName &&
         formData.barangay &&
-        formData.fundingSource &&
+        formData.sitioStreet &&
+        formData.accountCode &&
         formData.contractAmount &&
+        formData.contractor &&
+        formData.projectEngineer &&
         formData.ntpReceivedDate &&
         formData.officialDateStarted &&
-        formData.originalDateCompletion
+        formData.originalDateCompletion &&
+        ntpFile
     );
 
     const minCompletionDate = useMemo(() => {
@@ -244,13 +256,23 @@ const useCreateProject = () => {
         try {
             projectSchema.parse({
                 projectName: formData.projectName,
+                projectDescription: formData.projectDescription,
                 barangay: formData.barangay,
+                sitioStreet: formData.sitioStreet,
+                accountCode: formData.accountCode,
                 fundingSource: formData.fundingSource,
                 contractAmount: Number(formData.contractAmount),
+                contractor: formData.contractor,
+                projectEngineer: formData.projectEngineer,
                 ntpReceivedDate: formData.ntpReceivedDate,
                 officialDateStarted: formData.officialDateStarted,
                 originalDateCompletion: formData.originalDateCompletion,
             });
+            if (!ntpFile) {
+                setNtpFileError('NTP document is required.');
+                setErrors({});
+                return;
+            }
             setErrors({});
             setIsReviewOpen(true);
         } catch (err) {
@@ -276,6 +298,7 @@ const useCreateProject = () => {
 
             const result = await createProjectFn({
                 projectName: formData.projectName,
+                projectDescription: formData.projectDescription,
                 sitioStreet: formData.sitioStreet || undefined,
                 barangay: formData.barangay,
                 accountCode: formData.accountCode || undefined,
@@ -367,23 +390,34 @@ const useCreateProject = () => {
     const handleConfirmSubmission = async () => {
         if (isSubmitting || isValidating) return;
         setIsValidating(true);
-        setErrors(prev => ({ ...prev, global: undefined, projectName: undefined }));
+        setErrors(prev => ({ ...prev, global: undefined, projectName: undefined, projectDescription: undefined }));
         try {
             const functions = getFunctions(app, 'asia-southeast1');
             const classifyFn = httpsCallable(functions, 'validateProjectClassification');
             const { data: result } = await classifyFn({
                 projectName: formData.projectName,
+                projectDescription: formData.projectDescription,
+                barangay: formData.barangay,
+                sitioStreet: formData.sitioStreet,
+                contractor: formData.contractor,
+                contractAmount: Number(formData.contractAmount),
                 startDate: formData.officialDateStarted,
                 endDate: formData.originalDateCompletion,
             });
 
             if (!result?.accepted) {
-                const reason = result?.reason || 'This project name was not recognized as a barangay-level infrastructure project.';
-                setErrors(prev => ({ ...prev, projectName: reason, global: undefined }));
+                const reason = result?.reason || 'This project was not recognized as a barangay-level infrastructure project.';
+                const targetField = result?.field === 'projectDescription' ? 'projectDescription' : 'projectName';
+                const targetInputId = targetField === 'projectDescription' ? 'projectDescription-input' : 'projectName-input';
+                setErrors(prev => ({
+                    ...prev,
+                    [targetField]: reason,
+                    global: undefined,
+                }));
                 setIsValidating(false);
                 setIsReviewOpen(false);
                 requestAnimationFrame(() => {
-                    const el = document.getElementById('projectName-input');
+                    const el = document.getElementById(targetInputId);
                     if (!el) return;
                     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     el.classList.add('hash-target-pulse');
@@ -540,6 +574,29 @@ const CreateProject = () => {
                                 <FieldError msg={errors.projectName} />
                             </div>
 
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <label className={labelCls}>Project Description <span className="text-slate-400 normal-case font-semibold tracking-normal">(optional)</span></label>
+                                    <span className={`text-[11px] font-semibold ${
+                                        formData.projectDescription.length > 950
+                                            ? 'text-amber-600'
+                                            : 'text-slate-500'
+                                    }`}>
+                                        {formData.projectDescription.length} / 1000
+                                    </span>
+                                </div>
+                                <textarea
+                                    id="projectDescription-input"
+                                    value={formData.projectDescription}
+                                    onChange={(e) => handleChange('projectDescription', e.target.value)}
+                                    placeholder="Optional. If you add a description, focus on engineering specifics the structured fields cannot capture: materials, dimensions, quantities, scope of work, methodology, tie-ins. (Barangay, sitio, contractor, and contract amount are captured separately.)"
+                                    rows={5}
+                                    maxLength={1000}
+                                    className={`${inputCls(errors.projectDescription)} scroll-mt-24 resize-y leading-relaxed`}
+                                />
+                                <FieldError msg={errors.projectDescription} />
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                 <div className="space-y-2">
                                     <label className={labelCls}>Barangay <span className="text-red-400">*</span></label>
@@ -558,15 +615,16 @@ const CreateProject = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className={labelCls}>Sitio / Street</label>
+                                    <label className={labelCls}>Sitio / Street <span className="text-red-400">*</span></label>
                                     <input
                                         type="text"
                                         value={formData.sitioStreet}
                                         onChange={(e) => handleChange('sitioStreet', e.target.value)}
                                         placeholder="e.g. Sitio Bagong Pag-asa, P. Burgos St."
                                         maxLength={200}
-                                        className={inputCls(false)}
+                                        className={inputCls(errors.sitioStreet)}
                                     />
+                                    <FieldError msg={errors.sitioStreet} />
                                 </div>
                             </div>
 
@@ -575,19 +633,20 @@ const CreateProject = () => {
                         <SectionCard icon={FileText} iconColor="text-violet-600" title="Account Code & Funding">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
                                 <div className="space-y-2">
-                                    <label className={labelCls}>Account Code</label>
+                                    <label className={labelCls}>Account Code <span className="text-red-400">*</span></label>
                                     <input
                                         type="text"
                                         value={formData.accountCode}
                                         onChange={(e) => handleChange('accountCode', e.target.value)}
                                         placeholder="e.g. 5-02-99-990"
                                         maxLength={100}
-                                        className={inputCls(false)}
+                                        className={inputCls(errors.accountCode)}
                                     />
+                                    <FieldError msg={errors.accountCode} />
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className={labelCls}>Funding Source <span className="text-red-400">*</span></label>
+                                    <label className={labelCls}>Funding Source</label>
                                     <select
                                         value={formData.fundingSource}
                                         onChange={(e) => handleChange('fundingSource', e.target.value)}
@@ -619,7 +678,7 @@ const CreateProject = () => {
 
                         <SectionCard icon={Users} iconColor="text-green-600" title="Contractor & Assigned Personnel">
                             <div className="space-y-2">
-                                <label className={labelCls}>Contractor</label>
+                                <label className={labelCls}>Contractor <span className="text-red-400">*</span></label>
                                 <div className="relative">
                                     <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                     <input
@@ -628,16 +687,17 @@ const CreateProject = () => {
                                         onChange={(e) => handleChange('contractor', e.target.value)}
                                         placeholder="Company / Contractor Name"
                                         maxLength={200}
-                                        className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-4 focus:ring-green-100 transition-all"
+                                        className={`w-full pl-12 pr-4 py-4 bg-slate-50 border ${errors.contractor ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-green-100'} rounded-xl font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-4 transition-all`}
                                     />
                                 </div>
+                                <FieldError msg={errors.contractor} />
                             </div>
 
                             <div className="space-y-3">
                                 <label className={labelCls}>Assigned Personnel</label>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-1">
-                                        <span className="text-xs font-semibold text-slate-500">a. Project Engineer</span>
+                                        <span className="text-xs font-semibold text-slate-500">a. Project Engineer <span className="text-red-400">*</span></span>
                                         {loadingEngineers ? (
                                             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 text-sm animate-pulse">Loading Engineers...</div>
                                         ) : engineers.length === 0 ? (
@@ -651,13 +711,14 @@ const CreateProject = () => {
                                                 <select
                                                     value={formData.projectEngineer}
                                                     onChange={(e) => handleChange('projectEngineer', e.target.value)}
-                                                    className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-4 focus:ring-green-100 transition-all appearance-none cursor-pointer"
+                                                    className={`w-full pl-12 pr-4 py-4 bg-slate-50 border ${errors.projectEngineer ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-green-100'} rounded-xl font-semibold text-slate-700 outline-none focus:border-green-500 focus:ring-4 transition-all appearance-none cursor-pointer`}
                                                 >
                                                     <option value="">Select Engineer...</option>
                                                     {engineers.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                                                 </select>
                                             </div>
                                         )}
+                                        <FieldError msg={errors.projectEngineer} />
                                     </div>
 
                                     <div className="space-y-1">
@@ -720,7 +781,7 @@ const CreateProject = () => {
                                 </div>
 
                                 <div className="space-y-1 md:col-span-2">
-                                    <label className={labelCls}>NTP Document <span className="text-slate-400 normal-case font-semibold tracking-normal">(optional — PDF, JPEG, PNG · max 10 MB)</span></label>
+                                    <label className={labelCls}>NTP Document <span className="text-red-400">*</span> <span className="text-slate-400 normal-case font-semibold tracking-normal">(PDF, JPEG, PNG · max 10 MB)</span></label>
                                     {!ntpFile ? (
                                         <label className="flex items-center gap-3 p-4 bg-slate-50 border border-dashed border-slate-300 rounded-xl cursor-pointer hover:bg-slate-100 hover:border-blue-300 transition-all">
                                             <Upload className="text-slate-400" size={18} />
@@ -981,6 +1042,12 @@ const CreateProject = () => {
                                 <p className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-3">Project Details</p>
                                 <div className="space-y-2 text-sm">
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Project Name</span><span className="text-slate-800 font-semibold">{formData.projectName}</span></div>
+                                    {formData.projectDescription && (
+                                        <div className="flex gap-2">
+                                            <span className="font-bold text-slate-500 w-36 shrink-0">Description</span>
+                                            <span className="text-slate-800 font-medium leading-relaxed whitespace-pre-wrap">{formData.projectDescription}</span>
+                                        </div>
+                                    )}
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Barangay</span><span className="text-slate-800 font-semibold">{formData.barangay}</span></div>
                                     {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
                                     {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} days</span></div>}

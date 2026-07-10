@@ -68,42 +68,50 @@ const PROMPT_INJECTION_RE = /(ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:
 const BASE64_BLOB_RE = /[A-Za-z0-9+/]{30,}={0,2}/;
 const REPEATED_CHAR_RE = /(.)\1{5,}/;
 
-const PRESCREEN_REASONS = {
-    nonPrintable: "Project name contains non-printable or control characters.",
-    mixedScript: "Project name uses characters from a non-Latin script. Use Latin/Filipino letters only.",
-    promptInjection: "Project name contains text patterns that look like AI prompt instructions. Use a plain descriptive name.",
-    base64Blob: "Project name contains an encoded data blob. Use a plain descriptive name.",
-    repeatedChar: "Project name contains too many repeated characters.",
-    tooManyNonLetters: "Project name has too few letters to be a real project name.",
-};
+const buildPrescreenReasons = (fieldLabel) => ({
+    invalid: `${fieldLabel} must be a string.`,
+    nonPrintable: `${fieldLabel} contains non-printable or control characters.`,
+    mixedScript: `${fieldLabel} uses characters from a non-Latin script. Use Latin/Filipino letters only.`,
+    promptInjection: `${fieldLabel} contains text patterns that look like AI prompt instructions. Use plain descriptive wording.`,
+    base64Blob: `${fieldLabel} contains an encoded data blob. Use plain descriptive wording.`,
+    repeatedChar: `${fieldLabel} contains too many repeated characters.`,
+    tooManyNonLetters: `${fieldLabel} has too few letters to be real ${fieldLabel.toLowerCase()} text.`,
+});
 
-const prescreenProjectName = (rawName) => {
-    if (typeof rawName !== "string") {
-        return { cleaned: "", rejection: { kind: "invalid", reason: "Project name must be a string." } };
+const PRESCREEN_REASONS = buildPrescreenReasons("Project name");
+const PRESCREEN_REASONS_DESCRIPTION = buildPrescreenReasons("Project description");
+
+const prescreenText = (raw, fieldLabel) => {
+    const reasons = buildPrescreenReasons(fieldLabel);
+    if (typeof raw !== "string") {
+        return { cleaned: "", rejection: { kind: "invalid", reason: reasons.invalid } };
     }
-    const cleaned = rawName.replace(ZERO_WIDTH_RE, "").trim();
+    const cleaned = raw.replace(ZERO_WIDTH_RE, "").trim();
     if (NON_PRINTABLE_RE.test(cleaned)) {
-        return { cleaned, rejection: { kind: "nonPrintable", reason: PRESCREEN_REASONS.nonPrintable } };
+        return { cleaned, rejection: { kind: "nonPrintable", reason: reasons.nonPrintable } };
     }
     if (FOREIGN_SCRIPT_RE.test(cleaned)) {
-        return { cleaned, rejection: { kind: "mixedScript", reason: PRESCREEN_REASONS.mixedScript } };
+        return { cleaned, rejection: { kind: "mixedScript", reason: reasons.mixedScript } };
     }
     if (PROMPT_INJECTION_RE.test(cleaned)) {
-        return { cleaned, rejection: { kind: "promptInjection", reason: PRESCREEN_REASONS.promptInjection } };
+        return { cleaned, rejection: { kind: "promptInjection", reason: reasons.promptInjection } };
     }
     if (BASE64_BLOB_RE.test(cleaned)) {
-        return { cleaned, rejection: { kind: "base64Blob", reason: PRESCREEN_REASONS.base64Blob } };
+        return { cleaned, rejection: { kind: "base64Blob", reason: reasons.base64Blob } };
     }
     if (REPEATED_CHAR_RE.test(cleaned)) {
-        return { cleaned, rejection: { kind: "repeatedChar", reason: PRESCREEN_REASONS.repeatedChar } };
+        return { cleaned, rejection: { kind: "repeatedChar", reason: reasons.repeatedChar } };
     }
     const letterCount = (cleaned.match(/[A-Za-z\u00C0-\u017F]/g) || []).length;
     const meaningfulCount = (cleaned.match(/[^\s.,\-/()&']/g) || []).length;
     if (meaningfulCount >= 8 && letterCount / meaningfulCount < 0.6) {
-        return { cleaned, rejection: { kind: "tooManyNonLetters", reason: PRESCREEN_REASONS.tooManyNonLetters } };
+        return { cleaned, rejection: { kind: "tooManyNonLetters", reason: reasons.tooManyNonLetters } };
     }
     return { cleaned };
 };
+
+const prescreenProjectName = (raw) => prescreenText(raw, "Project name");
+const prescreenProjectDescription = (raw) => prescreenText(raw, "Project description");
 
 // ─── Post-LLM safety/quality gates (consumes new tool fields) ──────────────
 // Returns a human-readable rejection string, or null when the classifier's
@@ -112,18 +120,27 @@ const prescreenProjectName = (rawName) => {
 // the right reason instead of the catch-all "not infrastructure".
 
 const checkSafetyRejection = ({
-    inputSafety, nameQuality, scopeFit, jurisdictionFit,
-    bundlesMultipleProjects, physicalPlausibility, confidence,
+    inputSafety, nameQuality, semanticCoherence,
+    scopeFit, jurisdictionFit, bundlesMultipleProjects, physicalPlausibility, confidence,
 }) => {
     if (inputSafety?.containsPromptInjectionPattern) return PRESCREEN_REASONS.promptInjection;
-    if (inputSafety?.containsProfanity) return "Project name contains offensive language.";
-    if (inputSafety?.containsPii) return "Project name contains personal information (phone, email, ID, or private address). Public works names should reference public infrastructure only.";
+    if (inputSafety?.containsProfanity) return "Project name or description contains offensive language.";
+    if (inputSafety?.containsPii) return "Project name or description contains personal information (phone, email, ID, or private address). Public works submissions should reference public infrastructure only.";
     if (inputSafety?.containsMixedScript) return PRESCREEN_REASONS.mixedScript;
     if (inputSafety?.containsNonPrintable) return PRESCREEN_REASONS.nonPrintable;
     if (nameQuality?.isGibberish) return "Project name appears to be gibberish or random text.";
     if (nameQuality?.isPlaceholder) return "Project name appears to be a placeholder (e.g. 'Test Project', 'Project 1'). Use the real project name.";
+    if (semanticCoherence?.allWordsInfraRelated === false) {
+        return "Project name or description contains words that do not belong to infrastructure or public works (e.g. fictional, medical, software, or unrelated terms).";
+    }
+    if (semanticCoherence?.combinationMakesSense === false) {
+        return "Project name or description combines real construction words in a way that does not describe a real type of work.";
+    }
+    if (semanticCoherence?.overallNamePlausible === false) {
+        return "Project does not describe a plausible barangay-level public works project.";
+    }
     if (nameQuality?.specificity === "generic" && (confidence ?? 0) < 0.8) {
-        return "Project name is too generic. Add the specific scope or location (e.g. street name, sitio, dimensions).";
+        return "Project name is too generic. Name the specific work type and a scope qualifier (e.g. dimensions, phase, quantity) — barangay and sitio are captured separately.";
     }
     if (scopeFit && scopeFit !== "barangay" && scopeFit !== "unclear") {
         return `Project appears to be ${scopeFit}-scale, outside the Construction Services Division's barangay-level remit.`;
@@ -143,6 +160,7 @@ const decideClassification = (classifierOutput, durationDays) => {
         reason,
         inputSafety,
         nameQuality,
+        semanticCoherence,
         scopeFit,
         jurisdictionFit,
         bundlesMultipleProjects,
@@ -153,8 +171,8 @@ const decideClassification = (classifierOutput, durationDays) => {
     const durationFlag = computeDurationFlag(projectType, durationDays, band);
 
     const safetyRejection = checkSafetyRejection({
-        inputSafety, nameQuality, scopeFit, jurisdictionFit,
-        bundlesMultipleProjects, physicalPlausibility, confidence,
+        inputSafety, nameQuality, semanticCoherence,
+        scopeFit, jurisdictionFit, bundlesMultipleProjects, physicalPlausibility, confidence,
     });
     if (safetyRejection) {
         return {
@@ -165,7 +183,11 @@ const decideClassification = (classifierOutput, durationDays) => {
         };
     }
 
-    if (!isInfrastructure || (projectType === "unknown" && (confidence ?? 0) < 0.6)) {
+    // Global confidence floor: the classifier must be at least 80% sure before
+    // we accept anything as a DEPW city-funded barangay-level infrastructure
+    // project. Below 0.8 we bounce the submission back so HCSD rewrites the
+    // name/description rather than rolling the dice on a borderline classification.
+    if (!isInfrastructure || (confidence ?? 0) < 0.8) {
         return { accepted: false, reason, projectType, confidence };
     }
     return {
@@ -180,6 +202,7 @@ const decideClassification = (classifierOutput, durationDays) => {
         verdict: {
             inputSafety: inputSafety || null,
             nameQuality: nameQuality || null,
+            semanticCoherence: semanticCoherence || null,
             scopeFit: scopeFit || null,
             jurisdictionFit: jurisdictionFit || null,
             bundlesMultipleProjects: !!bundlesMultipleProjects,
@@ -203,7 +226,7 @@ const classificationGatePasses = (project) => {
     const projectType = project?.projectType || "unknown";
     const confidence = typeof project?.classificationConfidence === "number"
         ? project.classificationConfidence : 0;
-    return projectType !== "unknown" && confidence >= 0.6;
+    return projectType !== "unknown" && confidence >= 0.8;
 };
 
 // Validates dates and returns durationDays. Throws Error with `code:"invalid-argument"`
@@ -240,5 +263,7 @@ module.exports = {
     classificationGatePasses,
     parseAndValidateDuration,
     prescreenProjectName,
+    prescreenProjectDescription,
     PRESCREEN_REASONS,
+    PRESCREEN_REASONS_DESCRIPTION,
 };
