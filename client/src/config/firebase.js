@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
@@ -27,6 +28,20 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// App Check — gates callables with `enforceAppCheck: true` (sendOtp, verifyOtp,
+// sendPasswordReset, resetPassword). Setup: (1) register a reCAPTCHA Enterprise
+// site key at https://console.firebase.google.com/project/_/appcheck for this
+// web app, (2) set VITE_APPCHECK_SITE_KEY in client/.env, (3) rebuild. Init is
+// guarded so dev environments without the key still boot; enforcement only
+// takes effect once the env var is populated AND the site key is registered.
+const appCheckSiteKey = import.meta.env.VITE_APPCHECK_SITE_KEY;
+if (appCheckSiteKey) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
+    isTokenAutoRefreshEnabled: true,
+  });
+}
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);

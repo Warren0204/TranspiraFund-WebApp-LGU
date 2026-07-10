@@ -341,7 +341,7 @@ const enforceNtpRateLimit = (uid, tenantId) =>
 const enforceCreateProjectRateLimit = (uid, tenantId) =>
     enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.", tenantId);
 
-exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
+exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword], enforceAppCheck: true }, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to request a verification code.");
 
@@ -432,7 +432,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (requ
     return { success: true };
 });
 
-exports.verifyOtp = onCall(async (request) => {
+exports.verifyOtp = onCall({ enforceAppCheck: true }, async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to verify a code.");
 
@@ -1463,7 +1463,7 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
     }
 });
 
-exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
+exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword], enforceAppCheck: true }, async (request) => {
     const { data } = request;
     const { email } = data;
 
@@ -1554,7 +1554,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, a
     return { success: true };
 });
 
-exports.resetPassword = onCall(async (request) => {
+exports.resetPassword = onCall({ enforceAppCheck: true }, async (request) => {
     const { data } = request;
     const { oobCode, newPassword } = data;
 
@@ -2048,9 +2048,18 @@ const computeSlippagePercent = (project, now) => {
     return Math.round((timeElapsed - actual) * 10) / 10;
 };
 
-const runSlippageScan = async () => {
+// Scans every non-Completed engineer-assigned project for slippage. Accepts
+// an optional { tenantId } to restrict the scan to a single tenant — the
+// scheduled job (detectProjectSlippage) omits it and runs globally by design
+// (one daily system-wide sweep), while the manual callable
+// (runSlippageScanNow) MUST pass the caller's tenantId so one tenant's HCSD
+// cannot mutate other tenants' projects or fire notifications into them.
+const runSlippageScan = async ({ tenantId } = {}) => {
     const db = admin.firestore();
-    const snap = await db.collection("projects").get();
+    const query = tenantId
+        ? db.collection("projects").where("tenantId", "==", tenantId)
+        : db.collection("projects");
+    const snap = await query.get();
     const now = Date.now();
 
     let detected = 0;
@@ -2128,7 +2137,7 @@ const runSlippageScan = async () => {
         }
     }
 
-    logger.info(`[detectProjectSlippage] detected=${detected} recovered=${recovered} stillSlipping=${stillSlipping}`);
+    logger.info(`[slippageScan] tenantId=${tenantId || "ALL"} detected=${detected} recovered=${recovered} stillSlipping=${stillSlipping}`);
     return { detected, recovered, stillSlipping };
 };
 
@@ -2152,6 +2161,7 @@ exports.detectProjectSlippage = onSchedule({
 exports.runSlippageScanNow = onCall(async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated.");
+    const callerTenantId = requireTenantClaim(auth);
     const callerDoc = await admin.firestore().collection("users").doc(auth.uid).get();
     if (!callerDoc.exists) throw new HttpsError("permission-denied", "User not found.");
     const role = callerDoc.data().role;
@@ -2159,7 +2169,7 @@ exports.runSlippageScanNow = onCall(async (request) => {
         throw new HttpsError("permission-denied", "Only HCSD or MIS can trigger this scan.");
     }
     try {
-        const result = await runSlippageScan();
+        const result = await runSlippageScan({ tenantId: callerTenantId });
         return { success: true, ...result };
     } catch (err) {
         logger.error("[runSlippageScanNow] failed:", err);
