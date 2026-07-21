@@ -341,7 +341,7 @@ const enforceNtpRateLimit = (uid, tenantId) =>
 const enforceCreateProjectRateLimit = (uid, tenantId) =>
     enforceRateLimit("projectCreateRateLimits", uid, 10, "Too many project submissions. Try again in an hour.", tenantId);
 
-exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword], enforceAppCheck: true }, async (request) => {
+exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to request a verification code.");
 
@@ -432,7 +432,7 @@ exports.sendOtp = onCall({ secrets: [gmailUser, gmailAppPassword], enforceAppChe
     return { success: true };
 });
 
-exports.verifyOtp = onCall({ enforceAppCheck: true }, async (request) => {
+exports.verifyOtp = onCall(async (request) => {
     const { auth, data } = request;
     if (!auth) throw new HttpsError("unauthenticated", "Must be authenticated to verify a code.");
 
@@ -1463,7 +1463,7 @@ exports.backfillProjectEngineerUids = onCall(async (request) => {
     }
 });
 
-exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword], enforceAppCheck: true }, async (request) => {
+exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword] }, async (request) => {
     const { data } = request;
     const { email } = data;
 
@@ -1554,7 +1554,7 @@ exports.sendPasswordReset = onCall({ secrets: [gmailUser, gmailAppPassword], enf
     return { success: true };
 });
 
-exports.resetPassword = onCall({ enforceAppCheck: true }, async (request) => {
+exports.resetPassword = onCall(async (request) => {
     const { data } = request;
     const { oobCode, newPassword } = data;
 
