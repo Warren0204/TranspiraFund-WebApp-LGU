@@ -131,6 +131,7 @@ const useCreateProject = () => {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [classification, setClassification] = useState(null);
     const [durationConfirmOpen, setDurationConfirmOpen] = useState(false);
+    const [completionClearedNotice, setCompletionClearedNotice] = useState(null);
 
     const [engineers, setEngineers] = useState([]);
     const [loadingEngineers, setLoadingEngineers] = useState(true);
@@ -184,6 +185,9 @@ const useCreateProject = () => {
     const handleChange = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }));
         if (errors[field]) setErrors(prev => { const e = { ...prev }; delete e[field]; return e; });
+        if (field === 'originalDateCompletion' && completionClearedNotice) {
+            setCompletionClearedNotice(null);
+        }
     };
 
     const handleContractAmountChange = (e) => {
@@ -201,6 +205,10 @@ const useCreateProject = () => {
 
     const handleOfficialDateStartedChange = (e) => {
         const newDate = e.target.value;
+        const wouldClearCompletion = Boolean(
+            formData.originalDateCompletion &&
+            new Date(formData.originalDateCompletion) <= new Date(newDate)
+        );
         setFormData(prev => {
             const updates = { ...prev, officialDateStarted: newDate };
             if (prev.originalDateCompletion && new Date(prev.originalDateCompletion) <= new Date(newDate)) {
@@ -208,6 +216,9 @@ const useCreateProject = () => {
             }
             return updates;
         });
+        if (wouldClearCompletion) {
+            setCompletionClearedNotice("Completion date cleared because it was before the new start date. Please select a new completion date.");
+        }
         if (errors.officialDateStarted) setErrors(prev => { const e = { ...prev }; delete e.officialDateStarted; return e; });
     };
 
@@ -473,6 +484,7 @@ const useCreateProject = () => {
         handleProceedWithDurationOverride, handleCancelDurationConfirm,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
+        completionClearedNotice,
         CEBU_CITY_BARANGAYS
     };
 };
@@ -527,6 +539,7 @@ const CreateProject = () => {
         handleProceedWithDurationOverride, handleCancelDurationConfirm,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
+        completionClearedNotice,
         CEBU_CITY_BARANGAYS
     } = useCreateProject();
 
@@ -810,7 +823,13 @@ const CreateProject = () => {
                             </div>
 
                             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-4">Date of Completion</p>
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Date of Completion</p>
+                                {contractDurationDays !== null && (
+                                    <div className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700">
+                                        <Clock size={12} />
+                                        Project window: {contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-1">
                                         <span className="text-xs font-semibold text-slate-500">a. Original Date Completion <span className="text-red-400">*</span></span>
@@ -820,6 +839,14 @@ const CreateProject = () => {
                                             min={minCompletionDate}
                                             className={`w-full p-3 border ${errors.originalDateCompletion ? 'border-red-300' : 'border-slate-200'} rounded-xl font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all ${!formData.officialDateStarted ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-700'}`}
                                         />
+                                        {completionClearedNotice && (
+                                            <div className="flex items-start gap-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                                                <AlertCircle size={12} className="text-amber-600 mt-0.5 shrink-0" />
+                                                <p className="text-[11px] font-medium text-amber-800 leading-snug">
+                                                    {completionClearedNotice}
+                                                </p>
+                                            </div>
+                                        )}
                                         <FieldError msg={errors.originalDateCompletion} />
                                     </div>
                                     <div className="space-y-1">
@@ -1050,7 +1077,7 @@ const CreateProject = () => {
                                     )}
                                     <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Barangay</span><span className="text-slate-800 font-semibold">{formData.barangay}</span></div>
                                     {formData.sitioStreet && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Sitio / Street</span><span className="text-slate-800 font-semibold">{formData.sitioStreet}</span></div>}
-                                    {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} days</span></div>}
+                                    {contractDurationDays !== null && <div className="flex gap-2"><span className="font-bold text-slate-500 w-36 shrink-0">Contract Duration</span><span className="text-slate-800 font-semibold">{contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}</span></div>}
                                 </div>
                             </div>
 
@@ -1133,7 +1160,7 @@ const CreateProject = () => {
                                 <span className="text-amber-700 font-extrabold">
                                     {classification.typicalDurationDays?.min} to {classification.typicalDurationDays?.max} days
                                 </span>.
-                                You entered <span className="text-amber-700 font-extrabold">{contractDurationDays} days</span>.
+                                You entered <span className="text-amber-700 font-extrabold">{contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}</span>.
                                 Are you sure this duration is correct?
                             </p>
                             {classification.reason && (

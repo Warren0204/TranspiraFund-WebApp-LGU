@@ -38,6 +38,7 @@ const useOtpVerification = () => {
 
   const inputRefs = useRef([]);
   const hasSent = useRef(false);
+  const wasSignedIn = useRef(false);
 
   useEffect(() => {
     if (resendCountdown <= 0) return undefined;
@@ -52,6 +53,19 @@ const useOtpVerification = () => {
       navigate('/login', { replace: true });
     }
   }, [userEmail, navigate]);
+
+  // If AuthContext force-signs-out mid-flow (e.g. missing tenantId claim),
+  // don't strand the user on this page with "Unauthenticated" — bounce to /login
+  // where AuthContext's stored authError toast surfaces the actual reason.
+  useEffect(() => {
+    if (currentUser) {
+      wasSignedIn.current = true;
+      return;
+    }
+    if (wasSignedIn.current) {
+      navigate('/login', { replace: true });
+    }
+  }, [currentUser, navigate]);
 
   useEffect(() => {
     if (userEmail && !hasSent.current) {
@@ -79,6 +93,13 @@ const useOtpVerification = () => {
       setSuccessMsg('Verification code sent to your email.');
       setResendCountdown(60);
     } catch (err) {
+      // Auth revoked out from under us (e.g. missing tenantId claim triggers
+      // AuthContext.signOut → this callable 401s). Bail to /login so the
+      // stored authError banner explains the actual cause.
+      if (err?.code === 'functions/unauthenticated') {
+        navigate('/login', { replace: true });
+        return;
+      }
       const message = err.message || 'Unable to send verification code. Please try again.';
       setError(message);
       // Server enforces the cooldown too — if it rejects us with

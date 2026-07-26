@@ -2,6 +2,11 @@
 // Kept dependency-free (no firebase-admin, no Anthropic SDK) so unit tests
 // can import this module directly without mocking.
 
+// NOTE: `footbridge` is a legacy misnomer retained for backward compatibility
+// with the mobile app allowlist and Firestore project documents already in
+// production. The classifier is instructed to map ANY bridge (pedestrian,
+// vehicular, reinforced concrete) to this enum value. Renaming the enum
+// would break cross-repo compatibility and orphan existing project docs.
 const PROJECT_TYPE_ENUM = [
     "road_concreting",
     "drainage_construction",
@@ -15,15 +20,40 @@ const PROJECT_TYPE_ENUM = [
     "unknown",
 ];
 
+// Advisory duration bands per project type. Consumed only by
+// computeDurationFlag → durationFlag → the creation-UI Duration Confirm modal.
+// Not a hard gate — no submission is rejected for falling outside a band.
+//
+// Provenance: for each type the band is the union of a hand-authored
+// engineering estimate with the observed range from a 20-project SME-validated
+// Cebu City DEPW Construction Services Division dataset — the wider of the
+// two, so no SME-validated real project flags against its own band.
+//
+// SME sample counts (n), observed totals in calendar days, and the band
+// change relative to the prior authored-only value:
+//   road_concreting        n=4   observed: 60, 106, 120, 150                — SME fits within authored (60–180 unchanged)
+//   drainage_construction  n=1   observed: 270                              — SME extended max: 120 → 270
+//   multi_purpose_building n=7   observed: 165, 240, 240, 270, 300, 400, 480 — SME extended max: 365 → 480
+//   covered_court          n=0   — AUTHORED ONLY, no SME coverage (60–180 unchanged)
+//   day_care_center        n=0   — AUTHORED ONLY, no SME coverage (75–240 unchanged)
+//   footbridge             n=2   observed: 120, 180                         — SME extended max: 120 → 180
+//   slope_protection       n=2   observed: 60, 210                          — SME extended max: 150 → 210
+//   waterworks             n=2   observed: 30, 90                           — SME extended min: 45 → 30
+//   electrification        n=2   observed: 60, 90                           — SME fits within authored (30–120 unchanged)
+//
+// The prompt block in ./classifier-prompt.js reads these values via require
+// and interpolates them into the LLM system prompt, so the model sees the
+// same numbers this file exports. Do not hand-edit the prompt block; edit
+// this constant only.
 const TYPICAL_DURATION_DAYS = {
     road_concreting:        { min: 60,  max: 180 },
-    drainage_construction:  { min: 45,  max: 120 },
-    multi_purpose_building: { min: 90,  max: 365 },
+    drainage_construction:  { min: 45,  max: 270 },
+    multi_purpose_building: { min: 90,  max: 480 },
     covered_court:          { min: 60,  max: 180 },
     day_care_center:        { min: 75,  max: 240 },
-    footbridge:             { min: 45,  max: 120 },
-    slope_protection:       { min: 45,  max: 150 },
-    waterworks:             { min: 45,  max: 180 },
+    footbridge:             { min: 45,  max: 180 },
+    slope_protection:       { min: 45,  max: 210 },
+    waterworks:             { min: 30,  max: 180 },
     electrification:        { min: 30,  max: 120 },
 };
 

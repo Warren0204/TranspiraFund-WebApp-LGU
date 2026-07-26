@@ -142,7 +142,7 @@ describe("validateProjectClassification — decideClassification", () => {
             60
         );
         expect(result.typicalDurationDays).toEqual(TYPICAL_DURATION_DAYS.drainage_construction);
-        expect(result.durationFlag).toBe("within_range"); // 60 is within 45-120
+        expect(result.durationFlag).toBe("within_range"); // 60 is within 45-270 (new drainage band)
     });
 });
 
