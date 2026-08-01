@@ -85,3 +85,6 @@ client/dist/
 
 # Claude Code local state
 .claude/
+
+# Transient verification outputs (firebase functions:list, etc.)
+fnlist.json

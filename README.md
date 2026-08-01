@@ -69,17 +69,24 @@ Secrets are managed via Firebase Secret Manager (not env vars):
 cd functions
 npm install
 npm run serve     # emulator
-npm run deploy    # deploy functions only
 npm run logs
 ```
 
+Function deploys must be scoped per function — `npm run deploy` in this repo is a guarded no-op that refuses to run. See CLAUDE.md, Cloud Functions Ownership, for the canonical function list.
+
+```bash
+firebase deploy --only functions:NAME --project transpirafund-webapp
+```
+
 ### Firebase deploys (from repo root)
+
+This Firebase project (`transpirafund-webapp`) hosts two Cloud Functions codebases — `"default"` (this repo) and `"mobile"` (`TranspiraFund_caps`) — that both deploy to the same set of function URLs. An unscoped functions deploy from either repo will overwrite the other repo's same-named functions (e.g. `generateMilestones`). Always deploy functions by name. See CLAUDE.md, Cloud Functions Ownership.
 
 ```bash
 firebase deploy --only hosting
 firebase deploy --only firestore:rules
 firebase deploy --only storage
-firebase deploy --only functions
+firebase deploy --only functions:NAME --project transpirafund-webapp
 ```
 
 ## Security Model

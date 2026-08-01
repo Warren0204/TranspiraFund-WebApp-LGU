@@ -5,7 +5,7 @@
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
-    "deploy": "firebase deploy --only functions",
+    "deploy": "echo BLOCKED - unscoped deploy overwrites mobile-owned functions. Use: firebase deploy --only functions:NAME --project transpirafund-webapp. See CLAUDE.md Cloud Functions ownership. && exit 1",
     "logs": "firebase functions:log",
     "test": "jest"
   },

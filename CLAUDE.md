@@ -73,16 +73,18 @@ npm run preview   # Preview production build
 ### Functions (from `functions/`)
 ```bash
 npm run serve     # Start functions emulator
-npm run deploy    # Deploy functions only
 npm run logs      # Stream function logs
+```
+Function deploys must be scoped per function — `npm run deploy` in this repo is a guarded no-op that refuses to run, because an unscoped functions deploy would overwrite mobile-owned functions. See "Cloud Functions Ownership" below for the canonical function list.
+```bash
+firebase deploy --only functions:NAME --project transpirafund-webapp
 ```
 
 ### Firebase (from root)
 ```bash
-firebase deploy                         # Deploy everything
 firebase deploy --only hosting
 firebase deploy --only firestore:rules
-firebase deploy --only functions
+firebase deploy --only functions:NAME --project transpirafund-webapp   # scoped only; see "Cloud Functions Ownership"
 ```
 
 ## Environment Variables
@@ -260,3 +262,51 @@ Verdict → notification severity: `aligned` → success, `partially_aligned` �
 
 ## Data Migration (One-Time)
 Before deploying to production, run `scripts/migrate-depw-to-hcsd.js` to update existing Firestore user documents from `role: 'DEPW'` to `role: 'HCSD'` and refresh Auth custom claims. See script for full instructions.
+
+## Cloud Functions Ownership
+
+Two Firebase Functions codebases deploy to the same Firebase project (`transpirafund-webapp`, region `asia-southeast1`):
+
+- codebase `"default"` — this repo, node 22, source `functions/src/index.js`
+- codebase `"mobile"`  — `TranspiraFund_caps`, source `functions/src/index.ts`
+
+### Owned by this repo (codebase "default")
+
+Deploy each individually via `firebase deploy --only functions:NAME --project transpirafund-webapp`. Never use `firebase deploy --only functions` (unscoped) from this repo — the `functions/package.json` `deploy` script is a guarded no-op precisely to prevent that. On 2026-07-26 an unscoped deploy from here clobbered the mobile-owned `generateMilestones` URL and required an emergency mobile redeploy.
+
+**Callables:** `sendOtp`, `verifyOtp`, `createOfficialAccount`, `provisionTenant`, `deleteOfficialAccount`, `reassignProjectEngineer`, `createProject`, `attachNtp`, `rollbackOrphanProject`, `changePassword`, `revokeOtherSessions`, `logUserLogout`, `backfillProjectEngineerUids`, `sendPasswordReset`, `resetPassword`, `recalculateStats`, `purgeMobileOriginHcsdAudit`, `runSlippageScanNow`, `updateProfilePhoto`, `updateProfile`, `validateProjectClassification`.
+
+**Triggers:** `onUserWritten`, `onProjectWritten`, `onMobileAuditCreated`, `recomputeProjectActualPercent`, `onProofUploaded`.
+
+**Schedules:** `detectProjectSlippage`.
+
+### Owned by the mobile repo (codebase "mobile", `TranspiraFund_caps`)
+
+Verified 2026-08-02. Do not edit or deploy from this repo:
+
+`generateMilestones`, `deleteMilestone`, `addManualMilestone`, `confirmMilestonePlan`, `validateMilestoneTitle`, `markProjectOngoing`, `completePasswordChange`, `logMobileAuditTrail`, `uploadProfilePhoto`, `uploadProofPhoto`, `sendPasswordResetOtp`, `verifyPasswordResetOtp`, `resetPasswordWithOtp`.
+
+### Name collisions (both repos export the same name)
+
+- **`generateMilestones`** — deployed URL is owned by the mobile repo. Verified 2026-08-02: a live milestone document (`projects/4V8VjVHMLLCxXKqfdKSQ/milestones/6dhKDKiBOfrzcp3FC9ga`) carries `generatedBy: "ai"` and `confirmed: true`, both of which are written only by the mobile implementation. The copy at `functions/src/index.js:2752` in this repo is DEAD SOURCE — see the warning below.
+- **`logMobileAuditTrail`** — deployed owner is the mobile codebase, verified 2026-08-02 via the codebase label (both the top-level `codebase` field and `labels["firebase-functions-codebase"]` on the deployed function agree: `"mobile"`). The copy at `functions/src/index.js:1379` in this repo is DEAD SOURCE with respect to the live URL. The mobile implementation dual-writes to `auditTrails/hcsd/entries` when `syncToHCSD` is true, while this repo's `purgeMobileOriginHcsdAudit` (`functions/src/index.js:1710`; `MOBILE_ORIGIN_ACTIONS` at `functions/src/index.js:1720-1727`) batch-deletes mobile-origin actions from that same trail. This interaction is now known to be live and is an open **behavioral** question — not a deploy question — about whether HCSD audit entries produced by mobile activity survive.
+
+### Deployed inventory verification
+
+Verified 2026-08-02 with `firebase functions:list --project transpirafund-webapp --json`: **40 functions deployed**, matching `29 web + 13 mobile − 2 collisions = 40` exactly. **No ghost functions.** The earlier "12 ghost functions" audit finding is resolved — all 12 were mobile-owned.
+
+To repeat the verification:
+
+```bash
+firebase functions:list --project transpirafund-webapp --json > fnlist.json
+```
+
+Notes:
+- The codebase label appears in the `--json` output (both as a top-level `codebase` field and inside `labels["firebase-functions-codebase"]`) but **not** in the default table view of `firebase functions:list`. Always use `--json` when checking ownership.
+- On Windows PowerShell the `>` redirect writes **UTF-16 LE with BOM**, so the file does not parse as UTF-8. Either read it with Node (detect the `FF FE` BOM, then `buffer.slice(2).toString('utf16le')` and `JSON.parse`) or write it with `... | Out-File -Encoding utf8 fnlist.json` instead of `>`.
+
+### DEAD SOURCE — `generateMilestones` at `functions/src/index.js:2752`
+
+`exports.generateMilestones` in this repo is DEAD SOURCE. The deployed URL at `https://asia-southeast1-transpirafund-webapp.cloudfunctions.net/generateMilestones` is owned by the mobile repo (`TranspiraFund_caps`, `functions/src/index.ts:777`), verified 2026-08-02 via `generatedBy: "ai"` and `confirmed: true` on a live milestone document. `MILESTONE_SYSTEM_PROMPT` (`functions/src/index.js:2464-2702`) and `milestoneTool` (`functions/src/index.js:2704-2750`) are dead alongside it.
+
+Removal is deferred pending codebase-label verification (see the collision note above). Until that verification, this dead source must not be edited, extended, or relied on as a reference for how milestone generation currently behaves. Any change to milestone generation belongs in the mobile repo.

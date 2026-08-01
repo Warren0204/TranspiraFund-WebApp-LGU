@@ -238,6 +238,12 @@ export default function AuditTrails() {
         'Milestone Completed',
         'Project Completed',
         'Milestones Generated (AI-Assisted)',
+        'Milestone Generator Misconfigured',
+        'Password Set',
+        'Project Status Updated',
+        'Milestone Draft Removed',
+        'Milestones Repaired',
+        'Milestone Manually Added',
     ];
 
     const handlePurgeMobileRows = useCallback(async () => {

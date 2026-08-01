@@ -82,7 +82,7 @@ async function main() {
         console.log('\n✓ Migration complete.\n');
         console.log('Next steps:');
         console.log('  1. Deploy Firestore rules:    firebase deploy --only firestore:rules');
-        console.log('  2. Deploy Cloud Functions:    firebase deploy --only functions');
+        console.log('  2. Deploy Cloud Functions:    firebase deploy --only functions:NAME --project transpirafund-webapp   see CLAUDE.md Cloud Functions Ownership');
         console.log('  3. Deploy frontend:           firebase deploy --only hosting');
     } catch (err) {
         console.error('\n✗ Migration failed:', err.message);
