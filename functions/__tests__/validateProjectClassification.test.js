@@ -100,33 +100,73 @@ describe("validateProjectClassification — decideClassification", () => {
         expect(result.durationFlag).toBe("above_typical");
     });
 
-    test("unknown projectType with low confidence → rejected", () => {
-        const result = decideClassification(
-            {
-                isInfrastructure: true,
-                projectType: "unknown",
-                confidence: 0.4,
-                typicalDurationDays: null,
-                reason: "Could not classify.",
-            },
-            90
+    // Contract v1 Correction 2: an admitted project NEVER carries
+    // projectType "unknown". If the classifier violates that invariant,
+    // decideClassification coerces via coerceAdmittedType (ordering:
+    // components[0] → duration-band midpoint fit → terminal fallback) and
+    // invokes opts.onCoercion so the caller can log the coercion basis for
+    // observability. This is the sole coverage of that path; it folds in
+    // what was previously "unknown projectType with high confidence +
+    // isInfra=true → accepted with unknown_type flag", since that outcome
+    // (accepted with projectType still "unknown") is now forbidden by
+    // design. Any regression that lets an admitted project ship projectType
+    // "unknown" downstream will trip this test.
+    test("admitted 'unknown' projectType is coerced to a real type (Correction 2)", () => {
+        // Case a: components[0] drives coercion (component_derived basis).
+        // Low confidence should not affect admission or coercion.
+        const coercionA = jest.fn();
+        const resultA = decideClassification(
+            { isInfrastructure: true, projectType: "unknown", confidence: 0.4,
+              typicalDurationDays: null, reason: "Could not confidently classify.",
+              isComposite: false, components: ["drainage"],
+              ...cleanExtras() },
+            90,
+            { onCoercion: coercionA },
         );
-        expect(result.accepted).toBe(false);
-    });
+        expect(resultA.admitted).toBe(true);
+        expect(resultA.accepted).toBe(true);
+        expect(resultA.projectType).not.toBe("unknown");
+        expect(PROJECT_TYPE_ENUM.filter((t) => t !== "unknown")).toContain(resultA.projectType);
+        expect(resultA.projectType).toBe("drainage_construction");   // drainage → drainage_construction
+        expect(coercionA).toHaveBeenCalledTimes(1);
+        expect(coercionA.mock.calls[0][0]).toMatchObject({
+            originalType: "unknown",
+            coercedType: "drainage_construction",
+            basis: "component_derived",
+        });
 
-    test("unknown projectType with high confidence + isInfra=true → accepted with unknown_type flag", () => {
-        const result = decideClassification(
-            {
-                isInfrastructure: true,
-                projectType: "unknown",
-                confidence: 0.85,
-                typicalDurationDays: null,
-                reason: "Looks like infrastructure but does not match a known category.",
-            },
-            90
+        // Case b: high-confidence admitted-unknown coerces just as low-
+        // confidence does. Confidence never gates admission or coercion.
+        // Folds in the retired "unknown + high confidence + isInfra=true → accepted with unknown_type flag" test.
+        const coercionB = jest.fn();
+        const resultB = decideClassification(
+            { isInfrastructure: true, projectType: "unknown", confidence: 0.85,
+              typicalDurationDays: null, reason: "Looks like infrastructure but does not match a known category.",
+              isComposite: false, components: ["waterworks"],
+              ...cleanExtras() },
+            90,
+            { onCoercion: coercionB },
         );
-        expect(result.accepted).toBe(true);
-        expect(result.durationFlag).toBe("unknown_type");
+        expect(resultB.admitted).toBe(true);
+        expect(resultB.projectType).toBe("waterworks");
+        expect(coercionB).toHaveBeenCalledTimes(1);
+        expect(coercionB.mock.calls[0][0].basis).toBe("component_derived");
+
+        // Case c: empty components triggers the duration-band-fit fallback.
+        // 75 days matches the electrification band's midpoint (30-120, mid=75) exactly.
+        const coercionC = jest.fn();
+        const resultC = decideClassification(
+            { isInfrastructure: true, projectType: "unknown", confidence: 0.7,
+              typicalDurationDays: null, reason: "No components emitted; band fit only.",
+              isComposite: false, components: [],
+              ...cleanExtras() },
+            75,
+            { onCoercion: coercionC },
+        );
+        expect(resultC.admitted).toBe(true);
+        expect(resultC.projectType).toBe("electrification");
+        expect(coercionC).toHaveBeenCalledTimes(1);
+        expect(coercionC.mock.calls[0][0].basis).toBe("duration_band_fit");
     });
 
     test("canonical band overrides classifier-supplied band", () => {
@@ -330,7 +370,15 @@ describe("decideClassification — safety/quality gates", () => {
         expect(result.reason).toMatch(/gibberish/i);
     });
 
-    test("generic specificity with confidence < 0.8 → rejected", () => {
+    // Contract v1 no longer rejects generic-specificity submissions. Under
+    // the old contract, `nameQuality.specificity === "generic" && confidence
+    // < 0.8` was a rejection reason inside checkSafetyRejection. That line
+    // was removed in 2c: genericness is now surfaced through low confidence
+    // and the HCSD advisory modal ("this project doesn't closely match any
+    // project in the validated reference set"), not through a hard rejection.
+    // Regression guard against a re-introduction of the "generic + low
+    // confidence" rejection line.
+    test("generic specificity with confidence < 0.8 → admitted (v1 surfaces via advisory, not rejection)", () => {
         const result = decideClassification(
             { isInfrastructure: true, projectType: "multi_purpose_building", confidence: 0.7,
               typicalDurationDays: { min: 90, max: 365 }, reason: "vague",
@@ -338,13 +386,10 @@ describe("decideClassification — safety/quality gates", () => {
                   isGibberish: false, isPlaceholder: false, specificity: "generic" } }) },
             120,
         );
-        expect(result.accepted).toBe(false);
-        expect(result.reason).toMatch(/too generic/i);
-        // Regression: don't ask HCSD to add location to the name — barangay
-        // and sitio are captured by structured form fields. The new wording
-        // mentions them only to clarify that they are *captured separately*.
-        expect(result.reason).toMatch(/captured separately/i);
-        expect(result.reason).not.toMatch(/add (?:the )?(?:street name|sitio|location)/i);
+        expect(result.accepted).toBe(true);
+        expect(result.admitted).toBe(true);
+        expect(result.confidence).toBe(0.7);
+        expect(result.verdict.nameQuality.specificity).toBe("generic");
     });
 
     test("generic specificity with confidence >= 0.8 → accepted (high confidence overrides)", () => {
@@ -390,15 +435,28 @@ describe("decideClassification — safety/quality gates", () => {
         expect(result.reason).toMatch(/jurisdiction/i);
     });
 
-    test("bundlesMultipleProjects=true → rejected", () => {
+    // Contract v1 regression guard. Composite names (bundlesMultipleProjects
+    // true in the classifier verdict) MUST admit — not reject — and carry
+    // isComposite + a populated components[] through to the caller. This test
+    // guards against a re-introduction of the pre-v1 rejection at either
+    // decideClassification or the createProject defense-in-depth block, both
+    // of which historically rejected here.
+    test("bundlesMultipleProjects=true → admitted as composite (v1 contract)", () => {
         const result = decideClassification(
             { isInfrastructure: true, projectType: "road_concreting", confidence: 0.85,
-              typicalDurationDays: { min: 60, max: 180 }, reason: "ok",
+              typicalDurationDays: { min: 60, max: 180 },
+              reason: "Composite work: road concreting with drainage.",
+              isComposite: true,
+              components: ["road_concreting", "drainage"],
               ...cleanExtras({ bundlesMultipleProjects: true }) },
             90,
         );
-        expect(result.accepted).toBe(false);
-        expect(result.reason).toMatch(/multiple works/i);
+        expect(result.accepted).toBe(true);
+        expect(result.admitted).toBe(true);
+        expect(result.isComposite).toBe(true);
+        expect(result.components).toEqual(["road_concreting", "drainage"]);
+        expect(result.projectType).toBe("road_concreting");
+        expect(result.contractVersion).toBe("1");
     });
 
     test("semanticCoherence.allWordsInfraRelated=false → rejected with vocabulary reason", () => {
@@ -500,15 +558,24 @@ describe("decideClassification — safety/quality gates", () => {
         expect(result.verdict).not.toHaveProperty("nameDescriptionConsistency");
     });
 
-    test("confidence at 0.79 with known type → rejected by the 0.8 floor", () => {
-        // Known projectType + isInfrastructure=true but confidence < 0.8 should now reject.
+    // Contract v1 removed the 0.8 confidence floor from the admission gate.
+    // Confidence is a recognition signal (persisted alongside the project and
+    // surfaced through the HCSD advisory modal when low), not an admission
+    // signal. The mobile side derives retrieval quality from its own corpus
+    // scoring, so admission does not need to be gated on classifier
+    // confidence. This test is the regression guard against a re-introduction
+    // of the floor at either decideClassification or checkSafetyRejection.
+    test("confidence at 0.79 with known type → admitted (v1 removed the 0.8 admission floor)", () => {
         const result = decideClassification(
             { isInfrastructure: true, projectType: "road_concreting", confidence: 0.79,
               typicalDurationDays: { min: 60, max: 180 }, reason: "borderline",
               ...cleanExtras({ nameQuality: { isGibberish: false, isPlaceholder: false, specificity: "specific" } }) },
             90,
         );
-        expect(result.accepted).toBe(false);
+        expect(result.accepted).toBe(true);
+        expect(result.admitted).toBe(true);
+        expect(result.confidence).toBe(0.79);
+        expect(result.projectType).toBe("road_concreting");
     });
 
     test("confidence at 0.8 boundary with known type → accepted", () => {

@@ -143,15 +143,21 @@ const prescreenText = (raw, fieldLabel) => {
 const prescreenProjectName = (raw) => prescreenText(raw, "Project name");
 const prescreenProjectDescription = (raw) => prescreenText(raw, "Project description");
 
-// ─── Post-LLM safety/quality gates (consumes new tool fields) ──────────────
+// ─── Server-side admission gate (post-LLM) ─────────────────────────────────
 // Returns a human-readable rejection string, or null when the classifier's
-// safety/quality fields are clean. Checked BEFORE the existing
-// isInfrastructure/confidence gate so a clearly unsafe name is rejected for
-// the right reason instead of the catch-all "not infrastructure".
+// safety/quality/coherence/scope/jurisdiction/plausibility fields are all
+// clean. Runs BEFORE the isInfrastructure check so a clearly unsafe name is
+// rejected for the right reason instead of the catch-all "not infrastructure".
+//
+// Under the v1 classifier contract this gate NEVER reads confidence and NEVER
+// treats bundlesMultipleProjects as a rejection signal. Composite projects
+// are legitimate (see SME corpus idx 1, 9, 14) and carried through via
+// components[] + isComposite. bundlesMultipleProjects stays on verdict for
+// observability continuity with pre-composite audit rows.
 
 const checkSafetyRejection = ({
     inputSafety, nameQuality, semanticCoherence,
-    scopeFit, jurisdictionFit, bundlesMultipleProjects, physicalPlausibility, confidence,
+    scopeFit, jurisdictionFit, physicalPlausibility,
 }) => {
     if (inputSafety?.containsPromptInjectionPattern) return PRESCREEN_REASONS.promptInjection;
     if (inputSafety?.containsProfanity) return "Project name or description contains offensive language.";
@@ -169,22 +175,109 @@ const checkSafetyRejection = ({
     if (semanticCoherence?.overallNamePlausible === false) {
         return "Project does not describe a plausible barangay-level public works project.";
     }
-    if (nameQuality?.specificity === "generic" && (confidence ?? 0) < 0.8) {
-        return "Project name is too generic. Name the specific work type and a scope qualifier (e.g. dimensions, phase, quantity) — barangay and sitio are captured separately.";
-    }
     if (scopeFit && scopeFit !== "barangay" && scopeFit !== "unclear") {
         return `Project appears to be ${scopeFit}-scale, outside the Construction Services Division's barangay-level remit.`;
     }
     if (jurisdictionFit === "out_of_lgu") return "Project location is outside this LGU's jurisdiction.";
-    if (bundlesMultipleProjects) return "Project name describes multiple works. Please submit each project separately.";
     if (physicalPlausibility === "implausible") return "Project scale appears unrealistic for a barangay-level work.";
     return null;
 };
 
-const decideClassification = (classifierOutput, durationDays) => {
+// Maps the 22-term component vocabulary onto the 9 non-"unknown"
+// PROJECT_TYPE_ENUM values. Used ONLY by coerceAdmittedType when the model
+// admitted a project but returned projectType "unknown" — the v1 contract's
+// "never emit unknown for an admitted project" invariant.
+//
+// Intentional edges:
+//   - covered_walk        -> multi_purpose_building
+//        (a covered walkway is a circulation structure, not a court)
+//   - perimeter_fence     -> multi_purpose_building
+//        (fencing is a building-adjacent enclosure, not a category of its own)
+//   - bridge, footbridge  -> footbridge
+//        (PROJECT_TYPE_ENUM has no vehicular-bridge value; footbridge is the
+//        only bridge type in the enum. Once the contract is live and
+//        components[] flows to the mobile scorer, retrieval keys on
+//        components rather than projectType, so this reduction is acceptable.)
+
+const COMPONENT_TO_TYPE_MAP = {
+    road_concreting:        "road_concreting",
+    pavement:               "road_concreting",
+    pathway:                "road_concreting",
+    drainage:               "drainage_construction",
+    culvert:                "drainage_construction",
+    waterworks:             "waterworks",
+    water_tank:             "waterworks",
+    pipe_laying:            "waterworks",
+    building_construction:  "multi_purpose_building",
+    building_renovation:    "multi_purpose_building",
+    vertical_extension:     "multi_purpose_building",
+    evacuation_center:      "multi_purpose_building",
+    day_care:               "day_care_center",
+    covered_court:          "covered_court",
+    covered_walk:           "multi_purpose_building",
+    perimeter_fence:        "multi_purpose_building",
+    bridge:                 "footbridge",
+    footbridge:             "footbridge",
+    slope_protection:       "slope_protection",
+    riprap:                 "slope_protection",
+    electrical_works:       "electrification",
+    streetlighting:         "electrification",
+};
+
+// The 22-term controlled component vocabulary, derived from the keys of
+// COMPONENT_TO_TYPE_MAP so the two never drift apart. Consumed by:
+//   - index.js createProjectSchema (Zod z.enum for the persisted map)
+//   - classifier-prompt.js tool schema (currently inline; must match this list)
+// If a term is added or removed here, update the classifier-prompt.js tool
+// schema's inline enum to match.
+const COMPONENT_VOCABULARY = Object.keys(COMPONENT_TO_TYPE_MAP);
+
+// Picks a non-"unknown" PROJECT_TYPE_ENUM value for an admitted project whose
+// classifier returned "unknown". Ordering:
+//   1. components[0] via COMPONENT_TO_TYPE_MAP
+//   2. duration-band fit: enum value whose TYPICAL_DURATION_DAYS midpoint is
+//      closest to the submitted duration
+//   3. terminal fallback: "multi_purpose_building" (the most catholic of the
+//      9 types per the classifier prompt's own guidance)
+// Returns { type, basis }. A spike in "terminal_fallback" basis signals the
+// classifier is drifting away from the type-assignment discipline.
+
+const coerceAdmittedType = (classifierOutput, durationDays) => {
+    const components = Array.isArray(classifierOutput?.components) ? classifierOutput.components : [];
+    if (components.length > 0) {
+        const mapped = COMPONENT_TO_TYPE_MAP[components[0]];
+        if (mapped) return { type: mapped, basis: "component_derived" };
+    }
+    if (typeof durationDays === "number" && !Number.isNaN(durationDays)) {
+        let bestType = null;
+        let bestDistance = Infinity;
+        for (const [type, band] of Object.entries(TYPICAL_DURATION_DAYS)) {
+            const midpoint = (band.min + band.max) / 2;
+            const distance = Math.abs(durationDays - midpoint);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestType = type;
+            }
+        }
+        if (bestType) return { type: bestType, basis: "duration_band_fit" };
+    }
+    return { type: "multi_purpose_building", basis: "terminal_fallback" };
+};
+
+// Splits admission from recognition per the v1 classifier contract:
+//   - Admission is server-derived from checkSafetyRejection + isInfrastructure.
+//     It NEVER reads confidence. Composite projects are admitted.
+//   - Recognition (projectType, confidence, durationFlag, isComposite,
+//     components) is surfaced but does not gate admission.
+//   - When admitted, projectType is coerced to a non-"unknown" enum value via
+//     coerceAdmittedType if the model violated the "never emit unknown for an
+//     admitted project" invariant. opts.onCoercion (if provided) is invoked
+//     synchronously so the callable can log the coercion with basis.
+
+const decideClassification = (classifierOutput, durationDays, opts = {}) => {
     const {
         isInfrastructure,
-        projectType,
+        projectType: rawProjectType,
         confidence,
         typicalDurationDays: modelBand,
         reason,
@@ -195,40 +288,70 @@ const decideClassification = (classifierOutput, durationDays) => {
         jurisdictionFit,
         bundlesMultipleProjects,
         physicalPlausibility,
+        isComposite,
+        components: rawComponents,
     } = classifierOutput || {};
-    const canonicalBand = TYPICAL_DURATION_DAYS[projectType] || null;
-    const band = canonicalBand || modelBand || null;
-    const durationFlag = computeDurationFlag(projectType, durationDays, band);
 
-    const safetyRejection = checkSafetyRejection({
+    // Admission gate. bundlesMultipleProjects deliberately excluded.
+    const admissionRejection = checkSafetyRejection({
         inputSafety, nameQuality, semanticCoherence,
-        scopeFit, jurisdictionFit, bundlesMultipleProjects, physicalPlausibility, confidence,
+        scopeFit, jurisdictionFit, physicalPlausibility,
     });
-    if (safetyRejection) {
+    if (admissionRejection) {
         return {
             accepted: false,
-            reason: safetyRejection,
+            admitted: false,
+            reason: admissionRejection,
+            projectType: "unknown",
+            confidence: confidence ?? 0,
+        };
+    }
+    if (!isInfrastructure) {
+        return {
+            accepted: false,
+            admitted: false,
+            reason,
             projectType: "unknown",
             confidence: confidence ?? 0,
         };
     }
 
-    // Global confidence floor: the classifier must be at least 80% sure before
-    // we accept anything as a DEPW city-funded barangay-level infrastructure
-    // project. Below 0.8 we bounce the submission back so HCSD rewrites the
-    // name/description rather than rolling the dice on a borderline classification.
-    if (!isInfrastructure || (confidence ?? 0) < 0.8) {
-        return { accepted: false, reason, projectType, confidence };
+    // Admitted. Enforce "never emit unknown for an admitted project": coerce
+    // if the model violated the invariant.
+    let projectType = rawProjectType;
+    if (projectType === "unknown") {
+        const { type, basis } = coerceAdmittedType(
+            { components: rawComponents },
+            durationDays,
+        );
+        if (typeof opts.onCoercion === "function") {
+            opts.onCoercion({
+                originalType: "unknown",
+                coercedType: type,
+                basis,
+                confidence,
+                reason,
+            });
+        }
+        projectType = type;
     }
+
+    const canonicalBand = TYPICAL_DURATION_DAYS[projectType] || null;
+    const band = canonicalBand || modelBand || null;
+    const durationFlag = computeDurationFlag(projectType, durationDays, band);
+
     return {
         accepted: true,
+        admitted: true,
         projectType,
         confidence,
         durationFlag,
         typicalDurationDays: band,
         reason,
-        // Persisted on the project doc; mobile-side generateMilestones reads
-        // this to refuse running on unverified or unsafe names.
+        isComposite: !!isComposite,
+        components: Array.isArray(rawComponents) ? rawComponents : [],
+        contractVersion: "1",
+        // Persisted on the project doc for mobile-side and audit-trail use.
         verdict: {
             inputSafety: inputSafety || null,
             nameQuality: nameQuality || null,
@@ -285,6 +408,7 @@ module.exports = {
     TYPICAL_DURATION_DAYS,
     VOCAB_TERMS,
     VOCAB_REGEX,
+    COMPONENT_VOCABULARY,
     computeDurationFlag,
     decideClassification,
     checkSafetyRejection,

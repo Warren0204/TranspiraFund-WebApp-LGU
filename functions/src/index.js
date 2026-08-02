@@ -32,6 +32,7 @@ const {
     TYPICAL_DURATION_DAYS,
     VOCAB_TERMS,
     VOCAB_REGEX,
+    COMPONENT_VOCABULARY,
     computeDurationFlag,
     decideClassification,
     checkVocabulary,
@@ -126,6 +127,12 @@ const createProjectSchema = z.object({
             bundlesMultipleProjects: z.boolean().optional(),
             physicalPlausibility: z.enum(["plausible", "implausible", "unclear"]).nullable().optional(),
         }).optional(),
+        // v1 classifier contract additions (all optional so pre-v1 clients
+        // still validate; server-side defaults fill them in below).
+        admitted: z.boolean().optional(),
+        isComposite: z.boolean().optional(),
+        components: z.array(z.enum(COMPONENT_VOCABULARY)).optional(),
+        contractVersion: z.literal("1").optional(),
     }).optional(),
 }).superRefine((data, ctx) => {
     const startMs = new Date(data.officialDateStarted).getTime();
@@ -1007,12 +1014,6 @@ exports.createProject = onCall(async (request) => {
             );
         }
     }
-    if (cls?.verdict?.bundlesMultipleProjects) {
-        throw new HttpsError(
-            "failed-precondition",
-            "Project name describes multiple works. Submit each separately.",
-        );
-    }
     if (cls?.verdict?.semanticCoherence) {
         const c = cls.verdict.semanticCoherence;
         if (c.allWordsInfraRelated === false || c.combinationMakesSense === false
@@ -1049,6 +1050,13 @@ exports.createProject = onCall(async (request) => {
     // Build the stamped classification object that the mobile app reads to
     // gate generateMilestones. Strip the client's `classification` slot from
     // the rest of projectFields so it doesn't double-write.
+    //
+    // Under the v1 classifier contract, `classification` is ALWAYS written
+    // (never null) so mobile sees a consistent shape. Legacy clients that
+    // omit the map get server-side defaults: admitted derives from the
+    // legacy `classificationGatePasses` gate (mirroring the mobile 1c
+    // legacy fallback), isComposite defaults to false, components to [],
+    // and contractVersion is always "1".
     const { classification: clientClassification, ...projectFieldsClean } = projectFields;
     const stampedClassification = clientClassification
         ? {
@@ -1062,8 +1070,29 @@ exports.createProject = onCall(async (request) => {
             classifierVersion: clientClassification.classifierVersion || null,
             classifiedAt: admin.firestore.FieldValue.serverTimestamp(),
             verdict: clientClassification.verdict || null,
+            // v1 contract fields with pre-v1 client defaulting.
+            admitted: typeof clientClassification.admitted === "boolean"
+                ? clientClassification.admitted
+                : classificationGatePasses(projectFieldsClean),
+            isComposite: typeof clientClassification.isComposite === "boolean"
+                ? clientClassification.isComposite
+                : false,
+            components: Array.isArray(clientClassification.components)
+                ? clientClassification.components
+                : [],
+            contractVersion: clientClassification.contractVersion || "1",
         }
-        : null;
+        : {
+            // Fully legacy client omitted classification entirely. Stamp a v1
+            // map with pure defaults. admitted derives from the flat
+            // projectType/classificationConfidence values defaulted above.
+            classifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+            verdict: null,
+            admitted: classificationGatePasses(projectFieldsClean),
+            isComposite: false,
+            components: [],
+            contractVersion: "1",
+        };
 
     try {
         const projectRef = await admin.firestore().collection("projects").add({
@@ -1073,7 +1102,7 @@ exports.createProject = onCall(async (request) => {
             createdBy: auth.uid,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             tenantId: callerTenantId,
-            ...(stampedClassification ? { classification: stampedClassification } : {}),
+            classification: stampedClassification,
         });
 
         await logAudit(auth.uid, auth.token.email, "PROJECT_CREATED", projectRef.id, {
@@ -2458,7 +2487,14 @@ exports.validateProjectClassification = onCall(
       throw new HttpsError("internal", "Classifier returned no structured output.");
     }
 
-    const decision = decideClassification(toolUse.input, durationDays);
+    const decision = decideClassification(toolUse.input, durationDays, {
+      onCoercion: (info) => {
+        logger.warn(
+          `[validateProjectClassification] Coerced admitted project from "unknown" to "${info.coercedType}" (basis: ${info.basis})`,
+          info,
+        );
+      },
+    });
     if (decision.accepted) {
       decision.classifierVersion = CLASSIFIER_VERSION();
       decision.classifiedAtISO = new Date().toISOString();

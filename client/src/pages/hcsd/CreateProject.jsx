@@ -5,7 +5,7 @@ import {
     HardHat, LayoutDashboard, AlertCircle,
     CheckCircle, X, FileText, DollarSign,
     Clock, TrendingDown, Users, ClipboardList, Banknote,
-    Upload
+    Upload, Info
 } from 'lucide-react';
 import { z } from 'zod';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
@@ -130,7 +130,7 @@ const useCreateProject = () => {
     const [isValidating, setIsValidating] = useState(false);
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [classification, setClassification] = useState(null);
-    const [durationConfirmOpen, setDurationConfirmOpen] = useState(false);
+    const [advisoryConfirmOpen, setAdvisoryConfirmOpen] = useState(false);
     const [completionClearedNotice, setCompletionClearedNotice] = useState(null);
 
     const [engineers, setEngineers] = useState([]);
@@ -416,7 +416,11 @@ const useCreateProject = () => {
                 endDate: formData.originalDateCompletion,
             });
 
-            if (!result?.accepted) {
+            // State (a): scope rejection. Prefer the explicit v1 `admitted`
+            // field; fall back to `accepted` for pre-v1 classifier responses.
+            const isRejection = result?.admitted === false
+                || (result?.admitted === undefined && !result?.accepted);
+            if (isRejection) {
                 const reason = result?.reason || 'This project was not recognized as a barangay-level infrastructure project.';
                 const targetField = result?.field === 'projectDescription' ? 'projectDescription' : 'projectName';
                 const targetInputId = targetField === 'projectDescription' ? 'projectDescription-input' : 'projectName-input';
@@ -439,12 +443,26 @@ const useCreateProject = () => {
 
             setClassification(result);
 
-            if (result.durationFlag && result.durationFlag !== 'within_range') {
-                setDurationConfirmOpen(true);
+            // States (b), (c), (d): admitted, but one or both advisories apply.
+            //   (b) novel: admitted && confidence < 0.8
+            //   (c) duration: durationFlag != "within_range"
+            //   (d) both simultaneously
+            // Each condition is computed independently; the modal renders
+            // whichever paragraphs apply.
+            const durationAdvisory = result.durationFlag && result.durationFlag !== 'within_range';
+            const admittedFlag = typeof result.admitted === 'boolean' ? result.admitted : true;
+            const novelAdvisory = admittedFlag
+                && typeof result.confidence === 'number'
+                && result.confidence < 0.8;
+
+            if (durationAdvisory || novelAdvisory) {
+                setAdvisoryConfirmOpen(true);
                 setIsValidating(false);
                 return;
             }
 
+            // State (e): admitted, high confidence, in-band duration. Submit
+            // directly with no HCSD acknowledgment step.
             setIsValidating(false);
             await runCreateProject(result);
         } catch (err) {
@@ -460,16 +478,18 @@ const useCreateProject = () => {
         }
     };
 
-    // Duration-confirm modal "Yes, proceed" handler.
-    const handleProceedWithDurationOverride = async () => {
-        setDurationConfirmOpen(false);
+    // Advisory modal "Yes, submit" handler. The modal is shown for the novel
+    // path (state b), the out-of-band-duration path (state c), or both
+    // simultaneously (state d).
+    const handleProceedWithAdvisory = async () => {
+        setAdvisoryConfirmOpen(false);
         if (classification) {
             await runCreateProject(classification);
         }
     };
 
-    const handleCancelDurationConfirm = () => {
-        setDurationConfirmOpen(false);
+    const handleCancelAdvisory = () => {
+        setAdvisoryConfirmOpen(false);
         setClassification(null);
     };
 
@@ -480,8 +500,8 @@ const useCreateProject = () => {
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
-        classification, durationConfirmOpen,
-        handleProceedWithDurationOverride, handleCancelDurationConfirm,
+        classification, advisoryConfirmOpen,
+        handleProceedWithAdvisory, handleCancelAdvisory,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
         completionClearedNotice,
@@ -535,8 +555,8 @@ const CreateProject = () => {
         handleChange, handleContractAmountChange, handleIncurredAmountChange,
         handleOfficialDateStartedChange, navigate,
         isReviewOpen, setIsReviewOpen, handleReviewRequest, handleConfirmSubmission,
-        classification, durationConfirmOpen,
-        handleProceedWithDurationOverride, handleCancelDurationConfirm,
+        classification, advisoryConfirmOpen,
+        handleProceedWithAdvisory, handleCancelAdvisory,
         isFormComplete, minCompletionDate,
         contractDurationDays, timeElapsedPercent, slippagePercent, numberOfDaysDelay,
         completionClearedNotice,
@@ -1147,22 +1167,37 @@ const CreateProject = () => {
                 </div>
             )}
 
-            {durationConfirmOpen && classification && (
+            {advisoryConfirmOpen && classification && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
                     <div className="bg-white rounded-[24px] max-w-lg w-full shadow-2xl">
                         <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-                            <Clock className="text-amber-500" size={24} />
-                            <h2 className="text-xl font-extrabold text-slate-900">Confirm project duration</h2>
+                            {(classification.durationFlag && classification.durationFlag !== 'within_range' && classification.projectType && classification.projectType !== 'unknown')
+                                ? <Clock className="text-amber-500" size={24} />
+                                : <Info className="text-amber-500" size={24} />}
+                            <h2 className="text-xl font-extrabold text-slate-900">Review before submitting</h2>
                         </div>
-                        <div className="p-6 space-y-3 text-sm">
-                            <p className="text-slate-700 font-semibold leading-relaxed">
-                                {formatProjectTypeLabel(classification.projectType)} projects typically take{' '}
-                                <span className="text-amber-700 font-extrabold">
-                                    {classification.typicalDurationDays?.min} to {classification.typicalDurationDays?.max} days
-                                </span>.
-                                You entered <span className="text-amber-700 font-extrabold">{contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}</span>.
-                                Are you sure this duration is correct?
-                            </p>
+                        <div className="p-6 space-y-4 text-sm">
+                            {/* Novel-project paragraph (state b): admitted with confidence below 0.8. */}
+                            {typeof classification.confidence === 'number' && classification.confidence < 0.8 && (
+                                <p className="text-slate-700 font-semibold leading-relaxed">
+                                    This project doesn't closely match any project in the validated 20-project reference set the milestone generator draws from. The generator will still produce a milestone plan, and the assigned Project Engineer will still review it before starting fieldwork. Treat the generated plan as a working draft that warrants closer engineering review than usual before it's confirmed.
+                                </p>
+                            )}
+                            {/* Duration paragraph (state c): out-of-band duration.
+                                Defensive guard: omit when projectType is "unknown"
+                                (unreachable for admitted projects under the v1
+                                classifier contract, retained for safety). */}
+                            {classification.durationFlag && classification.durationFlag !== 'within_range'
+                                && classification.projectType && classification.projectType !== 'unknown' && (
+                                <p className="text-slate-700 font-semibold leading-relaxed">
+                                    {formatProjectTypeLabel(classification.projectType)} projects typically take{' '}
+                                    <span className="text-amber-700 font-extrabold">
+                                        {classification.typicalDurationDays?.min} to {classification.typicalDurationDays?.max} days
+                                    </span>.
+                                    You entered <span className="text-amber-700 font-extrabold">{contractDurationDays} calendar day{contractDurationDays !== 1 ? 's' : ''}</span>.
+                                    Are you sure this duration is correct?
+                                </p>
+                            )}
                             {classification.reason && (
                                 <p className="text-slate-400 font-medium italic leading-relaxed text-xs">
                                     Reason from classifier: {classification.reason}
@@ -1172,7 +1207,7 @@ const CreateProject = () => {
                         <div className="p-6 border-t border-slate-100 flex gap-3">
                             <button
                                 type="button"
-                                onClick={handleCancelDurationConfirm}
+                                onClick={handleCancelAdvisory}
                                 disabled={isSubmitting}
                                 className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors disabled:opacity-50"
                             >
@@ -1180,11 +1215,11 @@ const CreateProject = () => {
                             </button>
                             <button
                                 type="button"
-                                onClick={handleProceedWithDurationOverride}
+                                onClick={handleProceedWithAdvisory}
                                 disabled={isSubmitting}
                                 className="flex-1 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-extrabold rounded-xl shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
                             >
-                                {isSubmitting ? <><LoaderSpinner /> Submitting...</> : <><CheckCircle size={18} /> Yes, proceed</>}
+                                {isSubmitting ? <><LoaderSpinner /> Submitting...</> : <><CheckCircle size={18} /> Yes, submit</>}
                             </button>
                         </div>
                     </div>

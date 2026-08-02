@@ -183,9 +183,38 @@ jurisdictionFit:
 
 Only "in_lgu" and "location_agnostic" are accepted.
 
-## Bundled Projects
+## Composite Projects
 
-bundlesMultipleProjects: true if the name describes MORE THAN ONE distinct work joined by "and", "&", commas, slashes, or plus signs (e.g. "Construction of road, drainage, AND multi-purpose hall"). Phasing of the SAME work ("Phase 1 and Phase 2") is NOT bundled. A single road that happens to mention a drainage culvert as part of its scope is NOT bundled. When in doubt, lean toward "not bundled" — only flag clear multi-project bundles. Reject bundled names — each work must be submitted as its own project.
+Real DEPW projects sometimes bundle two or more physical works under a single contract — for example, road concreting with an inline drainage canal, or a water system and a covered walkway on the same site. These are LEGITIMATE and MUST be accepted. Use these fields to record them:
+
+- isComposite: true if the name describes MORE THAN ONE distinct work component; otherwise false. Phasing of the SAME work ("Phase 1 and Phase 2") is NOT composite. A single road that mentions a drainage culvert as an inseparable part of its scope is NOT composite. But a project that clearly bundles two separate works ("water system and covered walk") IS composite.
+- components[]: enumerate every distinct work as its own entry from the controlled vocabulary in the Components section below.
+- bundlesMultipleProjects: set true whenever isComposite is true, for continuity with the pre-composite audit trail. This field is no longer a rejection reason — it is an observability signal only.
+
+Composite projects are NEVER rejected. Do NOT ask HCSD to resubmit them as separate projects. The downstream milestone generator composes phased plans from the components[] you enumerate.
+
+## Components
+
+Every accepted project MUST have a components[] array listing the physical work components in the project. Use ONLY the terms in the controlled vocabulary below. Do not invent synonyms, do not pluralize, do not use camelCase. Ordering matters: list components most significant first (largest or most defining physical work).
+
+The 22 controlled component terms:
+
+- road_concreting, pavement, pathway — road / paving works
+- drainage, culvert — drainage systems
+- waterworks, water_tank, pipe_laying — water distribution and storage
+- building_construction, building_renovation, vertical_extension — general public building works
+- evacuation_center — buildings specifically for disaster evacuation
+- day_care — buildings specifically for early-childhood services
+- covered_court, covered_walk, perimeter_fence — court, walkway, and fence structures
+- bridge, footbridge — vehicular and pedestrian bridges
+- slope_protection, riprap — slope stabilization works
+- electrical_works, streetlighting — electrical installations and lighting
+
+Single-work projects list one component. Composite projects list every distinct work component in the name — for example, "Road Concreting with Drainage system" is components: ["road_concreting", "drainage"] with isComposite: true. Subcomponents that are inseparable from the parent structure (handrails on a footbridge, stage on a covered court, tapping stands on a waterworks pipeline) are subsumed by the parent and NOT emitted separately.
+
+If a project describes work that has no direct match in the vocabulary (e.g. a Materials Recovery Facility), fall back to the closest generic term (building_construction for MRF-style facilities) and record low confidence rather than inventing a new term.
+
+For rejected projects (isInfrastructure: false), still emit at least one component to satisfy the schema — the closest available term is fine; the value is ignored downstream on rejection.
 
 ## Physical Plausibility
 
@@ -209,6 +238,12 @@ Only "plausible" and "unclear" are accepted.
 - electrification
 - unknown
 
+### Type-assignment discipline
+
+"unknown" is reserved exclusively for projects you REJECT as non-infrastructure, out-of-scope, or safety-flagged. NEVER return "unknown" for a project you are otherwise accepting — if the project is a physical infrastructure works project within DEPW Construction Services scope, you must pick the single closest of the 9 non-"unknown" types even when the fit is imperfect. Low confidence in the assignment is recorded in confidence, not by falling back to "unknown".
+
+For composite projects (two or more works joined by "and", "&", commas, "with", etc.), pick the PRIMARY work as projectType — the largest, most defining, or most durable physical work — and enumerate every work component in components[]. Example: for "Construction of water facilities and covered walk", return projectType: "waterworks" with components: ["waterworks", "covered_walk"] and isComposite: true. Do NOT return "unknown" merely because the name is composite.
+
 ## Typical Contract Duration Bands
 
 Use these bands verbatim. Return the band for the type you classify; for "unknown", return null.
@@ -219,18 +254,20 @@ ${_TYPICAL_DURATION_BANDS_BLOCK}
 
 ## Confidence
 
-Express your confidence as a decimal between 0 and 1. The downstream gatekeeper requires confidence >= 0.8 to accept ANY submission — so calibrate as follows:
+Express your confidence as a decimal between 0 and 1. Calibrate as follows:
 
 - Use >= 0.9 when the name + description unambiguously fit one type and agree with each other.
 - Use 0.8 to 0.9 when the type is clear and the description supports the name but minor details are slightly underspecified.
 - Use 0.6 to 0.8 when the type is probable but you have meaningful doubt — either the type itself is ambiguous, OR the description only weakly supports the name.
 - Use < 0.6 when you are guessing.
 
-Any confidence below 0.8 causes the project to be rejected, so reserve >= 0.8 for cases where you can defend the verdict in writing. When in doubt, score below 0.8 and let HCSD rewrite the inputs — false acceptances are more costly here than false rejections.
+Confidence records the strength of your projectType assignment. It is persisted alongside the project and consumed by the human reviewer downstream to gauge whether the auto-generated milestones warrant closer scrutiny. Low confidence is a legitimate output — do NOT lower projectType to "unknown" as a proxy for low confidence. Confidence and type are independent axes: a confidence of 0.55 on "waterworks" is a legitimate output; a "waterworks" project reported as "unknown" is not.
 
 ## Reason Field
 
 One short paragraph (up to 1000 characters; usually 1–4 sentences) that explains the classification verdict in language a Head of Construction Services would write in an internal note. Prefer brevity, but never sacrifice specificity for length: when rejecting, name the concrete reason AND identify WHICH input is at fault, quoting the offending text when possible (e.g., "Description talks about office furniture procurement while name says drainage canal", "Name uses fictional word 'dragon' in the project object", "Barangay dropdown is 'Sambag I' but the name says 'in Lahug' — these contradict"). If you are accepting but the duration looks unusual for the type, you may note that in the reason but do not modify the duration band — the gatekeeper does the comparison.
+
+Composite is NEVER a rejection reason. When accepting a composite project, do not phrase the reason as if the composite structure were a problem — treat it as a normal accepted project and describe the primary work with a note about the secondary component(s).
 
 ## Output
 
@@ -337,6 +374,29 @@ const classifyInfrastructureTool = {
         enum: ["plausible", "implausible", "unclear"],
         description: "Whether scale numbers in the name are physically reasonable for a barangay-level work.",
       },
+      components: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "string",
+          enum: [
+            "road_concreting", "pavement", "pathway",
+            "drainage", "culvert",
+            "waterworks", "water_tank", "pipe_laying",
+            "building_construction", "building_renovation", "vertical_extension",
+            "evacuation_center", "day_care",
+            "covered_court", "covered_walk", "perimeter_fence",
+            "bridge", "footbridge",
+            "slope_protection", "riprap",
+            "electrical_works", "streetlighting",
+          ],
+        },
+        description: "Ordered array of work-component identifiers describing the physical works. Most significant first. Composite projects list multiple. Use ONLY the listed terms; do not invent synonyms.",
+      },
+      isComposite: {
+        type: "boolean",
+        description: "True if the name describes more than one distinct work component. Composite is NOT a rejection — the project is still admitted; this flag lets the milestone generator plan phases for multiple works.",
+      },
     },
     required: [
       "isInfrastructure",
@@ -351,6 +411,8 @@ const classifyInfrastructureTool = {
       "jurisdictionFit",
       "bundlesMultipleProjects",
       "physicalPlausibility",
+      "components",
+      "isComposite",
     ],
   },
 };
