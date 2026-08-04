@@ -17,26 +17,99 @@ import { useAuth } from '../../context/AuthContext';
 import { useUsers } from '../../hooks/useUsers';
 import { computeSlippage, deriveStatus } from '../../utils/slippage';
 
+// Mirrors the server-side proofKey cascade in functions/src/index.js so a
+// client-side lookup by identity uses the same priority order the server used
+// when writing verificationHistory[].proofKeys and perPhotoAssessments[].proofId.
+const proofKey = (p) => p?.id || p?.fileName || p?.name || p?.storagePath || p?.url || null;
+
+// Single formatter shared by every timestamp shown on the HCSD dashboard.
+// Asia/Manila is enforced explicitly rather than reading browser locale — this
+// is a single-jurisdiction accountability record. Output shape (e.g.
+// "04 Aug 2026, 3:15 PM (PHT)") matches the server-side CAPTURE_TIME_FORMATTER
+// used in the verifier prompt and the mobile burn-in banner.
+const PHT_FORMATTER = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+});
+const formatPHT = (raw) => {
+    if (raw == null) return null;
+    const d = raw?.toDate ? raw.toDate()
+            : raw instanceof Date ? raw
+            : typeof raw === 'number' ? new Date(raw)
+            : typeof raw === 'string' ? new Date(raw)
+            : null;
+    if (!d || isNaN(d.getTime())) return null;
+    return `${PHT_FORMATTER.format(d)} (PHT)`;
+};
+
 const normalizeProof = (p) => {
     if (!p || typeof p !== 'object') return null;
     const lat = p.gps?.lat ?? p.latitude;
     const lng = p.gps?.lng ?? p.longitude;
-    const raw = p.capturedAt ?? p.timestamp;
-    const capturedAt =
-        raw?.toDate ? raw.toDate()
-        : typeof raw === 'number' ? new Date(raw)
-        : raw instanceof Date ? raw
-        : typeof raw === 'string' ? raw
-        : null;
+    // Legacy note (per Phase 0 recon): the pre-convergence mobile client
+    // wrote `timestamp: Date.now()` at UPLOAD time, not capture time. When a
+    // proof has only `timestamp` and no `capturedAt`/`uploadedAt`, the render
+    // layer surfaces it under the neutral label "Recorded" — do not "fix"
+    // that to "Captured" without confirming what the field actually means.
+    const rawCaptured = p.capturedAt ?? p.timestamp;
     return {
-        name: p.fileName ?? p.name,
-        url: p.url,
-        capturedAt,
+        id: p.id ?? null,
+        name: p.fileName ?? p.name ?? null,
+        url: p.url ?? null,
+        storagePath: p.storagePath ?? null,
+        capturedAt: rawCaptured ?? null,
+        uploadedAt: p.uploadedAt ?? null,
         gps: (lat != null && lng != null) ? { lat: Number(lat), lng: Number(lng) } : null,
         accuracy: typeof p.accuracy === 'number' ? p.accuracy : null,
         location: typeof p.location === 'string' ? p.location : null,
+        uploadedBy: typeof p.uploadedBy === 'string' ? p.uploadedBy : null,
     };
 };
+
+// Three-tier match cascade from a per-photo assessment to the actual proof.
+// Returns { proof, match } where match is:
+//   'exact'                — Tier 1 (pa.proofId), or Tier 2 on a v2-2026-08 record.
+//   'approximate-tier2'    — Tier 2 on a pre-v2 record. Pre-v2 proofKeys may
+//                            be misaligned by mid-batch fetch skips (fixed in
+//                            functions/src/index.js on 2026-08-04), so this
+//                            match is best-effort.
+//   'approximate-tier3'    — Tier 3 positional fallback.
+//   'none'                 — no valid photo_index or fully out of range.
+//
+// Tier 2 is BOUNDED BY proofKeys.length (the send-order array), NOT
+// proofs.length — proofKeys may be shorter than the full proof set. Tier 3
+// is BOUNDED BY proofs.length. Bounding against the wrong array is how a
+// stale index resolves to a plausible-looking wrong photo.
+const resolveProofForAssessment = (pa, latestRecord, proofs) => {
+    if (!pa || !Array.isArray(proofs) || proofs.length === 0) return { proof: null, match: 'none' };
+    const idx = pa.photo_index;
+    if (pa.proofId != null) {
+        const found = proofs.find((p) => proofKey(p) === pa.proofId);
+        if (found) return { proof: found, match: 'exact' };
+    }
+    const keys = latestRecord?.proofKeys;
+    if (Array.isArray(keys) && Number.isInteger(idx) && idx >= 0 && idx < keys.length) {
+        const key = keys[idx];
+        if (key != null) {
+            const found = proofs.find((p) => proofKey(p) === key);
+            if (found) {
+                const isV2 = latestRecord?.promptVersion === 'v2-2026-08';
+                return { proof: found, match: isV2 ? 'exact' : 'approximate-tier2' };
+            }
+        }
+    }
+    if (Number.isInteger(idx) && idx >= 0 && idx < proofs.length) {
+        return { proof: proofs[idx], match: 'approximate-tier3' };
+    }
+    return { proof: null, match: 'none' };
+};
+
+const isApproximateMatch = (match) => match === 'approximate-tier2' || match === 'approximate-tier3';
+const approximateMatchTooltip = (match) =>
+    match === 'approximate-tier2'
+        ? 'Photo match from pre-recalibration record — may be off by one.'
+        : 'No per-photo identifier stored — matched by position.';
 
 const fmt = (val) =>(val === null || val === undefined || val === '') ? '—' : val;
 
@@ -307,7 +380,18 @@ const ProjectDetail = () => {
                             ? new Date(asNum)
                             : fallbackCapture;
                     }
-                    return { name: r.name, url, capturedAt, gps, accuracy: null, location: null };
+                    return {
+                        id: null,
+                        name: r.name,
+                        url,
+                        storagePath: null,
+                        capturedAt,
+                        uploadedAt: null,
+                        gps,
+                        accuracy: null,
+                        location: null,
+                        uploadedBy: null,
+                    };
                 }));
             } catch {}
 
@@ -869,13 +953,39 @@ const ProjectDetail = () => {
                                                             return tb - ta;
                                                         })[0]
                                                         : null;
+                                                    const perPhotoList = latestHistoryEntry
+                                                        ? (latestHistoryEntry.perPhotoAssessments ?? latestHistoryEntry.per_photo_assessments)
+                                                        : null;
+                                                    // "Photo N of M" denominator: the model was told the exact count
+                                                    // that was sent, so we surface the same value the model saw. Fall
+                                                    // back to array length if photosVerified is absent (very old rows).
+                                                    const totalAssessed = latestHistoryEntry?.photosVerified
+                                                        ?? (Array.isArray(perPhotoList) ? perPhotoList.length : 0);
+                                                    const cachedProofs = Array.isArray(cached) ? cached : [];
+                                                    // Set of proofKey() values for every proof the latest run
+                                                    // assessed. Empty when no history entry yet — so every thumbnail
+                                                    // correctly renders "Not yet assessed" until a run happens.
+                                                    const assessedKeys = new Set();
+                                                    if (latestHistoryEntry && Array.isArray(perPhotoList)) {
+                                                        perPhotoList.forEach((pa) => {
+                                                            const { proof: matched } = resolveProofForAssessment(pa, latestHistoryEntry, cachedProofs);
+                                                            if (matched) {
+                                                                const k = proofKey(matched);
+                                                                if (k) assessedKeys.add(k);
+                                                            }
+                                                        });
+                                                    }
                                                     return (
                                                         <>
                                                             {latestHistoryEntry && (() => {
                                                                 const result = latestHistoryEntry;
                                                                 const style = getVerdictStyle(result.overallVerdict);
                                                                 const VerdictIcon = style.icon;
-                                                                const perPhotoList = result.perPhotoAssessments ?? result.per_photo_assessments;
+                                                                const runAtStr = formatPHT(result.runAt);
+                                                                const provenanceBits = [];
+                                                                if (runAtStr) provenanceBits.push(`Assessed ${runAtStr}`);
+                                                                if (result.promptVersion) provenanceBits.push(result.promptVersion);
+                                                                const provenanceLine = provenanceBits.length > 0 ? provenanceBits.join(' · ') : null;
                                                                 return (
                                                                     <div className={`mb-2 rounded-xl border p-3 ${style.panel}`}>
                                                                         <div className="flex items-start gap-2">
@@ -889,6 +999,9 @@ const ProjectDetail = () => {
                                                                                         AI assessment · {result.photosVerified} photo{result.photosVerified !== 1 ? 's' : ''} scanned
                                                                                     </span>
                                                                                 </div>
+                                                                                {provenanceLine && (
+                                                                                    <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mb-1">{provenanceLine}</p>
+                                                                                )}
                                                                                 <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
                                                                                     {result.overallReasoning}
                                                                                 </p>
@@ -896,21 +1009,83 @@ const ProjectDetail = () => {
                                                                         </div>
 
                                                                         {Array.isArray(perPhotoList) && perPhotoList.length > 0 && (
-                                                                            <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60 space-y-2">
+                                                                            <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60 space-y-3">
                                                                                 {perPhotoList.map((pa) => {
                                                                                     const ps = getVerdictStyle(pa.verdict);
                                                                                     const PIcon = ps.icon;
+                                                                                    const { proof: matchedProof, match } = resolveProofForAssessment(pa, latestHistoryEntry, cachedProofs);
+                                                                                    const approx = isApproximateMatch(match);
+                                                                                    const isNone = match === 'none';
+                                                                                    // Denominator matches the "Photo N of M" label the
+                                                                                    // model was given in the v2 prompt.
+                                                                                    const photoLabel = `Photo ${pa.photo_index + 1} of ${totalAssessed || perPhotoList.length}`;
+                                                                                    const confidencePct = (typeof pa.confidence === 'number' && pa.confidence >= 0 && pa.confidence <= 1)
+                                                                                        ? Math.round(pa.confidence * 100)
+                                                                                        : null;
+                                                                                    const matchLabel = approx
+                                                                                        ? (match === 'approximate-tier2'
+                                                                                            ? 'photo match approximate (legacy record)'
+                                                                                            : 'photo match approximate (by position)')
+                                                                                        : null;
+                                                                                    const thumbAria = matchedProof
+                                                                                        ? `Open ${photoLabel} in lightbox — ${approx ? 'approximate match' : 'exact match'}`
+                                                                                        : `${photoLabel} — photo not found in this milestone`;
                                                                                     return (
                                                                                         <div key={pa.photo_index} className="flex items-start gap-2">
-                                                                                            <PIcon size={14} className={`${ps.iconColor} shrink-0 mt-0.5`} />
+                                                                                            {matchedProof ? (
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={() => setLightbox(matchedProof)}
+                                                                                                    aria-label={thumbAria}
+                                                                                                    className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
+                                                                                                >
+                                                                                                    <img src={matchedProof.url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                                                                                                    {approx && (
+                                                                                                        <span
+                                                                                                            className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center shadow-sm"
+                                                                                                            title={approximateMatchTooltip(match)}
+                                                                                                            aria-hidden="true"
+                                                                                                        >
+                                                                                                            ≈
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </button>
+                                                                                            ) : (
+                                                                                                <div
+                                                                                                    className="shrink-0 w-12 h-12 rounded-md bg-slate-100 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center"
+                                                                                                    title="Photo not found in this milestone"
+                                                                                                    aria-label={thumbAria}
+                                                                                                >
+                                                                                                    <ImageIcon size={16} className="text-slate-400 dark:text-slate-500 opacity-60" />
+                                                                                                </div>
+                                                                                            )}
                                                                                             <div className="flex-1 min-w-0">
                                                                                                 <div className="flex items-center gap-2 flex-wrap">
+                                                                                                    <PIcon size={14} className={`${ps.iconColor} shrink-0`} />
                                                                                                     <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                                                                                                        Photo {pa.photo_index + 1}
+                                                                                                        {photoLabel}
                                                                                                     </span>
                                                                                                     <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${ps.pill}`}>
                                                                                                         {ps.label}
                                                                                                     </span>
+                                                                                                    {confidencePct != null && (
+                                                                                                        <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                                                                                            Confidence: {confidencePct}%
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {matchLabel && (
+                                                                                                        <span
+                                                                                                            className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                                                                                                            title={approximateMatchTooltip(match)}
+                                                                                                        >
+                                                                                                            {matchLabel}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                    {isNone && (
+                                                                                                        <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                                                                                                            photo not found in this milestone
+                                                                                                        </span>
+                                                                                                    )}
                                                                                                 </div>
                                                                                                 <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
                                                                                                     {pa.reasoning}
@@ -949,24 +1124,66 @@ const ProjectDetail = () => {
                                                                             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium text-center py-3">Loading photos…</p>
                                                                         ) : (cached && cached.length > 0) ? (
                                                                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                                                                {cached.map((p) => (
-                                                                                    <button
-                                                                                        key={p.name}
-                                                                                        type="button"
-                                                                                        onClick={() => setLightbox(p)}
-                                                                                        className="group relative aspect-square rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
-                                                                                    >
-                                                                                        <img src={p.url} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                                                                                        {p.gps && (
-                                                                                            <span
-                                                                                                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-teal-600/90 text-white flex items-center justify-center shadow-sm"
-                                                                                                title={p.location ?? `${p.gps.lat.toFixed(6)}, ${p.gps.lng.toFixed(6)}`}
+                                                                                {cached.map((p, i) => {
+                                                                                    const key = proofKey(p) ?? `idx-${i}`;
+                                                                                    const capturedStr = formatPHT(p.capturedAt);
+                                                                                    const uploadedStr = formatPHT(p.uploadedAt);
+                                                                                    // Label rule (all timestamps formatted in Asia/Manila):
+                                                                                    //   both present     → "Captured" primary + "Uploaded" secondary
+                                                                                    //   only capturedAt/timestamp → "Recorded" (neutral: pre-convergence
+                                                                                    //     mobile wrote `timestamp` at UPLOAD time, so we cannot claim
+                                                                                    //     capture — see normalizeProof note)
+                                                                                    //   only uploadedAt  → "Uploaded" primary
+                                                                                    //   neither          → nothing
+                                                                                    let primaryLabel = null, primaryValue = null, secondaryLabel = null, secondaryValue = null;
+                                                                                    if (capturedStr && uploadedStr) {
+                                                                                        primaryLabel = 'Captured'; primaryValue = capturedStr;
+                                                                                        secondaryLabel = 'Uploaded'; secondaryValue = uploadedStr;
+                                                                                    } else if (capturedStr) {
+                                                                                        primaryLabel = 'Recorded'; primaryValue = capturedStr;
+                                                                                    } else if (uploadedStr) {
+                                                                                        primaryLabel = 'Uploaded'; primaryValue = uploadedStr;
+                                                                                    }
+                                                                                    const pKey = proofKey(p);
+                                                                                    const isUnassessed = latestHistoryEntry != null && !(pKey && assessedKeys.has(pKey));
+                                                                                    return (
+                                                                                        <div key={key} className="flex flex-col gap-1">
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => setLightbox(p)}
+                                                                                                aria-label={`Open proof photo${p.name ? ` ${p.name}` : ''} in lightbox${isUnassessed ? ' — not yet assessed' : ''}`}
+                                                                                                className="group relative aspect-square rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
                                                                                             >
-                                                                                                <MapPin size={12} strokeWidth={2.5} />
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </button>
-                                                                                ))}
+                                                                                                <img src={p.url} alt={p.name ?? ''} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                                                                                {p.gps && (
+                                                                                                    <span
+                                                                                                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-teal-600/90 text-white flex items-center justify-center shadow-sm"
+                                                                                                        title={p.location ?? `${p.gps.lat.toFixed(6)}, ${p.gps.lng.toFixed(6)}`}
+                                                                                                    >
+                                                                                                        <MapPin size={12} strokeWidth={2.5} />
+                                                                                                    </span>
+                                                                                                )}
+                                                                                                {isUnassessed && (
+                                                                                                    <span className="absolute bottom-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-900/70 text-white shadow-sm">
+                                                                                                        Not yet assessed
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </button>
+                                                                                            {primaryValue && (
+                                                                                                <div className="text-[10px] leading-tight px-0.5">
+                                                                                                    <p className="text-slate-600 dark:text-slate-300 font-semibold truncate" title={primaryValue}>
+                                                                                                        <span className="text-slate-400 dark:text-slate-500 font-medium">{primaryLabel}:</span> {primaryValue}
+                                                                                                    </p>
+                                                                                                    {secondaryValue && (
+                                                                                                        <p className="text-slate-400 dark:text-slate-500 truncate" title={secondaryValue}>
+                                                                                                            <span className="font-medium">{secondaryLabel}:</span> {secondaryValue}
+                                                                                                        </p>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
                                                                             </div>
                                                                         ) : (
                                                                             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium text-center py-3">No proof photos uploaded yet.</p>
@@ -1016,7 +1233,7 @@ const ProjectDetail = () => {
                         <XIcon size={22} />
                     </button>
                     <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                        <img src={lightbox.url} alt={lightbox.name} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" />
+                        <img src={lightbox.url} alt={lightbox.name ?? ''} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" />
                         {lightbox.gps && (
                             <a
                                 href={`https://www.google.com/maps?q=${lightbox.gps.lat},${lightbox.gps.lng}`}
@@ -1033,6 +1250,38 @@ const ProjectDetail = () => {
                                 <ExternalLink size={11} strokeWidth={2.5} />
                             </a>
                         )}
+                        {(() => {
+                            const capturedStr = formatPHT(lightbox.capturedAt);
+                            const uploadedStr = formatPHT(lightbox.uploadedAt);
+                            // Same label rule as the thumbnail grid caption
+                            // (see comment there): Captured+Uploaded when both,
+                            // "Recorded" when only capturedAt/timestamp is
+                            // present (pre-convergence mobile wrote the legacy
+                            // `timestamp` at upload time — do not "fix" this
+                            // label to Captured without confirming).
+                            const lines = [];
+                            if (capturedStr && uploadedStr) {
+                                lines.push({ label: 'Captured', value: capturedStr });
+                                lines.push({ label: 'Uploaded', value: uploadedStr });
+                            } else if (capturedStr) {
+                                lines.push({ label: 'Recorded', value: capturedStr });
+                            } else if (uploadedStr) {
+                                lines.push({ label: 'Uploaded', value: uploadedStr });
+                            }
+                            if (lightbox.uploadedBy) {
+                                lines.push({ label: 'Uploaded by', value: lightbox.uploadedBy });
+                            }
+                            if (lines.length === 0) return null;
+                            return (
+                                <div className="text-xs text-white/85 bg-black/40 rounded-lg px-3 py-2 max-w-[80vw] flex flex-col gap-0.5 items-center">
+                                    {lines.map((l) => (
+                                        <p key={l.label} className="truncate max-w-full">
+                                            <span className="font-medium text-white/60">{l.label}:</span> <span className="font-semibold">{l.value}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            );
+                        })()}
                     </div>
                 </div>
             )}
