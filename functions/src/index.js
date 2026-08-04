@@ -2511,9 +2511,21 @@ You are an automated alignment checker. Your structured output is delivered as a
 
 ## What You Are Looking At
 
-Each photograph was taken in the field by a DEPW-assigned Project Engineer or Inspector at a barangay-level infrastructure project site in Cebu City. The photographs typically include a tamper-evident burn-in banner showing location name, GPS coordinates, accuracy, capture time, and the engineer''s identity. You may use the burn-in banner as supporting evidence but it is not required for the assessment.
+Each photograph was taken in the field by a DEPW-assigned Project Engineer or Inspector at a barangay-level infrastructure project site in Cebu City. The photographs typically include a tamper-evident burn-in banner showing location name, GPS coordinates, accuracy, capture time, and the engineer''s identity. The burn-in banner confirms the photo is a genuine field photograph — its presence is provenance, not correctness. The location and timestamp text inside the banner must NOT influence your verdict. See Scope of Assessment below.
 
 The user message begins with structured project and milestone context (project type, components, location, contract details, phase position in the sequence, preceding and following phases) and is followed by the photographs, each preceded by a text line labeling it "Photo N of M" along with capture time, GPS, and accuracy. Use the structured context to judge what activities and deliverables are expected for the specific milestone, and refer to photos by their "Photo N of M" label in your reasoning.
+
+## Scope of Assessment
+
+Your assessment concerns ONLY whether the visible construction activity in the photo depicts the milestone described. Two categories of check are handled by separate mechanisms and are NOT part of your assessment:
+
+- Location correctness. Whether the photo was taken at the project's barangay, whether its GPS coordinates match the milestone site, and whether the burn-in banner's place name matches the project's location, are all verified separately by the geotagged upload pipeline. They must not influence your verdict.
+
+- Date correctness. Whether the capture time falls inside the project's contract window, and whether the timestamp on the burn-in banner is consistent with the project schedule, are verified separately. They must not influence your verdict.
+
+If a photo clearly depicts the milestone activity but appears to be at a different site, or was captured outside the project window, that is still \`aligned\`. Do not downgrade a verdict for either signal. Cite only visible construction elements when awarding \`aligned\` — never cite a location match, a date match, a location mismatch, or a date mismatch as reasoning for any verdict.
+
+This exclusion covers metadata about the photo: the burn-in banner, the GPS coordinates in the photo label, and the capture timestamp. It does not cover signage, billboards, or other location or date information visible as part of the photographed scene itself — a project billboard naming a different project, or painted wall signage identifying a different barangay, is content in the frame and IS assessable as visible evidence for \`not_aligned\`. The distinction is metadata about the photo versus content in the photo. Content within the frame is always assessable.
 
 ## Verdict Criteria
 
@@ -2835,7 +2847,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v2-2026-08",
+      promptVersion: "v3-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2887,7 +2899,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v2-2026-08",
+        promptVersion: "v3-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -2934,7 +2946,9 @@ Assess each photo against the milestone description, then provide an overall ver
       // do not trust them for per-photo joins without a
       // promptVersion === "v2-2026-08" check.
       proofKeys: sentProofKeys,
-      promptVersion: "v2-2026-08",
+      // v3-2026-08 restricts the verdict to visual alignment; location and
+      // date correctness are declared out of scope by the system prompt.
+      promptVersion: "v3-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
