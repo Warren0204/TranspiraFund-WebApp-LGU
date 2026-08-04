@@ -6,7 +6,17 @@
 // same discipline as ./classification.js. The deployed Cloud Function and any diagnostic
 // tool MUST import from here — never duplicate — so the prompt cannot drift between them.
 
-const { PROJECT_TYPE_ENUM, TYPICAL_DURATION_DAYS } = require("./classification");
+const { PROJECT_TYPE_ENUM, TYPICAL_DURATION_DAYS, COMPONENT_VOCABULARY } = require("./classification");
+
+// Human-readable prompt version. Bumped whenever the prompt or tool schema
+// changes in a way that would alter the classifier's output distribution
+// (wording changes to verdict criteria, new worked examples, added/removed
+// tool fields, enum edits). Persisted on every classification record as
+// `classifierPromptVersion` so Phase 4 calibration can distinguish pre-fix
+// from post-fix runs. Companion to the auto-hashed `classifierVersion` in
+// functions/src/index.js — the hash detects any prompt byte-change; this
+// string labels the substantive version.
+const CLASSIFIER_PROMPT_VERSION = "v1.1-2026-08-04";
 
 // Renders TYPICAL_DURATION_DAYS into the same "type: min N, max N" alignment
 // the LLM prompt has historically used. Colons padded to column 24. Object
@@ -189,13 +199,12 @@ Real DEPW projects sometimes bundle two or more physical works under a single co
 
 - isComposite: true if the name describes MORE THAN ONE distinct work component; otherwise false. Phasing of the SAME work ("Phase 1 and Phase 2") is NOT composite. A single road that mentions a drainage culvert as an inseparable part of its scope is NOT composite. But a project that clearly bundles two separate works ("water system and covered walk") IS composite.
 - components[]: enumerate every distinct work as its own entry from the controlled vocabulary in the Components section below.
-- bundlesMultipleProjects: set true whenever isComposite is true, for continuity with the pre-composite audit trail. This field is no longer a rejection reason — it is an observability signal only.
 
 Composite projects are NEVER rejected. Do NOT ask HCSD to resubmit them as separate projects. The downstream milestone generator composes phased plans from the components[] you enumerate.
 
 ## Components
 
-Every accepted project MUST have a components[] array listing the physical work components in the project. Use ONLY the terms in the controlled vocabulary below. Do not invent synonyms, do not pluralize, do not use camelCase. Ordering matters: list components most significant first (largest or most defining physical work).
+Every ADMITTED project (isInfrastructure: true) MUST have a components[] array with AT LEAST ONE entry. An empty components[] on an admitted project is a schema violation and leaves the downstream milestone retrieval and the verifier prompt with no context — this must not happen. Use ONLY the terms in the controlled vocabulary below. Do not invent synonyms, do not pluralize, do not use camelCase. Ordering matters: list components most significant first (largest or most defining physical work).
 
 The 22 controlled component terms:
 
@@ -210,9 +219,21 @@ The 22 controlled component terms:
 - slope_protection, riprap — slope stabilization works
 - electrical_works, streetlighting — electrical installations and lighting
 
-Single-work projects list one component. Composite projects list every distinct work component in the name — for example, "Road Concreting with Drainage system" is components: ["road_concreting", "drainage"] with isComposite: true. Subcomponents that are inseparable from the parent structure (handrails on a footbridge, stage on a covered court, tapping stands on a waterworks pipeline) are subsumed by the parent and NOT emitted separately.
+Single-work projects list one component. Composite projects list every distinct work component in the name. Subcomponents that are inseparable from the parent structure (handrails on a footbridge, stage on a covered court, tapping stands on a waterworks pipeline) are subsumed by the parent and NOT emitted separately.
 
-If a project describes work that has no direct match in the vocabulary (e.g. a Materials Recovery Facility), fall back to the closest generic term (building_construction for MRF-style facilities) and record low confidence rather than inventing a new term.
+### Worked examples — the composite vs inseparable distinction
+
+The distinction between composite and inseparable is what most classifier errors turn on. Two worked examples:
+
+- **Composite (multi-structure).** "Barangay Materials Recovery Facility with Composting Shed and Perimeter Fence" — three distinct structures: an MRF (building), a shed (building), and a fence. Since the vocabulary has no MRF or shed term, both buildings map to \`building_construction\`, and the fence maps to \`perimeter_fence\`. Because the fence is a separate structure enclosing the site — not a decorative railing on the MRF — this IS composite. Correct output: \`components: ["building_construction", "perimeter_fence"]\`, \`isComposite: true\`. Confidence 0.70–0.80 to reflect the MRF-to-generic fallback.
+
+- **Inseparable (single work).** "Road Concreting with Inline Drainage Culvert along Sitio Bagong Sikat" — one road with a drainage culvert as an INSEPARABLE part of its scope. The culvert exists to drain the road; it is not a separate hydraulic system. This is NOT composite. Correct output: \`components: ["road_concreting"]\`, \`isComposite: false\`. Do NOT emit \`drainage\` or \`culvert\` as a second component; the culvert is subsumed by the road just as handrails are subsumed by a footbridge.
+
+The test is not "does the name contain 'and' or 'with'." The test is whether each named element is a SEPARATE physical structure that a Project Engineer would supervise as its own set of milestones. Two buildings and a fence: three sets of milestones → composite. One road with a drainage culvert inseparable from its subgrade: one set of milestones → not composite.
+
+### Vocabulary fallback for out-of-vocabulary works
+
+If a project describes work that has no direct match in the vocabulary (e.g. a Materials Recovery Facility, a health center, a legislative building, a school building — all of these are enclosed public buildings), fall back to the closest generic term (\`building_construction\` for any enclosed public building not covered by \`covered_court\`, \`day_care\`, or \`evacuation_center\`) and record low confidence rather than inventing a new term.
 
 For rejected projects (isInfrastructure: false), still emit at least one component to satisfy the schema — the closest available term is fine; the value is ignored downstream on rejection.
 
@@ -365,10 +386,6 @@ const classifyInfrastructureTool = {
         enum: ["in_lgu", "out_of_lgu", "location_agnostic"],
         description: "Whether the name references a Cebu City location, a non-Cebu-City location, or no location at all.",
       },
-      bundlesMultipleProjects: {
-        type: "boolean",
-        description: "True if the name describes more than one distinct work joined by 'and', '&', commas, etc.",
-      },
       physicalPlausibility: {
         type: "string",
         enum: ["plausible", "implausible", "unclear"],
@@ -377,20 +394,10 @@ const classifyInfrastructureTool = {
       components: {
         type: "array",
         minItems: 1,
-        items: {
-          type: "string",
-          enum: [
-            "road_concreting", "pavement", "pathway",
-            "drainage", "culvert",
-            "waterworks", "water_tank", "pipe_laying",
-            "building_construction", "building_renovation", "vertical_extension",
-            "evacuation_center", "day_care",
-            "covered_court", "covered_walk", "perimeter_fence",
-            "bridge", "footbridge",
-            "slope_protection", "riprap",
-            "electrical_works", "streetlighting",
-          ],
-        },
+        // Enum bound to the single COMPONENT_VOCABULARY export in
+        // ./classification so the tool schema and the Zod validator on
+        // createProject cannot drift apart.
+        items: { type: "string", enum: COMPONENT_VOCABULARY },
         description: "Ordered array of work-component identifiers describing the physical works. Most significant first. Composite projects list multiple. Use ONLY the listed terms; do not invent synonyms.",
       },
       isComposite: {
@@ -398,6 +405,13 @@ const classifyInfrastructureTool = {
         description: "True if the name describes more than one distinct work component. Composite is NOT a rejection — the project is still admitted; this flag lets the milestone generator plan phases for multiple works.",
       },
     },
+    // NOTE: `bundlesMultipleProjects` intentionally REMOVED from the model's
+    // tool schema on 2026-08-04. It is now a server-derived mirror of
+    // `isComposite` (see decideClassification in ./classification.js), kept
+    // on the persisted verdict for audit continuity with pre-composite rows.
+    // Never re-add it here — a model-supplied `bundlesMultipleProjects` gave
+    // the model two independent knobs to contradict itself with, which is
+    // exactly the defect the mirror was introduced to fix.
     required: [
       "isInfrastructure",
       "projectType",
@@ -409,7 +423,6 @@ const classifyInfrastructureTool = {
       "semanticCoherence",
       "scopeFit",
       "jurisdictionFit",
-      "bundlesMultipleProjects",
       "physicalPlausibility",
       "components",
       "isComposite",
@@ -420,4 +433,5 @@ const classifyInfrastructureTool = {
 module.exports = {
     CLASSIFIER_SYSTEM_PROMPT,
     classifyInfrastructureTool,
+    CLASSIFIER_PROMPT_VERSION,
 };

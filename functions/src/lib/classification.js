@@ -227,10 +227,31 @@ const COMPONENT_TO_TYPE_MAP = {
 // The 22-term controlled component vocabulary, derived from the keys of
 // COMPONENT_TO_TYPE_MAP so the two never drift apart. Consumed by:
 //   - index.js createProjectSchema (Zod z.enum for the persisted map)
-//   - classifier-prompt.js tool schema (currently inline; must match this list)
-// If a term is added or removed here, update the classifier-prompt.js tool
-// schema's inline enum to match.
+//   - classifier-prompt.js tool schema (imported, single source of truth)
+//   - TYPE_TO_DEFAULT_COMPONENT below (reverse map used by the empty-array
+//     synthesis safeguard in decideClassification)
+// Add or remove terms here only — both downstream consumers pick up the
+// change automatically.
 const COMPONENT_VOCABULARY = Object.keys(COMPONENT_TO_TYPE_MAP);
+
+// Reverse map from PROJECT_TYPE_ENUM (9 non-"unknown" values) to a single
+// default component. Used by the safeguard in decideClassification: when the
+// model returns an admitted project with an empty components[] array, we
+// synthesize a single component from projectType so downstream consumers
+// (mobile retrieval scorer, verifier prompt) always see a non-empty array.
+// Every synthesized value is stamped with `componentsSynthesized: true` so
+// Phase 4 calibration can exclude these rows.
+const TYPE_TO_DEFAULT_COMPONENT = {
+    road_concreting:        "road_concreting",
+    drainage_construction:  "drainage",
+    multi_purpose_building: "building_construction",
+    covered_court:          "covered_court",
+    day_care_center:        "day_care",
+    footbridge:             "footbridge",
+    slope_protection:       "slope_protection",
+    waterworks:             "waterworks",
+    electrification:        "electrical_works",
+};
 
 // Picks a non-"unknown" PROJECT_TYPE_ENUM value for an admitted project whose
 // classifier returned "unknown". Ordering:
@@ -273,6 +294,15 @@ const coerceAdmittedType = (classifierOutput, durationDays) => {
 //     coerceAdmittedType if the model violated the "never emit unknown for an
 //     admitted project" invariant. opts.onCoercion (if provided) is invoked
 //     synchronously so the callable can log the coercion with basis.
+//   - When admitted with an empty components[] array, a single component is
+//     synthesized from projectType via TYPE_TO_DEFAULT_COMPONENT so downstream
+//     consumers never see an empty array. `componentsSynthesized: true` marks
+//     the record. opts.onSynthesis (if provided) is invoked synchronously so
+//     the callable can log the safeguard fire.
+//   - `verdict.bundlesMultipleProjects` is a server-DERIVED mirror of
+//     `!!isComposite`, retained on the persisted verdict for audit continuity
+//     with pre-composite rows. The model no longer supplies this field (see
+//     tool-schema NOTE in classifier-prompt.js); never re-add it there.
 
 const decideClassification = (classifierOutput, durationDays, opts = {}) => {
     const {
@@ -286,7 +316,6 @@ const decideClassification = (classifierOutput, durationDays, opts = {}) => {
         semanticCoherence,
         scopeFit,
         jurisdictionFit,
-        bundlesMultipleProjects,
         physicalPlausibility,
         isComposite,
         components: rawComponents,
@@ -336,6 +365,31 @@ const decideClassification = (classifierOutput, durationDays, opts = {}) => {
         projectType = type;
     }
 
+    // Empty-components safeguard. The tool schema declares `components` as
+    // required with minItems: 1, but Anthropic's tool-use validation is
+    // best-effort — models can and do return []. When that happens on an
+    // ADMITTED project we synthesize a single component from projectType so
+    // the mobile retrieval scorer and the verifier prompt never see an empty
+    // array. `componentsSynthesized: true` on the resulting record marks it
+    // as safeguard-synthesized so Phase 4 calibration can exclude these rows
+    // from model-accuracy measurements.
+    let components = Array.isArray(rawComponents) ? [...rawComponents] : [];
+    let componentsSynthesized = false;
+    if (components.length === 0) {
+        const fallback = TYPE_TO_DEFAULT_COMPONENT[projectType];
+        if (fallback) {
+            components = [fallback];
+            componentsSynthesized = true;
+            if (typeof opts.onSynthesis === "function") {
+                opts.onSynthesis({
+                    synthesizedComponent: fallback,
+                    basis: "projectType_reverse_map",
+                    projectType,
+                });
+            }
+        }
+    }
+
     const canonicalBand = TYPICAL_DURATION_DAYS[projectType] || null;
     const band = canonicalBand || modelBand || null;
     const durationFlag = computeDurationFlag(projectType, durationDays, band);
@@ -349,16 +403,22 @@ const decideClassification = (classifierOutput, durationDays, opts = {}) => {
         typicalDurationDays: band,
         reason,
         isComposite: !!isComposite,
-        components: Array.isArray(rawComponents) ? rawComponents : [],
+        components,
+        componentsSynthesized,
         contractVersion: "1",
         // Persisted on the project doc for mobile-side and audit-trail use.
+        // `bundlesMultipleProjects` is a server-DERIVED mirror of `isComposite`
+        // (see the module header). It is NOT independent model output and must
+        // never again be added to the tool schema — doing so gave the model
+        // two independent knobs to contradict itself with, which is exactly
+        // the defect this mirror was introduced to fix on 2026-08-04.
         verdict: {
             inputSafety: inputSafety || null,
             nameQuality: nameQuality || null,
             semanticCoherence: semanticCoherence || null,
             scopeFit: scopeFit || null,
             jurisdictionFit: jurisdictionFit || null,
-            bundlesMultipleProjects: !!bundlesMultipleProjects,
+            bundlesMultipleProjects: !!isComposite,
             physicalPlausibility: physicalPlausibility || null,
         },
     };
@@ -409,6 +469,7 @@ module.exports = {
     VOCAB_TERMS,
     VOCAB_REGEX,
     COMPONENT_VOCABULARY,
+    TYPE_TO_DEFAULT_COMPONENT,
     computeDurationFlag,
     decideClassification,
     checkSafetyRejection,

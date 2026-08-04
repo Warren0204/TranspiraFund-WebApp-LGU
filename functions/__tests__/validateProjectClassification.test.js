@@ -459,6 +459,87 @@ describe("decideClassification — safety/quality gates", () => {
         expect(result.contractVersion).toBe("1");
     });
 
+    // ── 2026-08-04 fix: empty-components safeguard + verdict.bundlesMultipleProjects mirror ──
+
+    test("admitted with EMPTY components[] → safeguard synthesizes from projectType and stamps componentsSynthesized", () => {
+        const onSynthesis = jest.fn();
+        const result = decideClassification(
+            { isInfrastructure: true, projectType: "multi_purpose_building", confidence: 0.88,
+              typicalDurationDays: { min: 90, max: 480 },
+              reason: "MRF-class facility; falling back to building_construction per prompt.",
+              isComposite: false,
+              components: [],
+              ...cleanExtras() },
+            150,
+            { onSynthesis },
+        );
+        expect(result.accepted).toBe(true);
+        expect(result.componentsSynthesized).toBe(true);
+        expect(result.components).toEqual(["building_construction"]);
+        expect(onSynthesis).toHaveBeenCalledTimes(1);
+        expect(onSynthesis).toHaveBeenCalledWith({
+            synthesizedComponent: "building_construction",
+            basis: "projectType_reverse_map",
+            projectType: "multi_purpose_building",
+        });
+    });
+
+    test("admitted with non-empty components[] → safeguard does NOT fire; componentsSynthesized false", () => {
+        const onSynthesis = jest.fn();
+        const result = decideClassification(
+            { isInfrastructure: true, projectType: "drainage_construction", confidence: 0.92,
+              typicalDurationDays: { min: 45, max: 270 }, reason: "clean drainage extraction",
+              isComposite: false,
+              components: ["drainage", "culvert"],
+              ...cleanExtras() },
+            90,
+            { onSynthesis },
+        );
+        expect(result.componentsSynthesized).toBe(false);
+        expect(result.components).toEqual(["drainage", "culvert"]);
+        expect(onSynthesis).not.toHaveBeenCalled();
+    });
+
+    test("admitted with missing components field → treated as empty; safeguard fires", () => {
+        const result = decideClassification(
+            { isInfrastructure: true, projectType: "road_concreting", confidence: 0.9,
+              typicalDurationDays: { min: 60, max: 180 }, reason: "plain road",
+              isComposite: false,
+              // components: intentionally omitted
+              ...cleanExtras() },
+            90,
+        );
+        expect(result.componentsSynthesized).toBe(true);
+        expect(result.components).toEqual(["road_concreting"]);
+    });
+
+    test("verdict.bundlesMultipleProjects is DERIVED from isComposite, ignoring model's own bundlesMultipleProjects", () => {
+        // The 2026-08-04 fix removed bundlesMultipleProjects from the tool
+        // schema. verdict.bundlesMultipleProjects is now a server-derived
+        // mirror of isComposite. Model input for bundlesMultipleProjects is
+        // discarded — even a stale client that passes true|false must not
+        // change the derived mirror.
+        const composite = decideClassification(
+            { isInfrastructure: true, projectType: "road_concreting", confidence: 0.9,
+              typicalDurationDays: { min: 60, max: 180 }, reason: "composite",
+              isComposite: true,
+              components: ["road_concreting", "drainage"],
+              ...cleanExtras({ bundlesMultipleProjects: false }) }, // model says FALSE, mirror ignores
+            90,
+        );
+        expect(composite.verdict.bundlesMultipleProjects).toBe(true);
+
+        const single = decideClassification(
+            { isInfrastructure: true, projectType: "road_concreting", confidence: 0.9,
+              typicalDurationDays: { min: 60, max: 180 }, reason: "single",
+              isComposite: false,
+              components: ["road_concreting"],
+              ...cleanExtras({ bundlesMultipleProjects: true }) }, // model says TRUE, mirror ignores
+            90,
+        );
+        expect(single.verdict.bundlesMultipleProjects).toBe(false);
+    });
+
     test("semanticCoherence.allWordsInfraRelated=false → rejected with vocabulary reason", () => {
         // "Construction of magic palace in barangay Lahug" — "magic palace" pulls in
         // fictional vocabulary even though the wrapper is infra-looking.

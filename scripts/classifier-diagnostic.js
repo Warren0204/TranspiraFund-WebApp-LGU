@@ -110,6 +110,12 @@ const SET_B = [
     "Construction of Materials Recovery Facility",
     "Repair of Barangay Hall Roofing",
     "Installation of Street Lighting Poles",
+    // The MRF composite case that surfaced the empty-components defect on
+    // 2026-08-04 (live project NLDiOGd6oCJfjWP9Kbbe). Expected extraction:
+    // components: ["building_construction", "perimeter_fence"], isComposite:
+    // true. If either is wrong the classifier-empty-components gate below
+    // will fire.
+    "Barangay Materials Recovery Facility with Composting Shed and Perimeter Fence",
 ];
 
 const SET_C = [
@@ -183,15 +189,22 @@ function verdictLabel(status) {
     return "ERROR";
 }
 
+function fmtComponents(cs) {
+    if (!Array.isArray(cs) || cs.length === 0) return "(empty)";
+    return cs.join(",");
+}
+
 function printTable(label, rows) {
     console.log(`\n--- ${label} table ---`);
     console.log(
-        `${padRight("Verdict", 8)}${padRight("Type", 26)}${padRight("Scope", 12)}${padRight("Conf", 6)}Name`,
+        `${padRight("Verdict", 8)}${padRight("Type", 24)}${padRight("Conf", 6)}${padRight("Comp?", 7)}${padRight("Synth", 7)}${padRight("Components", 40)}Name`,
     );
-    console.log("-".repeat(120));
+    console.log("-".repeat(160));
     for (const r of rows) {
+        const compLabel = r.isComposite === true ? "yes" : r.isComposite === false ? "no" : "?";
+        const synthLabel = r.componentsSynthesized === true ? "YES" : r.componentsSynthesized === false ? "no" : "?";
         console.log(
-            `${padRight(verdictLabel(r.status), 8)}${padRight(r.projectType, 26)}${padRight(r.scopeFit || "?", 12)}${padRight(fmtConfidence(r.confidence), 6)}${r.name}`,
+            `${padRight(verdictLabel(r.status), 8)}${padRight(r.projectType, 24)}${padRight(fmtConfidence(r.confidence), 6)}${padRight(compLabel, 7)}${padRight(synthLabel, 7)}${padRight(fmtComponents(r.components), 40)}${r.name}`,
         );
         if (r.status !== "passed") {
             const reason = String(r.reason || "").replace(/\s+/g, " ").slice(0, 200);
@@ -235,16 +248,29 @@ async function classifyOne(name) {
             projectType: "unknown",
             scopeFit: null,
             confidence: 0,
+            rawComponents: null,
+            components: null,
+            isComposite: null,
+            componentsSynthesized: null,
         };
     }
     const raw = toolUse.input;
     const decision = decideClassification(raw, DURATION_DAYS);
+    // Both the raw model output and the post-safeguard decision are captured
+    // so calibration can distinguish model behavior from safeguard behavior:
+    //   - rawComponents is the model's own extraction (may be empty).
+    //   - components is what downstream consumers see (post-safeguard).
+    //   - componentsSynthesized flags rows where the safeguard fired.
     return {
         status: decision.accepted ? "passed" : "rejected",
         reason: decision.reason || (decision.accepted ? "—" : "(no reason returned)"),
         projectType: raw.projectType || decision.projectType || "unknown",
         scopeFit: raw.scopeFit || null,
         confidence: typeof raw.confidence === "number" ? raw.confidence : 0,
+        rawComponents: Array.isArray(raw.components) ? raw.components : [],
+        components: Array.isArray(decision.components) ? decision.components : [],
+        isComposite: typeof raw.isComposite === "boolean" ? raw.isComposite : null,
+        componentsSynthesized: decision.componentsSynthesized === true,
     };
 }
 
@@ -390,6 +416,32 @@ if (DEBUG_MODE) {
             console.log("\nFAILED — either an SME-validated name was rejected, or a guardrail case was accepted. See failing rows above.");
             process.exit(1);
         }
+
+        // Empty-components gate. An admitted project with no model-extracted
+        // components leaves both the mobile retrieval scorer and the verifier
+        // prompt blind, which is precisely the defect the 2026-08-04 fix
+        // targets. Check the RAW model output (not the post-safeguard
+        // decision) so the harness measures model behavior, not the
+        // safeguard's ability to paper over it. Synthesized rows are still
+        // reported below as a soft signal.
+        const emptyComponentRows = [...rowsA, ...rowsB].filter(
+            (r) => r.status === "passed" && Array.isArray(r.rawComponents) && r.rawComponents.length === 0,
+        );
+        if (emptyComponentRows.length > 0) {
+            console.log(`\nFAILED — ${emptyComponentRows.length} admitted row(s) had EMPTY model-extracted components. The safeguard synthesized a fallback so downstream is fine, but this is a classifier regression that must be investigated:`);
+            for (const r of emptyComponentRows) {
+                console.log(`  - "${r.name}"  (synthesized → [${(r.components || []).join(",")}])`);
+            }
+            process.exit(1);
+        }
+
+        // Soft signal: synthesized-but-nonempty rows shouldn't happen (the
+        // safeguard only fires on empty), but flag if we ever see one.
+        const synthesizedRows = [...rowsA, ...rowsB].filter((r) => r.componentsSynthesized === true);
+        if (synthesizedRows.length > 0) {
+            console.log(`\nNOTE — ${synthesizedRows.length} row(s) triggered the components-synthesis safeguard. This should be zero once the empty-components gate is green.`);
+        }
+
         if (bB.passed < SET_B.length) {
             console.log(`\nWARNING — ${SET_B.length - bB.passed} of Set B rejected. Not a hard failure, but the wider legitimate domain is not fully covered yet.`);
         }

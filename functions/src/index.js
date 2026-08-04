@@ -97,6 +97,7 @@ const createProjectSchema = z.object({
         }).nullable().optional(),
         reason: z.string().max(1000).nullable().optional(),
         classifierVersion: z.string().max(64).optional(),
+        classifierPromptVersion: z.string().max(64).optional(),
         classifiedAtISO: z.string().optional(),
         verdict: z.object({
             inputSafety: z.object({
@@ -126,6 +127,7 @@ const createProjectSchema = z.object({
         admitted: z.boolean().optional(),
         isComposite: z.boolean().optional(),
         components: z.array(z.enum(COMPONENT_VOCABULARY)).optional(),
+        componentsSynthesized: z.boolean().optional(),
         contractVersion: z.literal("1").optional(),
     }).optional(),
 }).superRefine((data, ctx) => {
@@ -1062,6 +1064,7 @@ exports.createProject = onCall(async (request) => {
             typicalDurationDays: clientClassification.typicalDurationDays || null,
             reason: clientClassification.reason || null,
             classifierVersion: clientClassification.classifierVersion || null,
+            classifierPromptVersion: clientClassification.classifierPromptVersion || null,
             classifiedAt: admin.firestore.FieldValue.serverTimestamp(),
             verdict: clientClassification.verdict || null,
             // v1 contract fields with pre-v1 client defaulting.
@@ -1074,6 +1077,9 @@ exports.createProject = onCall(async (request) => {
             components: Array.isArray(clientClassification.components)
                 ? clientClassification.components
                 : [],
+            componentsSynthesized: typeof clientClassification.componentsSynthesized === "boolean"
+                ? clientClassification.componentsSynthesized
+                : false,
             contractVersion: clientClassification.contractVersion || "1",
         }
         : {
@@ -1085,6 +1091,8 @@ exports.createProject = onCall(async (request) => {
             admitted: classificationGatePasses(projectFieldsClean),
             isComposite: false,
             components: [],
+            componentsSynthesized: false,
+            classifierPromptVersion: null,
             contractVersion: "1",
         };
 
@@ -2298,6 +2306,7 @@ const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const {
     CLASSIFIER_SYSTEM_PROMPT,
     classifyInfrastructureTool,
+    CLASSIFIER_PROMPT_VERSION,
 } = require("./lib/classifier-prompt");
 
 
@@ -2442,9 +2451,20 @@ exports.validateProjectClassification = onCall(
           info,
         );
       },
+      onSynthesis: (info) => {
+        // Empty-components safeguard fired: model returned an empty
+        // components[] on an admitted project. Log at WARN so a spike in
+        // synthesis rate is visible in Cloud Logging — that signals a
+        // classifier regression on multi-structure names.
+        logger.warn(
+          `[validateProjectClassification] Empty components[] on admitted project; synthesized ["${info.synthesizedComponent}"] from projectType=${info.projectType} (basis: ${info.basis})`,
+          { ...info, projectName },
+        );
+      },
     });
     if (decision.accepted) {
       decision.classifierVersion = CLASSIFIER_VERSION();
+      decision.classifierPromptVersion = CLASSIFIER_PROMPT_VERSION;
       decision.classifiedAtISO = new Date().toISOString();
     }
     return decision;
