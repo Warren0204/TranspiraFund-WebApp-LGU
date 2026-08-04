@@ -2468,22 +2468,28 @@ You are an automated alignment checker. Your structured output is delivered as a
 
 Each photograph was taken in the field by a DEPW-assigned Project Engineer or Inspector at a barangay-level infrastructure project site in Cebu City. The photographs typically include a tamper-evident burn-in banner showing location name, GPS coordinates, accuracy, capture time, and the engineer''s identity. You may use the burn-in banner as supporting evidence but it is not required for the assessment.
 
-## What You Are Assessing
+The user message begins with structured project and milestone context (project type, components, location, contract details, phase position in the sequence, preceding and following phases) and is followed by the photographs, each preceded by a text line labeling it "Photo N of M" along with capture time, GPS, and accuracy. Use the structured context to judge what activities and deliverables are expected for the specific milestone, and refer to photos by their "Photo N of M" label in your reasoning.
 
-For each photograph, determine whether the visible content depicts the milestone activity described. Use these verdicts:
+## Verdict Criteria
 
-- "aligned": The photo clearly depicts the milestone activity in progress or completed. Visible elements match what would be expected for this milestone phase.
-- "partially_aligned": The photo depicts construction activity but does not clearly match the specific milestone, or shows only ancillary elements (materials staged, equipment, partial activity) that are consistent with but not definitive proof of the milestone.
-- "not_aligned": The photo clearly depicts a different activity, a different stage of work, or non-construction content.
-- "insufficient_evidence": The photo is too blurry, too dark, taken at an angle that obscures the activity, or otherwise does not provide enough visual information to make a determination.
+Return one verdict per photo and one overall verdict for the batch. All four verdicts are drawn from the same set. Choose based on the criteria below — not on a general sense of caution.
+
+- "aligned" — the photo depicts the milestone activity in progress or completed. To award this verdict, list at least two specific visible elements in \`visible_elements\` that correspond to the milestone description (for example: "rebar cage installed", "formworks in place", "concrete pour underway", "completed pavement surface"). Assertion without cited visual evidence is not enough.
+
+- "partially_aligned" — construction activity consistent with the project is visible, but the specific milestone activity cannot be confirmed from the photo, OR only ancillary elements are visible (materials staged, equipment on site, workers present, site prepared) without the milestone deliverable itself. Do not use this as a default for uncertainty; use it when the visible evidence is genuinely partial.
+
+- "not_aligned" — the photo depicts a different activity, a different phase of the same project, or non-construction content. When choosing this verdict, state what you see instead in \`reasoning\`.
+
+- "insufficient_evidence" — the image quality prevents assessment: blur, darkness, obscuring angle, framing that hides the subject, or a shot too close or too far to identify the activity. This verdict is about image quality only. Do not choose it because you feel uncertain — if the image is clear and you can see the site, choose one of the other three verdicts based on what is visible.
 
 After per-photo verdicts, provide an overall verdict for the milestone using the same scale, weighted by your per-photo judgments.
+
+Also provide a \`confidence\` value between 0 and 1 for each per-photo verdict, where 0 means "I could barely tell" and 1 means "I have no doubt." This confidence is a calibration signal and does not change the verdict itself.
 
 ## What You Must Not Do
 
 - Do not invent details that are not visible in the image.
-- Do not assume context that is not shown.
-- Do not be lenient. If you are unsure, say "insufficient_evidence" or "partially_aligned."
+- Do not assume context that is not shown, beyond what the structured project and milestone context provides.
 - Do not approve or reject. You assess and summarize; no human decision step follows your output.
 
 ## Output Format
@@ -2526,8 +2532,14 @@ const verificationTool = {
               items: { type: "string" },
               description: "List of clearly visible construction-related elements in the photo (for example: rebar, formworks, fresh concrete, completed pavement, excavator, workers).",
             },
+            confidence: {
+              type: "number",
+              minimum: 0,
+              maximum: 1,
+              description: "Your confidence in this per-photo verdict from 0 (I could barely tell) to 1 (I have no doubt). Calibration signal only; does not change the verdict itself.",
+            },
           },
-          required: ["photo_index", "verdict", "reasoning", "visible_elements"],
+          required: ["photo_index", "verdict", "reasoning", "visible_elements", "confidence"],
         },
       },
     },
@@ -2560,6 +2572,41 @@ const verdictSeverity = (verdict) => {
 };
 
 const proofKey = (p) => p?.id || p?.fileName || p?.name || p?.storagePath || p?.url || null;
+
+// Formats a proof entry into human-readable "when / GPS / accuracy" fields
+// for the per-photo text labels sent to the vision model. Tolerates both the
+// canonical proof shape (`capturedAt` Timestamp/Date/ISO, nested `gps.lat`/
+// `gps.lng`, numeric `accuracy`) and the legacy shape (`timestamp`, flat
+// `latitude`/`longitude`) documented in CLAUDE.md's proof-entry contract and
+// mirrored by client-side `normalizeProof` in
+// client/src/pages/hcsd/ProjectDetail.jsx. Missing fields render as "unknown"
+// rather than throwing. Timestamps are formatted in Asia/Manila so the label
+// matches what the field engineer sees on-device.
+const CAPTURE_TIME_FORMATTER = new Intl.DateTimeFormat("en-PH", {
+  timeZone: "Asia/Manila",
+  day: "2-digit", month: "short", year: "numeric",
+  hour: "numeric", minute: "2-digit", hour12: true,
+});
+const formatCaptureLabel = (proof) => {
+  const rawWhen = proof?.capturedAt ?? proof?.timestamp;
+  let whenDate = null;
+  if (rawWhen?.toDate) whenDate = rawWhen.toDate();
+  else if (rawWhen instanceof Date) whenDate = rawWhen;
+  else if (typeof rawWhen === "number") whenDate = new Date(rawWhen);
+  else if (typeof rawWhen === "string") { const d = new Date(rawWhen); whenDate = isNaN(d.getTime()) ? null : d; }
+  const whenStr = whenDate ? `${CAPTURE_TIME_FORMATTER.format(whenDate)} (PHT)` : "unknown";
+
+  const lat = proof?.gps?.lat ?? proof?.latitude;
+  const lng = proof?.gps?.lng ?? proof?.longitude;
+  const gpsStr = (typeof lat === "number" && typeof lng === "number")
+    ? `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+    : "unknown";
+
+  const acc = proof?.accuracy;
+  const accStr = (typeof acc === "number") ? `${Math.round(acc)}m` : "unknown";
+
+  return { when: whenStr, gps: gpsStr, accuracy: accStr };
+};
 
 exports.onProofUploaded = onDocumentUpdated(
   {
@@ -2609,8 +2656,12 @@ exports.onProofUploaded = onDocumentUpdated(
 
     // Defense-in-depth: server-side fetch bypasses Firestore/Storage rules,
     // so verify each proof URL belongs to this project/milestone path.
+    // `sentProofs` is pushed in lockstep with `imageBlocks` so that
+    // photo_index === i (from the model) refers to the same proof as
+    // sentProofs[i] / imageBlocks[i] regardless of any mid-batch skips.
     const expectedSubpath = `projects/${projectId}/milestones/${milestoneId}/`;
     const imageBlocks = [];
+    const sentProofs = [];
     for (let i = 0; i < proofs.length; i++) {
       const proof = proofs[i];
       if (!proof?.url) continue;
@@ -2634,6 +2685,7 @@ exports.onProofUploaded = onDocumentUpdated(
           type: "image",
           source: { type: "base64", media_type: "image/jpeg", data: imageBase64 },
         });
+        sentProofs.push(proof);
       } catch (err) {
         logger.error(`[onProofUploaded] Failed to fetch proof ${i}:`, err);
       }
@@ -2644,31 +2696,132 @@ exports.onProofUploaded = onDocumentUpdated(
       return;
     }
 
-    const milestoneContext = `Milestone Title: ${after.title || "Unknown"}
-Milestone Description: ${after.description || "No description"}
-Milestone Sequence: ${after.sequence || "N/A"}
-Expected Weight Percentage: ${after.weightPercentage || "N/A"}
-Suggested Duration: ${after.suggestedDurationDays || "N/A"} days
+    // Context enrichment. `project` was already loaded above; we reuse it
+    // rather than re-fetching. The sibling-milestone read is a separate
+    // Firestore round trip; both extractions fail soft — partial context
+    // beats none.
+    const projClassification = project.classification || {};
+    const projContext = {
+      projectName: project.projectName ?? null,
+      projectType: projClassification.projectType ?? project.projectType ?? null,
+      components: Array.isArray(projClassification.components) ? projClassification.components : [],
+      isComposite: projClassification.isComposite === true,
+      barangay: project.barangay ?? null,
+      sitioStreet: project.sitioStreet ?? null,
+      contractAmount: project.contractAmount ?? null,
+      officialDateStarted: project.officialDateStarted ?? null,
+      originalDateCompletion: project.originalDateCompletion ?? null,
+    };
 
-The Project Engineer has just uploaded ${imageBlocks.length} new geotagged proof-of-work photograph${imageBlocks.length !== 1 ? "s" : ""} for this milestone. Each photo is attached below. Assess each one against the milestone description above, then provide an overall verdict for this batch.`;
+    let siblingReadOk = false;
+    const milestonesContext = { total: null, prevTitle: null, nextTitle: null };
+    try {
+      const msSnap = await admin.firestore()
+        .collection(`projects/${projectId}/milestones`)
+        .get();
+      const all = msSnap.docs
+        .map((d) => d.data())
+        .filter((m) => m.confirmed !== false)
+        .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+      milestonesContext.total = all.length;
+      const currentSeq = after.sequence;
+      if (typeof currentSeq === "number") {
+        const idx = all.findIndex((m) => m.sequence === currentSeq);
+        if (idx > 0) milestonesContext.prevTitle = all[idx - 1].title ?? null;
+        if (idx >= 0 && idx < all.length - 1) milestonesContext.nextTitle = all[idx + 1].title ?? null;
+      }
+      siblingReadOk = true;
+    } catch (err) {
+      logger.warn(`[onProofUploaded] Milestone sibling read failed for ${milestoneId}: ${err?.message ?? err}`);
+    }
+
+    // Per-photo text labels, one per sent image, built after the fetch loop
+    // so "Photo N of M" reflects the final sent count (i.e. after skips).
+    const photoLabels = sentProofs.map((proof, i) => {
+      const caption = formatCaptureLabel(proof);
+      return `Photo ${i + 1} of ${sentProofs.length}. Captured ${caption.when}. GPS ${caption.gps}. Accuracy ${caption.accuracy}.`;
+    });
+
+    const componentsLine = projContext.components.length > 0
+      ? projContext.components.join(", ")
+      : "(none recorded)";
+    const locationLine = projContext.sitioStreet
+      ? `${projContext.barangay ?? "Unknown"}, ${projContext.sitioStreet}`
+      : (projContext.barangay ?? "Unknown");
+    const contractLine = projContext.contractAmount != null
+      ? `PHP ${Number(projContext.contractAmount).toLocaleString("en-PH")}`
+      : "Unknown";
+    const projectWindow = `${projContext.officialDateStarted ?? "Unknown"} to ${projContext.originalDateCompletion ?? "Unknown"}`;
+
+    const milestoneContext = `## Project Context
+
+Project name: ${projContext.projectName ?? "Unknown"}
+Project type: ${projContext.projectType ?? "Unknown"}
+Project components: ${componentsLine}
+Composite project: ${projContext.isComposite ? "yes" : "no"}
+Location: ${locationLine}
+Contract amount: ${contractLine}
+Project window: ${projectWindow}
+
+## Milestone Context
+
+Title: ${after.title ?? "Unknown"}
+Description: ${after.description ?? "No description"}
+Phase: ${after.sequence ?? "N/A"} of ${milestonesContext.total ?? "N/A"}
+Weight percentage: ${after.weightPercentage ?? "N/A"}
+Suggested duration: ${after.suggestedDurationDays ?? "N/A"} days
+Preceding phase: ${milestonesContext.prevTitle ?? "(none — this is the first phase)"}
+Following phase: ${milestonesContext.nextTitle ?? "(none — this is the final phase)"}
+
+## Photos in this batch
+
+The Project Engineer has just uploaded ${sentProofs.length} new geotagged proof-of-work photograph${sentProofs.length !== 1 ? "s" : ""} for this milestone. Each photo below is preceded by a text line labeling it "Photo N of M" along with capture time, GPS, and accuracy. Refer to photos by that label in your reasoning.
+
+Assess each photo against the milestone description, then provide an overall verdict for this batch.`;
+
+    const contextComplete = siblingReadOk
+      && milestonesContext.total !== null
+      && projContext.projectType !== null;
+
+    // One structured INFO log per run carrying the fully constructed text
+    // prompt. Excludes image blocks (base64), any proof URL (Storage tokens),
+    // and the API key. Enables post-hoc auditability of what the model saw.
+    logger.info("[onProofUploaded] prompt", {
+      projectId,
+      milestoneId,
+      milestoneTitle: after.title ?? null,
+      promptVersion: "v2-2026-08",
+      imageBlockCount: imageBlocks.length,
+      contextComplete,
+      systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
+      userPromptText: milestoneContext,
+      photoLabels,
+    });
 
     const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+
+    // Interleave text labels with image blocks so each photo carries its
+    // "Photo N of M" label immediately preceding it in the model's content
+    // array.
+    const contentBlocks = [{ type: "text", text: milestoneContext }];
+    for (let i = 0; i < imageBlocks.length; i++) {
+      contentBlocks.push({ type: "text", text: photoLabels[i] });
+      contentBlocks.push(imageBlocks[i]);
+    }
 
     let response;
     try {
       response = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 2048,
+        temperature: 0,
         system: VERIFICATION_SYSTEM_PROMPT,
         tools: [verificationTool],
         tool_choice: { type: "tool", name: "assess_milestone_photos" },
         messages: [
           {
             role: "user",
-            content: [
-              { type: "text", text: milestoneContext },
-              ...imageBlocks,
-            ],
+            content: contentBlocks,
           },
         ],
       });
@@ -2685,17 +2838,41 @@ The Project Engineer has just uploaded ${imageBlocks.length} new geotagged proof
 
     const assessment = toolUseBlock.input;
 
+    // Join per-photo verdicts to sent-order proof keys server side. The model
+    // handles only integer indices to avoid hallucinated identifiers.
+    const sentProofKeys = sentProofs.map(proofKey);
+    if (Array.isArray(assessment.per_photo_assessments)) {
+      assessment.per_photo_assessments.forEach((pa) => {
+        if (Number.isInteger(pa.photo_index) && pa.photo_index >= 0 && pa.photo_index < sentProofKeys.length) {
+          pa.proofId = sentProofKeys[pa.photo_index];
+        } else {
+          pa.proofId = null;
+          logger.warn(`[onProofUploaded] Out-of-range photo_index=${pa.photo_index} in assessment for ${milestoneId}; proofId left null.`);
+        }
+      });
+    }
+
     const verificationRecord = {
       runAt: admin.firestore.Timestamp.now(),
       runByUid: "system",
       runByEmail: null,
       model: "claude-sonnet-4-6",
-      photosVerified: imageBlocks.length,
+      photosVerified: sentProofs.length,
       overallVerdict: assessment.overall_verdict,
       overallReasoning: assessment.overall_reasoning,
       perPhotoAssessments: assessment.per_photo_assessments,
       triggeredBy: "auto-on-proof-upload",
-      proofKeys: proofs.slice(0, imageBlocks.length).map(proofKey),
+      // v2-2026-08 onward: `proofKeys[i]` names the i-th photo actually sent
+      // to the model, in send order — so photo_index === i in
+      // perPhotoAssessments corresponds to proofKeys[i]. Pre-v2 records
+      // derived this from `proofs.slice(0, imageBlocks.length)` and are
+      // misaligned wherever a mid-batch fetch or validation skip occurred;
+      // do not trust them for per-photo joins without a
+      // promptVersion === "v2-2026-08" check.
+      proofKeys: sentProofKeys,
+      promptVersion: "v2-2026-08",
+      contextComplete,
+      temperature: 0,
     };
 
     await admin.firestore().doc(`projects/${projectId}/milestones/${milestoneId}`).update({
