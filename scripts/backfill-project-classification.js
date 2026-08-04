@@ -142,12 +142,22 @@ Duration: ${durationDays != null ? durationDays + ' days' : 'unknown'}`;
 
     const response = await client.messages.create({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 512,
+        // Mirrors the deployed classifier at functions/src/index.js — kept
+        // in lockstep on 2026-08-04 (round 2) after the 512-token ceiling
+        // was found to be truncating tool_use responses mid-emission.
+        max_tokens: 2048,
+        temperature: 0,
         system: CLASSIFIER_SYSTEM_PROMPT,
         tools: [classifyInfrastructureTool],
         tool_choice: { type: 'tool', name: 'classify_infrastructure_project' },
         messages: [{ role: 'user', content: userMessage }],
     });
+    if (response.stop_reason === 'max_tokens') {
+        // Same discipline as the deployed classifier — refuse a truncated
+        // tool_use rather than persist a partial classification into the
+        // backfill target document.
+        throw new Error(`Response truncated at max_tokens (${response.usage?.output_tokens}/2048); refusing to backfill from partial tool_use.`);
+    }
     const toolUse = response.content.find((b) => b.type === 'tool_use');
     if (!toolUse) throw new Error('No tool_use block in response');
     return decideClassification(toolUse.input, durationDays);

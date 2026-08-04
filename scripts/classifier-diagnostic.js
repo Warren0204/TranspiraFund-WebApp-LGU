@@ -60,7 +60,12 @@ if (!API_KEY) {
 
 const DEBUG_MODE = process.argv.includes("--debug");
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_TOKENS = 512;
+// Kept in lockstep with the deployed classifier at
+// functions/src/index.js. If either side changes, change both — otherwise
+// the diagnostic will see truncation patterns that don't happen in prod
+// (or miss them).
+const MAX_TOKENS = 2048;
+const TEMPERATURE = 0;
 
 // Startup sanity block — always print, so first line of output shows any environmental drift.
 console.log("=== Classifier Diagnostic ===");
@@ -197,18 +202,23 @@ function fmtComponents(cs) {
 function printTable(label, rows) {
     console.log(`\n--- ${label} table ---`);
     console.log(
-        `${padRight("Verdict", 8)}${padRight("Type", 24)}${padRight("Conf", 6)}${padRight("Comp?", 7)}${padRight("Synth", 7)}${padRight("Components", 40)}Name`,
+        `${padRight("Verdict", 8)}${padRight("Type", 24)}${padRight("Conf", 6)}${padRight("Comp?", 7)}${padRight("Synth", 7)}${padRight("Trunc", 7)}${padRight("OutTok", 8)}${padRight("Components", 40)}Name`,
     );
-    console.log("-".repeat(160));
+    console.log("-".repeat(180));
     for (const r of rows) {
         const compLabel = r.isComposite === true ? "yes" : r.isComposite === false ? "no" : "?";
         const synthLabel = r.componentsSynthesized === true ? "YES" : r.componentsSynthesized === false ? "no" : "?";
+        const truncLabel = r.stopReason === "max_tokens" ? "YES" : r.stopReason ? "no" : "?";
+        const outTokLabel = r.outputTokens != null ? String(r.outputTokens) : "?";
         console.log(
-            `${padRight(verdictLabel(r.status), 8)}${padRight(r.projectType, 24)}${padRight(fmtConfidence(r.confidence), 6)}${padRight(compLabel, 7)}${padRight(synthLabel, 7)}${padRight(fmtComponents(r.components), 40)}${r.name}`,
+            `${padRight(verdictLabel(r.status), 8)}${padRight(r.projectType, 24)}${padRight(fmtConfidence(r.confidence), 6)}${padRight(compLabel, 7)}${padRight(synthLabel, 7)}${padRight(truncLabel, 7)}${padRight(outTokLabel, 8)}${padRight(fmtComponents(r.components), 40)}${r.name}`,
         );
         if (r.status !== "passed") {
             const reason = String(r.reason || "").replace(/\s+/g, " ").slice(0, 200);
-            console.log(`${" ".repeat(52)}reason: ${reason}`);
+            console.log(`${" ".repeat(67)}reason: ${reason}`);
+        }
+        if (r.stopReason === "max_tokens") {
+            console.log(`${" ".repeat(67)}⚠ TRUNCATED at ${r.outputTokens}/${MAX_TOKENS} tokens — tool_use is partial`);
         }
     }
 }
@@ -231,6 +241,7 @@ async function callAnthropic(name) {
     return client.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
+        temperature: TEMPERATURE,
         system: CLASSIFIER_SYSTEM_PROMPT,
         tools: [classifyInfrastructureTool],
         tool_choice: { type: "tool", name: "classify_infrastructure_project" },
@@ -240,6 +251,8 @@ async function callAnthropic(name) {
 
 async function classifyOne(name) {
     const response = await callAnthropic(name);
+    const stopReason = response.stop_reason || null;
+    const outputTokens = response.usage?.output_tokens ?? null;
     const toolUse = response.content.find((b) => b.type === "tool_use");
     if (!toolUse) {
         return {
@@ -252,6 +265,8 @@ async function classifyOne(name) {
             components: null,
             isComposite: null,
             componentsSynthesized: null,
+            stopReason,
+            outputTokens,
         };
     }
     const raw = toolUse.input;
@@ -261,6 +276,10 @@ async function classifyOne(name) {
     //   - rawComponents is the model's own extraction (may be empty).
     //   - components is what downstream consumers see (post-safeguard).
     //   - componentsSynthesized flags rows where the safeguard fired.
+    //   - stopReason surfaces truncation (the round-2 2026-08-04 defect):
+    //     "max_tokens" means the tool_use was cut off mid-emission and the
+    //     row must fail the regression gate below regardless of whether the
+    //     partial fields happened to look valid.
     return {
         status: decision.accepted ? "passed" : "rejected",
         reason: decision.reason || (decision.accepted ? "—" : "(no reason returned)"),
@@ -271,6 +290,8 @@ async function classifyOne(name) {
         components: Array.isArray(decision.components) ? decision.components : [],
         isComposite: typeof raw.isComposite === "boolean" ? raw.isComposite : null,
         componentsSynthesized: decision.componentsSynthesized === true,
+        stopReason,
+        outputTokens,
     };
 }
 
@@ -417,10 +438,25 @@ if (DEBUG_MODE) {
             process.exit(1);
         }
 
+        // Truncation gate. Independent from the empty-components gate:
+        // a row with stop_reason === "max_tokens" fails regardless of
+        // what fields happen to have made it in before the cutoff, in ANY
+        // set (admitted, rejected, or otherwise). The deployed classifier
+        // now throws on truncation; the harness must too, so a truncation
+        // never passes silently as a "successful classification" again.
+        const truncatedRows = [...rowsA, ...rowsB, ...rowsC].filter((r) => r.stopReason === "max_tokens");
+        if (truncatedRows.length > 0) {
+            console.log(`\nFAILED — ${truncatedRows.length} row(s) TRUNCATED at max_tokens. The tool_use was cut off mid-emission and any downstream inference is unreliable:`);
+            for (const r of truncatedRows) {
+                console.log(`  - "${r.name}"  (${r.outputTokens}/${MAX_TOKENS} output tokens)`);
+            }
+            process.exit(1);
+        }
+
         // Empty-components gate. An admitted project with no model-extracted
         // components leaves both the mobile retrieval scorer and the verifier
-        // prompt blind, which is precisely the defect the 2026-08-04 fix
-        // targets. Check the RAW model output (not the post-safeguard
+        // prompt blind, which is precisely the defect the 2026-08-04 round 1
+        // fix targets. Check the RAW model output (not the post-safeguard
         // decision) so the harness measures model behavior, not the
         // safeguard's ability to paper over it. Synthesized rows are still
         // reported below as a soft signal.
@@ -445,6 +481,22 @@ if (DEBUG_MODE) {
         if (bB.passed < SET_B.length) {
             console.log(`\nWARNING — ${SET_B.length - bB.passed} of Set B rejected. Not a hard failure, but the wider legitimate domain is not fully covered yet.`);
         }
+
+        // Output-token headroom report. Shows how close typical inputs come
+        // to the MAX_TOKENS ceiling and how many runs were at or near it.
+        // If the max climbs toward MAX_TOKENS, the reason paragraphs are
+        // growing and the ceiling may need to move again.
+        const allRows = [...rowsA, ...rowsB, ...rowsC];
+        const outTokValues = allRows.map((r) => r.outputTokens).filter((n) => typeof n === "number");
+        if (outTokValues.length > 0) {
+            const maxOut = Math.max(...outTokValues);
+            const nearCeiling = outTokValues.filter((n) => n >= MAX_TOKENS - 128).length;
+            const maxRow = allRows.find((r) => r.outputTokens === maxOut);
+            console.log(`\n--- output_tokens headroom ---`);
+            console.log(`  max output_tokens across run: ${maxOut} / ${MAX_TOKENS}   ("${maxRow?.name ?? "?"}")`);
+            console.log(`  rows within 128 of ceiling:   ${nearCeiling}`);
+        }
+
         console.log("\nAll regression gates passed.");
         process.exit(0);
     })().catch((err) => {

@@ -373,6 +373,12 @@ const decideClassification = (classifierOutput, durationDays, opts = {}) => {
     // array. `componentsSynthesized: true` on the resulting record marks it
     // as safeguard-synthesized so Phase 4 calibration can exclude these rows
     // from model-accuracy measurements.
+    //
+    // Intentional scope: this safeguard fires only on GENUINE model failures
+    // on complete responses. Truncated responses (stop_reason: "max_tokens")
+    // are rejected by the caller in validateProjectClassification BEFORE
+    // decideClassification runs, so a truncation can never reach this
+    // branch. See the truncation guard at functions/src/index.js.
     let components = Array.isArray(rawComponents) ? [...rawComponents] : [];
     let componentsSynthesized = false;
     if (components.length === 0) {

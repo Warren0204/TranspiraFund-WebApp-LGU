@@ -2407,7 +2407,16 @@ exports.validateProjectClassification = onCall(
     try {
       response = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 512,
+        // Raised from 512 on 2026-08-04. The old ceiling was truncating
+        // tool_use responses mid-emission for names that required a longer
+        // reason paragraph (stop_reason: "max_tokens"), silently dropping
+        // whichever fields were declared last in the tool schema.
+        max_tokens: 2048,
+        // Pinned to 0 to match the accountability discipline the verifier
+        // applies (Phase 2). A classifier that flip-flops on the same name
+        // across resubmits is indefensible; determinism also reduces reason-
+        // length variance, the field that used to overflow the ceiling.
+        temperature: 0,
         system: CLASSIFIER_SYSTEM_PROMPT,
         tools: [classifyInfrastructureTool],
         tool_choice: { type: "tool", name: "classify_infrastructure_project" },
@@ -2437,6 +2446,22 @@ exports.validateProjectClassification = onCall(
         message: error?.message,
       });
       throw new HttpsError("internal", "Classifier unavailable. Please try again.");
+    }
+
+    // Truncation guard. A partial tool_use with fields missing looks valid
+    // downstream but persists as a broken classification. Throw here so the
+    // failure is visible and the HCSD user can retry — never enter
+    // decideClassification with truncated data. Order matters: this check
+    // MUST run before the safeguard in decideClassification synthesizes a
+    // component over a missing (rather than genuinely empty) array.
+    if (response.stop_reason === "max_tokens") {
+      logger.error("[validateProjectClassification] Response truncated at max_tokens; refusing partial tool_use", {
+        projectName,
+        outputTokens: response.usage?.output_tokens,
+        maxTokens: 2048,
+        stopReason: response.stop_reason,
+      });
+      throw new HttpsError("internal", "Classifier response was truncated. Please try again.");
     }
 
     const toolUse = response.content.find((b) => b.type === "tool_use");
@@ -2850,6 +2875,25 @@ Assess each photo against the milestone description, then provide an overall ver
       return;
     }
 
+    // Truncation guard. Unlike the classifier (which throws), this is a
+    // background trigger — throwing would re-fire the write and hit the same
+    // truncation on retry, losing the run entirely. Persist whatever came
+    // back with `truncated: true` so Phase 4 can `WHERE truncated == true`
+    // exclude these rows, and skip the notification fan-out below because
+    // partial assessment fields would make a broken notification worse than
+    // no notification.
+    const isTruncated = response.stop_reason === "max_tokens";
+    if (isTruncated) {
+      logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
+        projectId,
+        milestoneId,
+        promptVersion: "v2-2026-08",
+        outputTokens: response.usage?.output_tokens,
+        maxTokens: 2048,
+        sentPhotoCount: sentProofs.length,
+      });
+    }
+
     const toolUseBlock = response.content.find((block) => block.type === "tool_use");
     if (!toolUseBlock) {
       logger.error("[onProofUploaded] No structured assessment returned.");
@@ -2893,12 +2937,25 @@ Assess each photo against the milestone description, then provide an overall ver
       promptVersion: "v2-2026-08",
       contextComplete,
       temperature: 0,
+      // Only stamped when the vision response was cut off at max_tokens.
+      // Phase 4 calibration must exclude these rows — the assessment fields
+      // above may be partially populated or missing entirely.
+      ...(isTruncated ? { truncated: true } : {}),
     };
 
     await admin.firestore().doc(`projects/${projectId}/milestones/${milestoneId}`).update({
       verificationHistory: admin.firestore.FieldValue.arrayUnion(verificationRecord),
       lastVerificationAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // On truncation, the record is persisted for direct inspection but the
+    // notification fan-out is skipped — a notification body built from a
+    // possibly-missing overallReasoning / overallVerdict is worse than
+    // silence. HCSD and the PE will not see a Proof Assessment notification
+    // for this run; the truncated record itself sits on the milestone doc.
+    if (isTruncated) {
+      return;
+    }
 
     // Notification fan-out lives strictly between HCSD and the assigned PE.
     // No MIS audit row — MIS provisions HCSD but does not see proof-of-work

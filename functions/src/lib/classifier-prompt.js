@@ -11,12 +11,23 @@ const { PROJECT_TYPE_ENUM, TYPICAL_DURATION_DAYS, COMPONENT_VOCABULARY } = requi
 // Human-readable prompt version. Bumped whenever the prompt or tool schema
 // changes in a way that would alter the classifier's output distribution
 // (wording changes to verdict criteria, new worked examples, added/removed
-// tool fields, enum edits). Persisted on every classification record as
-// `classifierPromptVersion` so Phase 4 calibration can distinguish pre-fix
-// from post-fix runs. Companion to the auto-hashed `classifierVersion` in
-// functions/src/index.js — the hash detects any prompt byte-change; this
-// string labels the substantive version.
-const CLASSIFIER_PROMPT_VERSION = "v1.1-2026-08-04";
+// tool fields, enum edits, sampling-parameter changes). Persisted on every
+// classification record as `classifierPromptVersion` so Phase 4 calibration
+// can distinguish pre-fix from post-fix runs. Companion to the auto-hashed
+// `classifierVersion` in functions/src/index.js — the hash detects any
+// prompt byte-change; this string labels the substantive version.
+//
+// v1.2-2026-08-04 — Round 2 fixes: max_tokens ceiling raised from 512 to
+// 2048 at every classifier call site (was truncating tool calls mid-emission
+// with stop_reason "max_tokens"), temperature pinned to 0 at the API level
+// (was API-default 1.0 — same accountability rationale that pinned the
+// verifier to 0 in Phase 2), tool-schema property order rearranged so
+// `components` and `isComposite` are emitted BEFORE `reason` (defense in
+// depth against any future truncation cutting the structured recognition
+// data), and the `reason` field's prose target tightened to ~200 characters.
+// These are behavioral changes vs v1.1 records even though the prompt text
+// itself is only lightly edited — hence the version bump.
+const CLASSIFIER_PROMPT_VERSION = "v1.2-2026-08-04";
 
 // Renders TYPICAL_DURATION_DAYS into the same "type: min N, max N" alignment
 // the LLM prompt has historically used. Colons padded to column 24. Object
@@ -286,9 +297,13 @@ Confidence records the strength of your projectType assignment. It is persisted 
 
 ## Reason Field
 
-One short paragraph (up to 1000 characters; usually 1–4 sentences) that explains the classification verdict in language a Head of Construction Services would write in an internal note. Prefer brevity, but never sacrifice specificity for length: when rejecting, name the concrete reason AND identify WHICH input is at fault, quoting the offending text when possible (e.g., "Description talks about office furniture procurement while name says drainage canal", "Name uses fictional word 'dragon' in the project object", "Barangay dropdown is 'Sambag I' but the name says 'in Lahug' — these contradict"). If you are accepting but the duration looks unusual for the type, you may note that in the reason but do not modify the duration band — the gatekeeper does the comparison.
+Target roughly 200 characters, one or two short sentences. The schema hard-caps this field at 1000 characters, but that is a ceiling for edge cases, not a target — a Head of Construction Services will read the reason as a compact internal note, not as an essay. Prefer brevity.
 
-Composite is NEVER a rejection reason. When accepting a composite project, do not phrase the reason as if the composite structure were a problem — treat it as a normal accepted project and describe the primary work with a note about the secondary component(s).
+When rejecting, one sentence naming the concrete failure and quoting the offending text is enough (e.g. "Name uses fictional word 'dragon' in the project object", "Barangay dropdown is 'Sambag I' but the name says 'in Lahug' — these contradict", "Description talks about office furniture procurement while name says drainage canal"). Do not restate the rules that were violated; name the input.
+
+When accepting, one sentence describing the primary work is enough. If you are accepting but the duration looks unusual for the type, you may add a brief phrase noting that — do not modify the duration band, the gatekeeper does the comparison.
+
+Composite is NEVER a rejection reason. When accepting a composite project, do not phrase the reason as if the composite structure were a problem — treat it as a normal accepted project and briefly note the secondary component(s).
 
 ## Output
 
@@ -300,6 +315,16 @@ const classifyInfrastructureTool = {
     "Classifies a proposed Cebu City DEPW city-funded barangay-level infrastructure project from its name (with optional description as context), returns the typical duration band, and reports input-safety + name-quality + semantic-coherence + scope/jurisdiction signals.",
   input_schema: {
     type: "object",
+    // Property declaration order matters. Anthropic's tool_use emission
+    // follows schema declaration order, and if a response is truncated at
+    // max_tokens the fields declared last are the ones that go missing.
+    // Round 2 (v1.2-2026-08-04) reordered these so the structured
+    // recognition data (`projectType`, `components`, `isComposite`) emits
+    // BEFORE the explanatory prose (`reason`), which used to be third and
+    // frequently the field that pushed the response past the ceiling. If
+    // truncation ever happens again despite the raised ceiling, the field
+    // that gets cut is the reason paragraph — not the components array two
+    // downstream consumers depend on.
     properties: {
       isInfrastructure: {
         type: "boolean",
@@ -308,6 +333,19 @@ const classifyInfrastructureTool = {
       projectType: {
         type: "string",
         enum: PROJECT_TYPE_ENUM,
+      },
+      components: {
+        type: "array",
+        minItems: 1,
+        // Enum bound to the single COMPONENT_VOCABULARY export in
+        // ./classification so the tool schema and the Zod validator on
+        // createProject cannot drift apart.
+        items: { type: "string", enum: COMPONENT_VOCABULARY },
+        description: "Ordered array of work-component identifiers describing the physical works. Most significant first. Composite projects list multiple. Use ONLY the listed terms; do not invent synonyms.",
+      },
+      isComposite: {
+        type: "boolean",
+        description: "True if the name describes more than one distinct work component. Composite is NOT a rejection — the project is still admitted; this flag lets the milestone generator plan phases for multiple works.",
       },
       confidence: {
         type: "number",
@@ -323,11 +361,6 @@ const classifyInfrastructureTool = {
         },
         required: ["min", "max"],
         description: "Typical duration band in days for this project type, or null when projectType is 'unknown'.",
-      },
-      reason: {
-        type: "string",
-        maxLength: 1000,
-        description: "Human-readable explanation of the classification, max 1000 chars. Be specific and quote the offending input.",
       },
       inputSafety: {
         type: "object",
@@ -391,18 +424,13 @@ const classifyInfrastructureTool = {
         enum: ["plausible", "implausible", "unclear"],
         description: "Whether scale numbers in the name are physically reasonable for a barangay-level work.",
       },
-      components: {
-        type: "array",
-        minItems: 1,
-        // Enum bound to the single COMPONENT_VOCABULARY export in
-        // ./classification so the tool schema and the Zod validator on
-        // createProject cannot drift apart.
-        items: { type: "string", enum: COMPONENT_VOCABULARY },
-        description: "Ordered array of work-component identifiers describing the physical works. Most significant first. Composite projects list multiple. Use ONLY the listed terms; do not invent synonyms.",
-      },
-      isComposite: {
-        type: "boolean",
-        description: "True if the name describes more than one distinct work component. Composite is NOT a rejection — the project is still admitted; this flag lets the milestone generator plan phases for multiple works.",
+      // Reason moves LAST in the declaration order. It is the largest and
+      // most compressible field; if truncation ever cuts anything, it should
+      // be this. See the properties-block comment above.
+      reason: {
+        type: "string",
+        maxLength: 1000,
+        description: "Human-readable explanation of the classification. Target ~200 chars, one or two sentences. See the prompt's Reason Field section — the 1000-char maxLength is a hard ceiling for edge cases, not a target.",
       },
     },
     // NOTE: `bundlesMultipleProjects` intentionally REMOVED from the model's
@@ -415,17 +443,17 @@ const classifyInfrastructureTool = {
     required: [
       "isInfrastructure",
       "projectType",
+      "components",
+      "isComposite",
       "confidence",
       "typicalDurationDays",
-      "reason",
       "inputSafety",
       "nameQuality",
       "semanticCoherence",
       "scopeFit",
       "jurisdictionFit",
       "physicalPlausibility",
-      "components",
-      "isComposite",
+      "reason",
     ],
   },
 };
