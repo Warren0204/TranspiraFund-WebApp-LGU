@@ -272,7 +272,7 @@ Two Firebase Functions codebases deploy to the same Firebase project (`transpira
 
 ### Owned by this repo (codebase "default")
 
-Deploy each individually via `firebase deploy --only functions:NAME --project transpirafund-webapp`. Never use `firebase deploy --only functions` (unscoped) from this repo — the `functions/package.json` `deploy` script is a guarded no-op precisely to prevent that. On 2026-07-26 an unscoped deploy from here clobbered the mobile-owned `generateMilestones` URL and required an emergency mobile redeploy.
+Deploy each individually via `firebase deploy --only functions:NAME --project transpirafund-webapp`. Never use `firebase deploy --only functions` (unscoped) from this repo — the `functions/package.json` `deploy` script is a guarded no-op precisely to prevent that, and it must not be removed. On 2026-07-26 an unscoped deploy from here clobbered the mobile-owned `generateMilestones` URL and required an emergency mobile redeploy; the 2026-08-04 dead-source removal (see "Dead source removed 2026-08-04" below) eliminates that specific clobber hazard at the source, but the guard is retained as defense in depth against any future mobile-owned function inadvertently gaining a duplicate export here.
 
 **Callables:** `sendOtp`, `verifyOtp`, `createOfficialAccount`, `provisionTenant`, `deleteOfficialAccount`, `reassignProjectEngineer`, `createProject`, `attachNtp`, `rollbackOrphanProject`, `changePassword`, `revokeOtherSessions`, `logUserLogout`, `backfillProjectEngineerUids`, `sendPasswordReset`, `resetPassword`, `recalculateStats`, `purgeMobileOriginHcsdAudit`, `runSlippageScanNow`, `updateProfilePhoto`, `updateProfile`, `validateProjectClassification`.
 
@@ -286,14 +286,16 @@ Verified 2026-08-02. Do not edit or deploy from this repo:
 
 `generateMilestones`, `deleteMilestone`, `addManualMilestone`, `confirmMilestonePlan`, `validateMilestoneTitle`, `markProjectOngoing`, `completePasswordChange`, `logMobileAuditTrail`, `uploadProfilePhoto`, `uploadProofPhoto`, `sendPasswordResetOtp`, `verifyPasswordResetOtp`, `resetPasswordWithOtp`.
 
-### Name collisions (both repos export the same name)
+### Name collisions (historical — eliminated 2026-08-04)
 
-- **`generateMilestones`** — deployed URL is owned by the mobile repo. Verified 2026-08-02: a live milestone document (`projects/4V8VjVHMLLCxXKqfdKSQ/milestones/6dhKDKiBOfrzcp3FC9ga`) carries `generatedBy: "ai"` and `confirmed: true`, both of which are written only by the mobile implementation. The copy at `functions/src/index.js:2752` in this repo is DEAD SOURCE — see the warning below.
-- **`logMobileAuditTrail`** — deployed owner is the mobile codebase, verified 2026-08-02 via the codebase label (both the top-level `codebase` field and `labels["firebase-functions-codebase"]` on the deployed function agree: `"mobile"`). The copy at `functions/src/index.js:1379` in this repo is DEAD SOURCE with respect to the live URL. The mobile implementation dual-writes to `auditTrails/hcsd/entries` when `syncToHCSD` is true, while this repo's `purgeMobileOriginHcsdAudit` (`functions/src/index.js:1710`; `MOBILE_ORIGIN_ACTIONS` at `functions/src/index.js:1720-1727`) batch-deletes mobile-origin actions from that same trail. This interaction is now known to be live and is an open **behavioral** question — not a deploy question — about whether HCSD audit entries produced by mobile activity survive.
+Before 2026-08-04 this repo exported dead-source copies of two mobile-owned functions, which meant an unscoped deploy from here could overwrite the live mobile URLs. That hazard is now gone at the source. See "Dead source removed 2026-08-04" below.
+
+- **`generateMilestones`** — deployed URL is owned by the mobile repo (`TranspiraFund_caps`). Verified 2026-08-02: a live milestone document (`projects/4V8VjVHMLLCxXKqfdKSQ/milestones/6dhKDKiBOfrzcp3FC9ga`) carries `generatedBy: "ai"` and `confirmed: true`, both of which are written only by the mobile implementation. The former dead copy in this repo was removed on 2026-08-04.
+- **`logMobileAuditTrail`** — deployed owner is the mobile codebase, verified 2026-08-02 via the codebase label (both the top-level `codebase` field and `labels["firebase-functions-codebase"]` on the deployed function agree: `"mobile"`). The former dead copy in this repo was removed on 2026-08-04. The mobile implementation dual-writes to `auditTrails/hcsd/entries` when `syncToHCSD` is true, while this repo's `purgeMobileOriginHcsdAudit` (`functions/src/index.js`) with its `MOBILE_ORIGIN_ACTIONS` list batch-deletes mobile-origin actions from that same trail. This interaction is now known to be live and is an open **behavioral** question — not a deploy question — about whether HCSD audit entries produced by mobile activity survive.
 
 ### Deployed inventory verification
 
-Verified 2026-08-02 with `firebase functions:list --project transpirafund-webapp --json`: **40 functions deployed**, matching `29 web + 13 mobile − 2 collisions = 40` exactly. **No ghost functions.** The earlier "12 ghost functions" audit finding is resolved — all 12 were mobile-owned.
+Verified 2026-08-02 with `firebase functions:list --project transpirafund-webapp --json`: **40 functions deployed**. After the 2026-08-04 dead-source removal the equation is `27 web + 13 mobile − 0 collisions = 40` (previously `29 web + 13 mobile − 2 collisions = 40`; the deployed count is unchanged because the two removed exports were never deployed from this repo — they were mobile-owned URLs all along). **No ghost functions.** The earlier "12 ghost functions" audit finding is resolved — all 12 were mobile-owned.
 
 To repeat the verification:
 
@@ -305,8 +307,10 @@ Notes:
 - The codebase label appears in the `--json` output (both as a top-level `codebase` field and inside `labels["firebase-functions-codebase"]`) but **not** in the default table view of `firebase functions:list`. Always use `--json` when checking ownership.
 - On Windows PowerShell the `>` redirect writes **UTF-16 LE with BOM**, so the file does not parse as UTF-8. Either read it with Node (detect the `FF FE` BOM, then `buffer.slice(2).toString('utf16le')` and `JSON.parse`) or write it with `... | Out-File -Encoding utf8 fnlist.json` instead of `>`.
 
-### DEAD SOURCE — `generateMilestones` at `functions/src/index.js:2752`
+### Dead source removed 2026-08-04
 
-`exports.generateMilestones` in this repo is DEAD SOURCE. The deployed URL at `https://asia-southeast1-transpirafund-webapp.cloudfunctions.net/generateMilestones` is owned by the mobile repo (`TranspiraFund_caps`, `functions/src/index.ts:777`), verified 2026-08-02 via `generatedBy: "ai"` and `confirmed: true` on a live milestone document. `MILESTONE_SYSTEM_PROMPT` (`functions/src/index.js:2464-2702`) and `milestoneTool` (`functions/src/index.js:2704-2750`) are dead alongside it.
+`exports.generateMilestones` (with `MILESTONE_SYSTEM_PROMPT` and `milestoneTool`) and `exports.logMobileAuditTrail` (with `logMobileAuditTrailSchema`) were deleted from `functions/src/index.js` on 2026-08-04 after `firebase functions:list --project transpirafund-webapp --json` re-confirmed both deployed URLs carry codebase label `mobile` (both the top-level `codebase` field and `labels["firebase-functions-codebase"]` agree). The clobber hazard from this repo is eliminated at the root — an unscoped deploy from here can no longer overwrite either mobile URL because neither name is exported here anymore.
 
-Removal is deferred pending codebase-label verification (see the collision note above). Until that verification, this dead source must not be edited, extended, or relied on as a reference for how milestone generation currently behaves. Any change to milestone generation belongs in the mobile repo.
+The live URLs continue to be owned by the mobile repo (`TranspiraFund_caps`). This repo must never deploy either name. Any change to milestone generation or to the mobile audit callable belongs in the mobile repo.
+
+The guarded `deploy` script at `functions/package.json:8` is retained as defense in depth and must not be removed. It still blocks any accidental `npm run deploy` in this codebase, which is the intended behavior even though the specific dead-source hazard is gone.
