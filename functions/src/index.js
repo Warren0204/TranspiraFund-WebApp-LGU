@@ -2502,6 +2502,19 @@ exports.validateProjectClassification = onCall(
 // milestone's verificationHistory[] and a category:"field" summary notification
 // is fanned out to the project's HCSD creator. HCSD does not approve or
 // reject — they are informed observers.
+//
+// v3.2 aligned-verdict guardrail: the `aligned` bullet in the prompt below
+// carries a staged-materials carve-out — "a pile of gravel stockpiled beside a
+// trench is not evidence of 'gravel fill compacted'; a stack of concrete
+// hollow blocks staged on site is not evidence of 'masonry wall
+// construction.'" That sentence exists because v3.2 relaxed the aligned bar to
+// accept single-deliverable evidence on multi-deliverable milestones (mobile-
+// generated descriptions often bundle deliverables with "and"). Without the
+// carve-out, the model can argue that materials staged for one deliverable
+// evidence that deliverable, which would collapse the distinction between
+// `aligned` and `partially_aligned`. Do not flatten the two stockpile
+// examples in a future edit — tighten them if live data shows drift, but
+// removing them reopens the exact gap v3.2 was written to close.
 
 const VERIFICATION_SYSTEM_PROMPT = `You are a visual verification assistant for the Cebu City Department of Engineering and Public Works (DEPW), Construction Services Division. Your task is to assess whether photographs uploaded by a Project Engineer for a specific construction milestone visually depict the activity or deliverable described in that milestone.
 
@@ -2533,9 +2546,9 @@ This exclusion covers metadata about the photo: the burn-in banner, the GPS coor
 
 Return one verdict per photo and one overall verdict for the batch. All four verdicts are drawn from the same set. Choose based on the criteria below — not on a general sense of caution.
 
-- "aligned" — the photo depicts the milestone activity in progress or completed. To award this verdict, list at least two specific visible elements in \`visible_elements\` that correspond to the milestone description (for example: "rebar cage installed", "formworks in place", "concrete pour underway", "completed pavement surface"). Assertion without cited visual evidence is not enough.
+- "aligned" — the photo depicts a deliverable from the milestone description in progress or completed. A milestone description often bundles several deliverables joined by "and" (for example: "excavated column and footing pits, gravel fill compacted, and posted pest-control certification," or "CHB wall construction AND roof truss erection"); a single photograph is not expected to evidence all of them. To award this verdict, name in \`visible_elements\` at least two specific visible elements that show one deliverable from the milestone description executed, in progress, or completed (for example: "rebar cage installed", "formworks in place", "concrete pour underway", "completed pavement surface"). The elements must show the deliverable itself, not materials or equipment intended for it — a pile of gravel stockpiled beside a trench is not evidence of "gravel fill compacted"; a stack of concrete hollow blocks staged on site is not evidence of "masonry wall construction." Assertion without cited visual evidence of the deliverable is not enough.
 
-- "partially_aligned" — construction activity consistent with the project is visible, but the specific milestone activity cannot be confirmed from the photo, OR only ancillary elements are visible (materials staged, equipment on site, workers present, site prepared) without the milestone deliverable itself. Do not use this as a default for uncertainty; use it when the visible evidence is genuinely partial.
+- "partially_aligned" — construction activity consistent with the project is visible, but no deliverable from the milestone description is clearly evidenced by two or more specific visible elements, OR only ancillary elements are visible (materials staged, equipment on site, workers present, site prepared) without any deliverable in progress or completed. Do not use this as a default for uncertainty; use it when the visible evidence is genuinely partial. If at least one deliverable is clearly evidenced, choose \`aligned\` — do not downgrade to \`partially_aligned\` on the grounds that other deliverables in the same milestone description are absent from the photo.
 
 - "not_aligned" — the photo depicts a different activity, a different phase of the same project, or non-construction content. When choosing this verdict, state what you see instead in \`reasoning\`.
 
@@ -2849,7 +2862,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v3.1-2026-08",
+      promptVersion: "v3.2-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2901,7 +2914,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v3.1-2026-08",
+        promptVersion: "v3.2-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -2948,14 +2961,23 @@ Assess each photo against the milestone description, then provide an overall ver
       // do not trust them for per-photo joins without a
       // promptVersion === "v2-2026-08" check.
       proofKeys: sentProofKeys,
-      // v3.1-2026-08 restricts the verdict to visual alignment; location and
+      // v3.2-2026-08 restricts the verdict to visual alignment; location and
       // date correctness are declared out of scope by the system prompt.
-      // v3.1 closes the burn-in-banner loophole where the model was re-admitting
-      // banner text under the "content within the frame" carve-out; v3.1 names
-      // the banner explicitly, describes its visual form (bottom-edge overlay,
+      // v3.1 closed the burn-in-banner loophole where the model was re-admitting
+      // banner text under the "content within the frame" carve-out; v3.1 named
+      // the banner explicitly, described its visual form (bottom-edge overlay,
       // flat rendered text) so it can be distinguished from in-scene signage,
-      // and names the workaround phrasings the model was using.
-      promptVersion: "v3.1-2026-08",
+      // and named the workaround phrasings the model was using.
+      // v3.2 relaxes the `aligned` bar to accept single-deliverable evidence on
+      // multi-deliverable milestones (Lever 1). Mobile milestone descriptions
+      // often bundle deliverables joined by "and" — e.g. "CHB wall AND roof
+      // truss erection" — which no single photo can cover; under v3.1 those
+      // milestones could never be `aligned`. v3.2 also tightens the aligned
+      // bar with an explicit staged-materials carve-out (stockpiled gravel is
+      // not evidence of "gravel fill compacted"; see the source-level guard
+      // note above VERIFICATION_SYSTEM_PROMPT). Verdict enum, tool schema,
+      // trigger wiring, and truncation handling are unchanged from v3.1.
+      promptVersion: "v3.2-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
