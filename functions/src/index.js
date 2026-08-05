@@ -2526,7 +2526,7 @@ You are an automated alignment checker. Your structured output is delivered as a
 
 Each photograph was taken in the field by a DEPW-assigned Project Engineer or Inspector at a barangay-level infrastructure project site in Cebu City. The photographs typically include a tamper-evident burn-in banner showing location name, GPS coordinates, accuracy, capture time, and the engineer''s identity. The burn-in banner confirms the photo is a genuine field photograph — its presence is provenance, not correctness. The location and timestamp text inside the banner must NOT influence your verdict. See Scope of Assessment below.
 
-The user message begins with structured project and milestone context (project type, components, location, contract details, phase position in the sequence, preceding and following phases) and is followed by the photographs, each preceded by a text line labeling it "Photo N of M" along with capture time, GPS, and accuracy. Use the structured context to judge what activities and deliverables are expected for the specific milestone, and refer to photos by their "Photo N of M" label in your reasoning.
+The user message begins with structured project and milestone context (project type, components, location, contract details, phase position in the sequence, preceding and following phases) and is followed by the photographs, each preceded by a text line labeling it "Photo N of M" along with capture time, GPS, and accuracy. Use the structured context to judge what activities and deliverables are expected for the specific milestone, and refer to photos by their "Photo N of M" label in your reasoning. When you record \`photo_index\` in the \`assess_milestone_photos\` tool output, use the zero-based array position (0, 1, 2, …), not the one-based label number. The photo labelled "Photo 1 of M" has \`photo_index\` 0.
 
 ## Scope of Assessment
 
@@ -2568,7 +2568,23 @@ Also provide a \`confidence\` value between 0 and 1 for each per-photo verdict, 
 
 You must respond exclusively through the assess_milestone_photos tool. Do not produce plain text. Do not explain your reasoning outside the tool fields.`;
 
-const verificationTool = {
+// Tool schema is rebuilt per request so `photo_index.maximum` and
+// `per_photo_assessments.maxItems` reflect the actual batch size rather than
+// the module-wide 5-photo cap. Anthropic's default (non-strict) tool use is
+// advisory — the API does NOT reject a returned `photo_index` that violates
+// the bound (see the strict-tool-use docs: without `strict: true`, "Claude
+// might return incompatible types or omit required fields"). So the tighter
+// per-request schema is influential guidance to the model, not enforcement,
+// and the out-of-range guard downstream remains the backstop.
+//
+// Handles photoCount === 1 by producing photo_index: { minimum: 0, maximum: 0 }
+// — a valid single-value integer constraint in JSON Schema; the degenerate
+// case is legal and forces the model toward 0.
+//
+// photoCount === 0 cannot occur here: the trigger returns earlier if
+// imageBlocks.length === 0 (see the "No proof images resolvable" guard). No
+// defensive branch for it.
+const buildVerificationTool = (photoCount) => ({
   name: "assess_milestone_photos",
   description:
     "Provides a structured visual assessment of construction milestone photographs. Returns per-photo and overall alignment verdicts with reasoning.",
@@ -2586,11 +2602,16 @@ const verificationTool = {
       per_photo_assessments: {
         type: "array",
         minItems: 1,
-        maxItems: 5,
+        maxItems: photoCount,
         items: {
           type: "object",
           properties: {
-            photo_index: { type: "integer", minimum: 0, maximum: 4 },
+            photo_index: {
+              type: "integer",
+              minimum: 0,
+              maximum: photoCount - 1,
+              description: "Zero-based array index of the photo you are assessing. The photo labelled 'Photo 1 of M' has photo_index 0; 'Photo 2 of M' has photo_index 1; and so on. Do NOT use the one-based label number as the index.",
+            },
             verdict: {
               type: "string",
               enum: ["aligned", "partially_aligned", "not_aligned", "insufficient_evidence"],
@@ -2617,7 +2638,7 @@ const verificationTool = {
     },
     required: ["overall_verdict", "overall_reasoning", "per_photo_assessments"],
   },
-};
+});
 
 // Fires whenever a milestone document is updated. When the proofs[] array
 // grows, the newly appended proof(s) are sent to Anthropic Claude Sonnet 4.6
@@ -2809,6 +2830,17 @@ exports.onProofUploaded = onDocumentUpdated(
 
     // Per-photo text labels, one per sent image, built after the fetch loop
     // so "Photo N of M" reflects the final sent count (i.e. after skips).
+    //
+    // One-based labels are DELIBERATE. Humans read the model's reasoning on
+    // the HCSD dashboard ("Photo 1 of 1 shows..."), and one-based counting is
+    // what a reader expects. The tool schema's photo_index is zero-based (see
+    // buildVerificationTool); the model translates between them per the
+    // convention statement in VERIFICATION_SYSTEM_PROMPT.
+    //
+    // Do not "fix" this by making labels zero-based. Reasoning readability
+    // degrades meaningfully — "Photo 0 of 0" reads as absent to a human — and
+    // the schema-level bound (maximum: photoCount - 1, per-request) plus the
+    // out-of-range guard downstream are the enforcement layer, not the label.
     const photoLabels = sentProofs.map((proof, i) => {
       const caption = formatCaptureLabel(proof);
       return `Photo ${i + 1} of ${sentProofs.length}. Captured ${caption.when}. GPS ${caption.gps}. Accuracy ${caption.accuracy}.`;
@@ -2862,7 +2894,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v3.2-2026-08",
+      promptVersion: "v3.3-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2888,7 +2920,7 @@ Assess each photo against the milestone description, then provide an overall ver
         max_tokens: 2048,
         temperature: 0,
         system: VERIFICATION_SYSTEM_PROMPT,
-        tools: [verificationTool],
+        tools: [buildVerificationTool(imageBlocks.length)],
         tool_choice: { type: "tool", name: "assess_milestone_photos" },
         messages: [
           {
@@ -2914,7 +2946,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v3.2-2026-08",
+        promptVersion: "v3.3-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -2961,23 +2993,32 @@ Assess each photo against the milestone description, then provide an overall ver
       // do not trust them for per-photo joins without a
       // promptVersion === "v2-2026-08" check.
       proofKeys: sentProofKeys,
-      // v3.2-2026-08 restricts the verdict to visual alignment; location and
+      // v3.3-2026-08 restricts the verdict to visual alignment; location and
       // date correctness are declared out of scope by the system prompt.
       // v3.1 closed the burn-in-banner loophole where the model was re-admitting
       // banner text under the "content within the frame" carve-out; v3.1 named
       // the banner explicitly, described its visual form (bottom-edge overlay,
       // flat rendered text) so it can be distinguished from in-scene signage,
       // and named the workaround phrasings the model was using.
-      // v3.2 relaxes the `aligned` bar to accept single-deliverable evidence on
+      // v3.2 relaxed the `aligned` bar to accept single-deliverable evidence on
       // multi-deliverable milestones (Lever 1). Mobile milestone descriptions
       // often bundle deliverables joined by "and" — e.g. "CHB wall AND roof
       // truss erection" — which no single photo can cover; under v3.1 those
-      // milestones could never be `aligned`. v3.2 also tightens the aligned
+      // milestones could never be `aligned`. v3.2 also tightened the aligned
       // bar with an explicit staged-materials carve-out (stockpiled gravel is
       // not evidence of "gravel fill compacted"; see the source-level guard
-      // note above VERIFICATION_SYSTEM_PROMPT). Verdict enum, tool schema,
-      // trigger wiring, and truncation handling are unchanged from v3.1.
-      promptVersion: "v3.2-2026-08",
+      // note above VERIFICATION_SYSTEM_PROMPT).
+      // v3.3 fixes the photo_index convention mismatch, not the assessment
+      // criteria. The tool schema is now per-request via buildVerificationTool
+      // so photo_index.maximum bounds to photoCount - 1 (was static maximum: 4),
+      // and both the schema description and the system prompt now state
+      // explicitly that photo_index is zero-based ("Photo 1 of M" → index 0).
+      // Anthropic default tool use is advisory (no server-side rejection); the
+      // out-of-range guard downstream remains the enforcement layer. Phase 4
+      // should expect NO verdict-distribution change from v3.2, only correct
+      // per-photo bindings — the render-layer symptoms ("Photo 2 of 1", missing
+      // thumbnail, "Not yet assessed" badge on assessed photos) should clear.
+      promptVersion: "v3.3-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
