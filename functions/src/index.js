@@ -2527,6 +2527,8 @@ If a photo clearly depicts the milestone activity but appears to be at a differe
 
 This exclusion covers metadata about the photo: the burn-in banner, the GPS coordinates in the photo label, and the capture timestamp. It does not cover signage, billboards, or other location or date information visible as part of the photographed scene itself — a project billboard naming a different project, or painted wall signage identifying a different barangay, is content in the frame and IS assessable as visible evidence for \`not_aligned\`. The distinction is metadata about the photo versus content in the photo. Content within the frame is always assessable.
 
+**The burn-in banner is not part of the photographed scene.** The banner is metadata applied by the upload pipeline after capture — it appears in the pixels of the image but is not content the camera captured from the site. Recognize it by form: a uniform five-line overlay strip aligned to the bottom edge of the photograph, in flat rendered text (not photographed lettering), listing place name, GPS coordinates with accuracy, capture time, and the engineer's name and role. Signage physically present at the site — project billboards, safety boards, painted wall markings — appears within the scene itself, subject to perspective, lighting, shadow, and camera angle, and is assessable per the paragraph above. Never cite the burn-in banner — its place name, its coordinates, or its capture timestamp — as evidence for or against any verdict, regardless of whether you describe it as "in-frame," "in the frame," "visible," "content within the photograph," or any equivalent phrasing.
+
 ## Verdict Criteria
 
 Return one verdict per photo and one overall verdict for the batch. All four verdicts are drawn from the same set. Choose based on the criteria below — not on a general sense of caution.
@@ -2847,7 +2849,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v3-2026-08",
+      promptVersion: "v3.1-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2899,7 +2901,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v3-2026-08",
+        promptVersion: "v3.1-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -2946,9 +2948,14 @@ Assess each photo against the milestone description, then provide an overall ver
       // do not trust them for per-photo joins without a
       // promptVersion === "v2-2026-08" check.
       proofKeys: sentProofKeys,
-      // v3-2026-08 restricts the verdict to visual alignment; location and
+      // v3.1-2026-08 restricts the verdict to visual alignment; location and
       // date correctness are declared out of scope by the system prompt.
-      promptVersion: "v3-2026-08",
+      // v3.1 closes the burn-in-banner loophole where the model was re-admitting
+      // banner text under the "content within the frame" carve-out; v3.1 names
+      // the banner explicitly, describes its visual form (bottom-edge overlay,
+      // flat rendered text) so it can be distinguished from in-scene signage,
+      // and names the workaround phrasings the model was using.
+      promptVersion: "v3.1-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
