@@ -4,6 +4,7 @@ import {
     ArrowLeft, MapPin, Calendar, Users, TrendingUp, FileText,
     ClipboardList, AlertTriangle, CheckCircle2, Clock,
     Hash, Banknote, Flag, ExternalLink, ChevronDown, ChevronUp,
+    ChevronLeft, ChevronRight,
     ImageIcon, X as XIcon, XCircle, HelpCircle, Check,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
@@ -41,6 +42,25 @@ const formatPHT = (raw) => {
             : null;
     if (!d || isNaN(d.getTime())) return null;
     return `${PHT_FORMATTER.format(d)} (PHT)`;
+};
+
+// Reasoning text for a per-photo assessment is 1-2 sentences per the tool
+// schema, but 4 photos means 4 paragraphs in the row block. Truncate to the
+// first sentence boundary, or 160 chars, whichever comes first. Callers pair
+// the returned { display, needsExpand } with a Set-backed expand toggle so a
+// reviewer can pop open a single row without scrolling four full paragraphs.
+const truncateReasoning = (text) => {
+    if (!text || typeof text !== 'string' || text.length <= 160) {
+        return { display: text ?? '', needsExpand: false };
+    }
+    const sentenceMatch = text.match(/^[^.!?]+[.!?](?=\s|$)/);
+    const cutIdx = sentenceMatch ? Math.min(sentenceMatch[0].length, 160) : 160;
+    let clean = text.slice(0, cutIdx);
+    if (cutIdx === 160) {
+        const lastSpace = clean.lastIndexOf(' ');
+        if (lastSpace > 100) clean = clean.slice(0, lastSpace);
+    }
+    return { display: clean.trimEnd() + '…', needsExpand: true };
 };
 
 const normalizeProof = (p) => {
@@ -349,7 +369,24 @@ const ProjectDetail = () => {
     const [expandedProofs, setExpandedProofs] = useState(() => new Set());
     const [proofCache, setProofCache] = useState({});
     const [proofLoading, setProofLoading] = useState({});
+    // { proofs: normalizedProof[], index: number, perProofMap: Map } | null
+    // proofs is snapshotted from cachedProofs at open time so upstream
+    // re-renders of the milestone list cannot shrink the array behind us;
+    // index is kept in-bounds by modular arithmetic in the nav handlers.
     const [lightbox, setLightbox] = useState(null);
+    // Set-backed expand state for per-photo reasoning rows (Part 2E). Keyed by
+    // the same proofKey the per-photo rows use, so a photo assessed in an
+    // older run keeps its expand state across a re-render triggered by a new
+    // upload elsewhere in the milestone.
+    const [expandedReasoning, setExpandedReasoning] = useState(() => new Set());
+    const toggleReasoning = useCallback((k) => {
+        if (!k) return;
+        setExpandedReasoning((prev) => {
+            const next = new Set(prev);
+            if (next.has(k)) next.delete(k); else next.add(k);
+            return next;
+        });
+    }, []);
 
     const loadProofs = useCallback(async (milestone) => {
         if (!id || !milestone?.id) return;
@@ -434,7 +471,19 @@ const ProjectDetail = () => {
 
     useEffect(() => {
         if (!lightbox) return;
-        const onKey = (e) => { if (e.key === 'Escape') setLightbox(null); };
+        // Escape closes; Arrow keys wrap through lightbox.proofs. Wrap math is
+        // modular so it cannot exceed proofs.length - 1; the render still gates
+        // nav controls on proofs.length > 1 for the single-proof case.
+        const onKey = (e) => {
+            if (e.key === 'Escape') { setLightbox(null); return; }
+            const len = lightbox?.proofs?.length ?? 0;
+            if (len <= 1) return;
+            if (e.key === 'ArrowRight') {
+                setLightbox((lb) => lb ? { ...lb, index: (lb.index + 1) % lb.proofs.length } : lb);
+            } else if (e.key === 'ArrowLeft') {
+                setLightbox((lb) => lb ? { ...lb, index: (lb.index - 1 + lb.proofs.length) % lb.proofs.length } : lb);
+            }
+        };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [lightbox]);
@@ -954,6 +1003,59 @@ const ProjectDetail = () => {
                                                     const count = cached ? cached.length : (hasCount ? m.proofs.length : 0);
                                                     if (count === 0 && !isOpen && !hasCount) return null;
                                                     const cachedProofs = Array.isArray(cached) ? cached : [];
+                                                    // Photo numbering is APPEND order (oldest = 1, newest = N), NOT
+                                                    // display order. Rationale: the verifier's photo_index is append
+                                                    // order, so its "Photo N of M" reasoning references append-order
+                                                    // labels; if the dashboard called the same proof "3 of 3" instead
+                                                    // of "1 of 3" the reasoning and UI would contradict. Ground truth
+                                                    // is m.proofs[] itself — mobile writes via arrayUnion(newEntry),
+                                                    // so array position IS append position. No capturedAt sort needed
+                                                    // for Firestore-tracked proofs. Legacy Storage-only proofs (found
+                                                    // via listAll but absent from m.proofs) get numbered AFTER, in
+                                                    // capturedAt-ASC order as a best-effort fallback — legacy proofs
+                                                    // never had a canonical "append time" recorded. Display order is
+                                                    // still capturedAt-DESC (see loadProofs sort); the two orderings
+                                                    // are decoupled.
+                                                    const appendOrderMap = new Map();
+                                                    let appendCursor = 0;
+                                                    const cachedKeys = new Set();
+                                                    for (const p of cachedProofs) {
+                                                        const k = proofKey(p);
+                                                        if (k) cachedKeys.add(k);
+                                                    }
+                                                    if (Array.isArray(m.proofs)) {
+                                                        for (const raw of m.proofs) {
+                                                            const k = raw?.id || raw?.fileName || raw?.name || raw?.storagePath || raw?.url;
+                                                            if (k && cachedKeys.has(k) && !appendOrderMap.has(k)) {
+                                                                appendOrderMap.set(k, appendCursor++);
+                                                            }
+                                                        }
+                                                    }
+                                                    const legacyPending = cachedProofs
+                                                        .filter((p) => {
+                                                            const k = proofKey(p);
+                                                            return k && !appendOrderMap.has(k);
+                                                        })
+                                                        .slice()
+                                                        .sort((a, b) => {
+                                                            const ta = a.capturedAt instanceof Date ? a.capturedAt.getTime() : Date.parse(a.capturedAt) || 0;
+                                                            const tb = b.capturedAt instanceof Date ? b.capturedAt.getTime() : Date.parse(b.capturedAt) || 0;
+                                                            return ta - tb;
+                                                        });
+                                                    for (const p of legacyPending) {
+                                                        const k = proofKey(p);
+                                                        if (k) appendOrderMap.set(k, appendCursor++);
+                                                    }
+                                                    const appendTotal = appendCursor;
+                                                    // Small helper: append-order number (1-based) for a proof; null if
+                                                    // the proof somehow has no resolvable key (proofKey cascade fell
+                                                    // through — should not happen for cachedProofs entries).
+                                                    const appendNumberFor = (p) => {
+                                                        const k = proofKey(p);
+                                                        if (!k) return null;
+                                                        const idx = appendOrderMap.get(k);
+                                                        return idx == null ? null : idx + 1;
+                                                    };
                                                     // History is append-only per batch: onProofUploaded assesses only
                                                     // newly-added proofs (see functions/src/index.js beforeKeys diff),
                                                     // so a milestone with N uploads over K sessions has K entries.
@@ -1018,6 +1120,32 @@ const ProjectDetail = () => {
                                                                 if (runAtStr) provenanceBits.push(`Assessed ${runAtStr}`);
                                                                 if (result.promptVersion) provenanceBits.push(result.promptVersion);
                                                                 const provenanceLine = provenanceBits.length > 0 ? provenanceBits.join(' · ') : null;
+                                                                // Multi-run: derive a milestone-wide count from perProofMap so
+                                                                // the summary reflects every proof's newest verdict across all
+                                                                // runs. The model's own overallReasoning is batch-scoped (may
+                                                                // say "Photo 1 of 1" while four photos are listed below), so
+                                                                // it moves behind a <details> disclosure. Single-run: batch
+                                                                // is the milestone, so overallReasoning stays inline as-is.
+                                                                let derivedCountSentence = null;
+                                                                if (hasMultipleRuns) {
+                                                                    const counts = { aligned: 0, partially_aligned: 0, not_aligned: 0, insufficient_evidence: 0 };
+                                                                    for (const rowEntry of perProofMap.values()) {
+                                                                        const v = rowEntry?.pa?.verdict;
+                                                                        if (v && counts[v] != null) counts[v] += 1;
+                                                                    }
+                                                                    const totalAssessed = counts.aligned + counts.partially_aligned + counts.not_aligned + counts.insufficient_evidence;
+                                                                    const parts = [];
+                                                                    if (counts.aligned)               parts.push(`${counts.aligned} aligned`);
+                                                                    if (counts.partially_aligned)     parts.push(`${counts.partially_aligned} partially aligned`);
+                                                                    if (counts.not_aligned)           parts.push(`${counts.not_aligned} not aligned`);
+                                                                    if (counts.insufficient_evidence) parts.push(`${counts.insufficient_evidence} insufficient evidence`);
+                                                                    derivedCountSentence = totalAssessed > 0
+                                                                        ? `${totalAssessed} photo${totalAssessed !== 1 ? 's' : ''} assessed: ${parts.join(', ')}`
+                                                                        : null;
+                                                                }
+                                                                const captionText = hasMultipleRuns
+                                                                    ? `Latest scan · ${result.photosVerified} photo${result.photosVerified !== 1 ? 's' : ''}`
+                                                                    : `AI assessment · ${result.photosVerified} photo${result.photosVerified !== 1 ? 's' : ''} scanned`;
                                                                 return (
                                                                     <div className={`mb-2 rounded-xl border p-3 ${style.panel}`}>
                                                                         <div className="flex items-start gap-2">
@@ -1028,18 +1156,34 @@ const ProjectDetail = () => {
                                                                                         {style.label}
                                                                                     </span>
                                                                                     <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
-                                                                                        AI assessment · {result.photosVerified} photo{result.photosVerified !== 1 ? 's' : ''} scanned
+                                                                                        {captionText}
                                                                                     </span>
                                                                                 </div>
                                                                                 {provenanceLine && (
                                                                                     <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mb-1">{provenanceLine}</p>
                                                                                 )}
-                                                                                <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
-                                                                                    {result.overallReasoning}
-                                                                                </p>
-                                                                                {hasMultipleRuns && (
-                                                                                    <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1 italic">
-                                                                                        Reflects the most recent scan only, not all accumulated evidence for this milestone.
+                                                                                {hasMultipleRuns ? (
+                                                                                    <>
+                                                                                        {derivedCountSentence && (
+                                                                                            <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
+                                                                                                {derivedCountSentence}
+                                                                                            </p>
+                                                                                        )}
+                                                                                        {result.overallReasoning && (
+                                                                                            <details className="mt-1 group">
+                                                                                                <summary className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 cursor-pointer hover:opacity-80 select-none list-none inline-flex items-center gap-1">
+                                                                                                    <ChevronDown size={10} className="transition-transform group-open:rotate-180" />
+                                                                                                    Latest scan detail
+                                                                                                </summary>
+                                                                                                <p className={`text-xs font-medium leading-relaxed mt-1 ${style.text}`}>
+                                                                                                    {result.overallReasoning}
+                                                                                                </p>
+                                                                                            </details>
+                                                                                        )}
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
+                                                                                        {result.overallReasoning}
                                                                                     </p>
                                                                                 )}
                                                                             </div>
@@ -1059,8 +1203,14 @@ const ProjectDetail = () => {
                                                                                     // Milestone-wide ordinal for a stable label. Each perProofRows
                                                                                     // row corresponds to one proof in cachedProofs, so this index
                                                                                     // lookup is O(N) but N is tiny (per-milestone proof count).
+                                                                                    // proofOrdinal is DISPLAY position (used for lightbox index);
+                                                                                    // photoLabel uses APPEND-order numbering so it agrees with
+                                                                                    // mobile and with the verifier's "Photo N of M" reasoning.
                                                                                     const proofOrdinal = cachedProofs.findIndex((p) => proofKey(p) === proofKey(matchedProof));
-                                                                                    const photoLabel = `Photo ${proofOrdinal + 1} of ${cachedProofs.length}`;
+                                                                                    const appendNumber = appendNumberFor(matchedProof);
+                                                                                    const photoLabel = appendNumber != null
+                                                                                        ? `Photo ${appendNumber} of ${appendTotal}`
+                                                                                        : `Photo of ${appendTotal}`;
                                                                                     const confidencePct = (typeof pa.confidence === 'number' && pa.confidence >= 0 && pa.confidence <= 1)
                                                                                         ? Math.round(pa.confidence * 100)
                                                                                         : null;
@@ -1076,7 +1226,7 @@ const ProjectDetail = () => {
                                                                                         <div key={rowKey} className="flex items-start gap-2">
                                                                                             <button
                                                                                                 type="button"
-                                                                                                onClick={() => setLightbox(matchedProof)}
+                                                                                                onClick={() => setLightbox({ proofs: cachedProofs, index: proofOrdinal, perProofMap, appendOrderMap, appendTotal })}
                                                                                                 aria-label={thumbAria}
                                                                                                 className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
                                                                                             >
@@ -1119,9 +1269,25 @@ const ProjectDetail = () => {
                                                                                                         </span>
                                                                                                     )}
                                                                                                 </div>
-                                                                                                <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
-                                                                                                    {pa.reasoning}
-                                                                                                </p>
+                                                                                                {(() => {
+                                                                                                    const isExpanded = expandedReasoning.has(rowKey);
+                                                                                                    const { display, needsExpand } = truncateReasoning(pa.reasoning);
+                                                                                                    return (
+                                                                                                        <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
+                                                                                                            {isExpanded ? pa.reasoning : display}
+                                                                                                            {needsExpand && (
+                                                                                                                <button
+                                                                                                                    type="button"
+                                                                                                                    onClick={() => toggleReasoning(rowKey)}
+                                                                                                                    className={`ml-1 text-[10px] font-bold underline underline-offset-2 hover:opacity-70 ${ps.text}`}
+                                                                                                                    aria-expanded={isExpanded}
+                                                                                                                >
+                                                                                                                    {isExpanded ? 'Show less' : 'Show more'}
+                                                                                                                </button>
+                                                                                                            )}
+                                                                                                        </p>
+                                                                                                    );
+                                                                                                })()}
                                                                                                 {Array.isArray(pa.visible_elements) && pa.visible_elements.length > 0 && (
                                                                                                     <div className="mt-1 flex flex-wrap gap-1">
                                                                                                         {pa.visible_elements.map((el, idx) => (
@@ -1160,19 +1326,19 @@ const ProjectDetail = () => {
                                                                                     const key = proofKey(p) ?? `idx-${i}`;
                                                                                     const capturedStr = formatPHT(p.capturedAt);
                                                                                     const uploadedStr = formatPHT(p.uploadedAt);
-                                                                                    // Label rule (all timestamps formatted in Asia/Manila):
-                                                                                    //   both present     → "Captured" primary + "Uploaded" secondary
-                                                                                    //   only capturedAt/timestamp → "Recorded" (neutral: pre-convergence
-                                                                                    //     mobile wrote `timestamp` at UPLOAD time, so we cannot claim
-                                                                                    //     capture — see normalizeProof note)
-                                                                                    //   only uploadedAt  → "Uploaded" primary
-                                                                                    //   neither          → nothing
-                                                                                    let primaryLabel = null, primaryValue = null, secondaryLabel = null, secondaryValue = null;
-                                                                                    if (capturedStr && uploadedStr) {
-                                                                                        primaryLabel = 'Captured'; primaryValue = capturedStr;
-                                                                                        secondaryLabel = 'Uploaded'; secondaryValue = uploadedStr;
-                                                                                    } else if (capturedStr) {
-                                                                                        primaryLabel = 'Recorded'; primaryValue = capturedStr;
+                                                                                    // Thumbnail caption shows only ONE timestamp (Captured
+                                                                                    // when both are present, since Captured and Uploaded
+                                                                                    // are typically <1 min apart). The lightbox retains
+                                                                                    // both. RECORDED remains the neutral fallback when
+                                                                                    // only the legacy `timestamp` field is present —
+                                                                                    // pre-convergence mobile wrote it at UPLOAD time, so
+                                                                                    // we cannot claim capture. Do not "fix" the RECORDED
+                                                                                    // label to Captured without confirming what the
+                                                                                    // legacy field actually means (see normalizeProof).
+                                                                                    let primaryLabel = null, primaryValue = null;
+                                                                                    if (capturedStr) {
+                                                                                        primaryLabel = uploadedStr ? 'Captured' : 'Recorded';
+                                                                                        primaryValue = capturedStr;
                                                                                     } else if (uploadedStr) {
                                                                                         primaryLabel = 'Uploaded'; primaryValue = uploadedStr;
                                                                                     }
@@ -1183,15 +1349,38 @@ const ProjectDetail = () => {
                                                                                     // assessed" badge even if a later run only scanned
                                                                                     // different proofs.
                                                                                     const isUnassessed = anyHistory && !(pKey && assessedKeys.has(pKey));
+                                                                                    const thumbAssessment = pKey ? perProofMap.get(pKey) : null;
+                                                                                    const thumbVerdict = thumbAssessment?.pa?.verdict ?? null;
+                                                                                    // Verdict badge and "Not yet assessed" pill share the
+                                                                                    // bottom-left corner — they cannot co-occur (a proof
+                                                                                    // is either assessed or not), so reserving two
+                                                                                    // corners on a small thumbnail would waste space.
+                                                                                    const verdictBadgeBg = thumbVerdict === 'aligned' ? 'bg-emerald-500'
+                                                                                        : thumbVerdict === 'partially_aligned' ? 'bg-amber-500'
+                                                                                        : thumbVerdict === 'not_aligned' ? 'bg-rose-500'
+                                                                                        : 'bg-slate-500';
+                                                                                    const verdictBadgeLabel = thumbVerdict === 'aligned' ? 'Aligned'
+                                                                                        : thumbVerdict === 'partially_aligned' ? 'Partial'
+                                                                                        : thumbVerdict === 'not_aligned' ? 'Not aligned'
+                                                                                        : thumbVerdict === 'insufficient_evidence' ? 'Insuff.'
+                                                                                        : null;
+                                                                                    // i is the DISPLAY position (newest-first sort). The
+                                                                                    // visible number is APPEND order so it matches mobile
+                                                                                    // and the verifier's photo_index. Display order and
+                                                                                    // numbering are intentionally decoupled.
+                                                                                    const thumbAppendNumber = appendNumberFor(p);
                                                                                     return (
                                                                                         <div key={key} className="flex flex-col gap-1">
                                                                                             <button
                                                                                                 type="button"
-                                                                                                onClick={() => setLightbox(p)}
-                                                                                                aria-label={`Open proof photo${p.name ? ` ${p.name}` : ''} in lightbox${isUnassessed ? ' — not yet assessed' : ''}`}
+                                                                                                onClick={() => setLightbox({ proofs: cachedProofs, index: i, perProofMap, appendOrderMap, appendTotal })}
+                                                                                                aria-label={`Open proof photo ${thumbAppendNumber ?? '?'} of ${appendTotal}${p.name ? ` — ${p.name}` : ''} in lightbox${isUnassessed ? ' — not yet assessed' : (verdictBadgeLabel ? ` — ${verdictBadgeLabel}` : '')}`}
                                                                                                 className="group relative aspect-square rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
                                                                                             >
                                                                                                 <img src={p.url} alt={p.name ?? ''} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                                                                                <span className="absolute top-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-900/70 text-white shadow-sm tabular-nums">
+                                                                                                    {thumbAppendNumber ?? '?'} of {appendTotal}
+                                                                                                </span>
                                                                                                 {p.gps && (
                                                                                                     <span
                                                                                                         className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-teal-600/90 text-white flex items-center justify-center shadow-sm"
@@ -1200,22 +1389,21 @@ const ProjectDetail = () => {
                                                                                                         <MapPin size={12} strokeWidth={2.5} />
                                                                                                     </span>
                                                                                                 )}
-                                                                                                {isUnassessed && (
+                                                                                                {isUnassessed ? (
                                                                                                     <span className="absolute bottom-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-900/70 text-white shadow-sm">
                                                                                                         Not yet assessed
                                                                                                     </span>
-                                                                                                )}
+                                                                                                ) : (verdictBadgeLabel && (
+                                                                                                    <span className={`absolute bottom-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded text-white shadow-sm ${verdictBadgeBg}`}>
+                                                                                                        {verdictBadgeLabel}
+                                                                                                    </span>
+                                                                                                ))}
                                                                                             </button>
                                                                                             {primaryValue && (
                                                                                                 <div className="text-[10px] leading-tight px-0.5">
                                                                                                     <p className="text-slate-600 dark:text-slate-300 font-semibold truncate" title={primaryValue}>
                                                                                                         <span className="text-slate-400 dark:text-slate-500 font-medium">{primaryLabel}:</span> {primaryValue}
                                                                                                     </p>
-                                                                                                    {secondaryValue && (
-                                                                                                        <p className="text-slate-400 dark:text-slate-500 truncate" title={secondaryValue}>
-                                                                                                            <span className="font-medium">{secondaryLabel}:</span> {secondaryValue}
-                                                                                                        </p>
-                                                                                                    )}
                                                                                                 </div>
                                                                                             )}
                                                                                         </div>
@@ -1254,74 +1442,179 @@ const ProjectDetail = () => {
                 onClose={() => setNtpViewerOpen(false)}
             />
 
-            {lightbox && (
-                <div
-                    className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-                    onClick={() => setLightbox(null)}
-                    role="dialog"
-                    aria-modal="true"
-                >
-                    <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
-                        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                        aria-label="Close"
+            {lightbox && (() => {
+                // Lightbox shape: { proofs: normalizedProof[], index: number,
+                // perProofMap: Map<proofKey, {pa, entry, match, proof}> }.
+                // proofs is snapshotted at open time so upstream shrinkage of
+                // cachedProofs cannot make index out-of-bounds. Nav wraps at
+                // both ends via modular arithmetic; controls are gated on
+                // total > 1 so a single-proof open is unchanged UX-wise.
+                const proofs = lightbox.proofs ?? [];
+                const idx = lightbox.index ?? 0;
+                const currentProof = proofs[idx];
+                if (!currentProof) return null;
+                const total = proofs.length;
+                const canNav = total > 1;
+                const goPrev = (e) => { e?.stopPropagation?.(); setLightbox((lb) => lb ? { ...lb, index: (lb.index - 1 + lb.proofs.length) % lb.proofs.length } : lb); };
+                const goNext = (e) => { e?.stopPropagation?.(); setLightbox((lb) => lb ? { ...lb, index: (lb.index + 1) % lb.proofs.length } : lb); };
+                const cpKey = proofKey(currentProof);
+                const currentAssessment = (cpKey && lightbox.perProofMap) ? lightbox.perProofMap.get(cpKey) : null;
+                const currentPa = currentAssessment?.pa ?? null;
+                const currentVerdictStyle = currentPa ? getVerdictStyle(currentPa.verdict) : null;
+                const CurrentVerdictIcon = currentVerdictStyle?.icon ?? null;
+                const currentConfidencePct = (typeof currentPa?.confidence === 'number' && currentPa.confidence >= 0 && currentPa.confidence <= 1)
+                    ? Math.round(currentPa.confidence * 100)
+                    : null;
+                // Numbering is APPEND order (matches thumbnail pill and per-photo
+                // list). Prev/next still walk DISPLAY order (cachedProofs, newest
+                // first), so "next" can move from Photo 4 → Photo 3 — the
+                // position indicator makes that explicit as the user pages.
+                const lookupAppend = (p) => {
+                    if (!p || !lightbox.appendOrderMap) return null;
+                    const k = proofKey(p);
+                    if (!k) return null;
+                    const i = lightbox.appendOrderMap.get(k);
+                    return i == null ? null : i + 1;
+                };
+                const appendTotalLB = lightbox.appendTotal ?? total;
+                const currentAppendNum = lookupAppend(currentProof);
+                const prevIdxLB = (idx - 1 + total) % total;
+                const nextIdxLB = (idx + 1) % total;
+                const prevAppendNum = lookupAppend(proofs[prevIdxLB]);
+                const nextAppendNum = lookupAppend(proofs[nextIdxLB]);
+                return (
+                    <div
+                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                        onClick={() => setLightbox(null)}
+                        role="dialog"
+                        aria-modal="true"
                     >
-                        <XIcon size={22} />
-                    </button>
-                    <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                        <img src={lightbox.url} alt={lightbox.name ?? ''} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" />
-                        {lightbox.gps && (
-                            <a
-                                href={`https://www.google.com/maps?q=${lightbox.gps.lat},${lightbox.gps.lng}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                title={`${lightbox.gps.lat.toFixed(6)}, ${lightbox.gps.lng.toFixed(6)}`}
-                                className={`text-xs font-semibold text-white bg-teal-600/90 hover:bg-teal-500 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition-colors max-w-[80vw] ${lightbox.location ? '' : 'font-mono'}`}
-                            >
-                                <MapPin size={12} strokeWidth={2.5} />
-                                <span className="truncate">
-                                    {lightbox.location ?? `${lightbox.gps.lat.toFixed(6)}, ${lightbox.gps.lng.toFixed(6)}`}
-                                </span>
-                                <ExternalLink size={11} strokeWidth={2.5} />
-                            </a>
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
+                            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                            aria-label="Close"
+                        >
+                            <XIcon size={22} />
+                        </button>
+                        {canNav && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={goPrev}
+                                    className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                                    aria-label={`Previous photo (${prevAppendNum ?? '?'} of ${appendTotalLB})`}
+                                >
+                                    <ChevronLeft size={22} />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={goNext}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                                    aria-label={`Next photo (${nextAppendNum ?? '?'} of ${appendTotalLB})`}
+                                >
+                                    <ChevronRight size={22} />
+                                </button>
+                            </>
                         )}
-                        {(() => {
-                            const capturedStr = formatPHT(lightbox.capturedAt);
-                            const uploadedStr = formatPHT(lightbox.uploadedAt);
-                            // Same label rule as the thumbnail grid caption
-                            // (see comment there): Captured+Uploaded when both,
-                            // "Recorded" when only capturedAt/timestamp is
-                            // present (pre-convergence mobile wrote the legacy
-                            // `timestamp` at upload time — do not "fix" this
-                            // label to Captured without confirming).
-                            const lines = [];
-                            if (capturedStr && uploadedStr) {
-                                lines.push({ label: 'Captured', value: capturedStr });
-                                lines.push({ label: 'Uploaded', value: uploadedStr });
-                            } else if (capturedStr) {
-                                lines.push({ label: 'Recorded', value: capturedStr });
-                            } else if (uploadedStr) {
-                                lines.push({ label: 'Uploaded', value: uploadedStr });
-                            }
-                            if (lightbox.uploadedBy) {
-                                lines.push({ label: 'Uploaded by', value: lightbox.uploadedBy });
-                            }
-                            if (lines.length === 0) return null;
-                            return (
-                                <div className="text-xs text-white/85 bg-black/40 rounded-lg px-3 py-2 max-w-[80vw] flex flex-col gap-0.5 items-center">
-                                    {lines.map((l) => (
-                                        <p key={l.label} className="truncate max-w-full">
-                                            <span className="font-medium text-white/60">{l.label}:</span> <span className="font-semibold">{l.value}</span>
-                                        </p>
-                                    ))}
+                        <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                            {canNav && (
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-white/70 tabular-nums">
+                                    Photo {currentAppendNum ?? '?'} of {appendTotalLB}
+                                </p>
+                            )}
+                            <img src={currentProof.url} alt={currentProof.name ?? ''} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl" />
+                            {currentProof.gps && (
+                                <a
+                                    href={`https://www.google.com/maps?q=${currentProof.gps.lat},${currentProof.gps.lng}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={`${currentProof.gps.lat.toFixed(6)}, ${currentProof.gps.lng.toFixed(6)}`}
+                                    className={`text-xs font-semibold text-white bg-teal-600/90 hover:bg-teal-500 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition-colors max-w-[80vw] ${currentProof.location ? '' : 'font-mono'}`}
+                                >
+                                    <MapPin size={12} strokeWidth={2.5} />
+                                    <span className="truncate">
+                                        {currentProof.location ?? `${currentProof.gps.lat.toFixed(6)}, ${currentProof.gps.lng.toFixed(6)}`}
+                                    </span>
+                                    <ExternalLink size={11} strokeWidth={2.5} />
+                                </a>
+                            )}
+                            {/* Per-photo verdict + reasoning are shown IN FULL inside
+                                the lightbox — the per-photo list above is a
+                                summary; the lightbox is the detail view, so no
+                                truncation here even though the row block truncates. */}
+                            {currentPa && currentVerdictStyle && (
+                                <div className="text-xs bg-black/50 rounded-lg px-3 py-2 max-w-[80vw] w-full flex flex-col gap-1 items-start border border-white/10">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        {CurrentVerdictIcon && <CurrentVerdictIcon size={14} className={currentVerdictStyle.iconColor} />}
+                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${currentVerdictStyle.pill}`}>
+                                            {currentVerdictStyle.label}
+                                        </span>
+                                        {currentConfidencePct != null && (
+                                            <span className="text-[10px] font-semibold text-white/70">
+                                                Confidence: {currentConfidencePct}%
+                                            </span>
+                                        )}
+                                    </div>
+                                    {currentPa.reasoning && (
+                                        <p className="text-[11px] leading-snug text-white/85">{currentPa.reasoning}</p>
+                                    )}
+                                    {Array.isArray(currentPa.visible_elements) && currentPa.visible_elements.length > 0 && (
+                                        <div className="mt-1 flex flex-wrap gap-1">
+                                            {currentPa.visible_elements.map((el, elIdx) => (
+                                                <span key={elIdx} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/10 text-white/80 border border-white/10">
+                                                    {el}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
-                            );
-                        })()}
+                            )}
+                            {!currentPa && (
+                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-900/70 text-white shadow-sm">
+                                    Not yet assessed
+                                </span>
+                            )}
+                            {(() => {
+                                const capturedStr = formatPHT(currentProof.capturedAt);
+                                const uploadedStr = formatPHT(currentProof.uploadedAt);
+                                // Same label rule as the thumbnail grid caption
+                                // (see comment there): Captured+Uploaded when both,
+                                // "Recorded" when only capturedAt/timestamp is
+                                // present (pre-convergence mobile wrote the legacy
+                                // `timestamp` at upload time — do not "fix" this
+                                // label to Captured without confirming). Both
+                                // Captured and Uploaded render here because the
+                                // lightbox is the detail view; the thumbnail card
+                                // shows only one to keep the grid readable.
+                                const lines = [];
+                                if (capturedStr && uploadedStr) {
+                                    lines.push({ label: 'Captured', value: capturedStr });
+                                    lines.push({ label: 'Uploaded', value: uploadedStr });
+                                } else if (capturedStr) {
+                                    lines.push({ label: 'Recorded', value: capturedStr });
+                                } else if (uploadedStr) {
+                                    lines.push({ label: 'Uploaded', value: uploadedStr });
+                                }
+                                if (currentProof.uploadedBy) {
+                                    lines.push({ label: 'Uploaded by', value: currentProof.uploadedBy });
+                                }
+                                if (lines.length === 0) return null;
+                                return (
+                                    <div className="text-xs text-white/85 bg-black/40 rounded-lg px-3 py-2 max-w-[80vw] flex flex-col gap-0.5 items-center">
+                                        {lines.map((l) => (
+                                            <p key={l.label} className="truncate max-w-full">
+                                                <span className="font-medium text-white/60">{l.label}:</span> <span className="font-semibold">{l.value}</span>
+                                            </p>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
         </div>
     );
 };
