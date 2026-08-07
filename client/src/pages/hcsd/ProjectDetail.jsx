@@ -87,7 +87,7 @@ const normalizeProof = (p) => {
     };
 };
 
-// Three-tier match cascade from a per-photo assessment to the actual proof.
+// Two-tier match cascade from a per-photo assessment to the actual proof.
 // Returns { proof, match } where match is:
 //   'exact'                — Tier 1 (pa.proofId), or Tier 2 on a v2+ record
 //                            (any promptVersion whose slug starts "v2" or
@@ -97,13 +97,28 @@ const normalizeProof = (p) => {
 //                            be misaligned by mid-batch fetch skips (fixed in
 //                            functions/src/index.js on 2026-08-04), so this
 //                            match is best-effort.
-//   'approximate-tier3'    — Tier 3 positional fallback.
-//   'none'                 — no valid photo_index or fully out of range.
+//   'none'                 — no matching key found via either tier.
 //
 // Tier 2 is BOUNDED BY proofKeys.length (the send-order array), NOT
-// proofs.length — proofKeys may be shorter than the full proof set. Tier 3
-// is BOUNDED BY proofs.length. Bounding against the wrong array is how a
-// stale index resolves to a plausible-looking wrong photo.
+// proofs.length — proofKeys may be shorter than the full proof set. Bounding
+// against the wrong array is how a stale index resolves to a plausible-looking
+// wrong photo.
+//
+// Tier 3 (positional fallback into proofs[idx]) was REMOVED because
+// pa.photo_index is scoped to the batch onProofUploaded sent for that run,
+// not to the milestone's full proofs array. onProofUploaded only assesses
+// newly-appended proofs, so a second upload's assessment carries
+// photo_index: 0 — the same index the first upload's assessment carried.
+// The two index spaces coincide only when the batch equalled the whole array
+// (true only on the very first run), and no cheap runtime signal can prove
+// that condition. A confidently wrong verdict is worse than "Not yet
+// assessed" on an accountability system, so records that fall through both
+// tiers now render as unmatched.
+//
+// The 'approximate-tier3' label is retained in isApproximateMatch and
+// approximateMatchTooltip below for backward compatibility with any
+// pre-existing UI code paths — those helpers are pure and harmless when the
+// label is unreachable.
 //
 // Second-arg name is `record` (not `latestRecord`) because per-proof history
 // walks resolve against many entries, not just the newest one.
@@ -125,9 +140,6 @@ const resolveProofForAssessment = (pa, record, proofs) => {
                 return { proof: found, match: isTrustedRecordVersion(record?.promptVersion) ? 'exact' : 'approximate-tier2' };
             }
         }
-    }
-    if (Number.isInteger(idx) && idx >= 0 && idx < proofs.length) {
-        return { proof: proofs[idx], match: 'approximate-tier3' };
     }
     return { proof: null, match: 'none' };
 };
@@ -1071,12 +1083,23 @@ const ProjectDetail = () => {
                                                     //       carries its verdict even after 2 subsequent uploads of
                                                     //       other proofs; and why a re-assessed proof (same key seen
                                                     //       across multiple entries) shows the most recent verdict.
+                                                    // Secondary sort key `b.idx - a.idx` is EXPLICIT so behavior on
+                                                    // identical runAt does not depend on Array.prototype.sort's
+                                                    // implementation-stability. Since verificationHistory is
+                                                    // arrayUnion-append-only, a higher original array index means
+                                                    // later-inserted; combined with first-writer-wins, the later-
+                                                    // inserted entry wins the tie. Mobile uses the same expression
+                                                    // so both surfaces agree by construction.
                                                     const historyEntries = Array.isArray(m.verificationHistory) && m.verificationHistory.length > 0
-                                                        ? [...m.verificationHistory].sort((a, b) => {
-                                                            const ta = a?.runAt?.toMillis?.() ?? Date.parse(a?.runAt) ?? 0;
-                                                            const tb = b?.runAt?.toMillis?.() ?? Date.parse(b?.runAt) ?? 0;
-                                                            return tb - ta;
-                                                        })
+                                                        ? m.verificationHistory
+                                                            .map((entry, idx) => ({ entry, idx }))
+                                                            .sort((a, b) => {
+                                                                const ta = a.entry?.runAt?.toMillis?.() ?? Date.parse(a.entry?.runAt) ?? 0;
+                                                                const tb = b.entry?.runAt?.toMillis?.() ?? Date.parse(b.entry?.runAt) ?? 0;
+                                                                if (tb !== ta) return tb - ta;
+                                                                return b.idx - a.idx;
+                                                            })
+                                                            .map(({ entry }) => entry)
                                                         : [];
                                                     const latestHistoryEntry = historyEntries[0] ?? null;
                                                     const hasMultipleRuns = historyEntries.length > 1;
