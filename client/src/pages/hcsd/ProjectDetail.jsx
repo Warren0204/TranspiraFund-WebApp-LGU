@@ -69,7 +69,10 @@ const normalizeProof = (p) => {
 
 // Three-tier match cascade from a per-photo assessment to the actual proof.
 // Returns { proof, match } where match is:
-//   'exact'                — Tier 1 (pa.proofId), or Tier 2 on a v2-2026-08 record.
+//   'exact'                — Tier 1 (pa.proofId), or Tier 2 on a v2+ record
+//                            (any promptVersion whose slug starts "v2" or
+//                            "v3", i.e. from the 2026-08-04 recalibration
+//                            onward).
 //   'approximate-tier2'    — Tier 2 on a pre-v2 record. Pre-v2 proofKeys may
 //                            be misaligned by mid-batch fetch skips (fixed in
 //                            functions/src/index.js on 2026-08-04), so this
@@ -81,21 +84,25 @@ const normalizeProof = (p) => {
 // proofs.length — proofKeys may be shorter than the full proof set. Tier 3
 // is BOUNDED BY proofs.length. Bounding against the wrong array is how a
 // stale index resolves to a plausible-looking wrong photo.
-const resolveProofForAssessment = (pa, latestRecord, proofs) => {
+//
+// Second-arg name is `record` (not `latestRecord`) because per-proof history
+// walks resolve against many entries, not just the newest one.
+const isTrustedRecordVersion = (pv) =>
+    typeof pv === 'string' && (pv.startsWith('v2') || pv.startsWith('v3'));
+const resolveProofForAssessment = (pa, record, proofs) => {
     if (!pa || !Array.isArray(proofs) || proofs.length === 0) return { proof: null, match: 'none' };
     const idx = pa.photo_index;
     if (pa.proofId != null) {
         const found = proofs.find((p) => proofKey(p) === pa.proofId);
         if (found) return { proof: found, match: 'exact' };
     }
-    const keys = latestRecord?.proofKeys;
+    const keys = record?.proofKeys;
     if (Array.isArray(keys) && Number.isInteger(idx) && idx >= 0 && idx < keys.length) {
         const key = keys[idx];
         if (key != null) {
             const found = proofs.find((p) => proofKey(p) === key);
             if (found) {
-                const isV2 = latestRecord?.promptVersion === 'v2-2026-08';
-                return { proof: found, match: isV2 ? 'exact' : 'approximate-tier2' };
+                return { proof: found, match: isTrustedRecordVersion(record?.promptVersion) ? 'exact' : 'approximate-tier2' };
             }
         }
     }
@@ -946,35 +953,60 @@ const ProjectDetail = () => {
                                                     const hasCount = Array.isArray(m.proofs) && m.proofs.length > 0;
                                                     const count = cached ? cached.length : (hasCount ? m.proofs.length : 0);
                                                     if (count === 0 && !isOpen && !hasCount) return null;
-                                                    const latestHistoryEntry = Array.isArray(m.verificationHistory) && m.verificationHistory.length > 0
+                                                    const cachedProofs = Array.isArray(cached) ? cached : [];
+                                                    // History is append-only per batch: onProofUploaded assesses only
+                                                    // newly-added proofs (see functions/src/index.js beforeKeys diff),
+                                                    // so a milestone with N uploads over K sessions has K entries.
+                                                    // We walk them newest-first for two independent purposes:
+                                                    //   (1) `latestHistoryEntry` — drives the milestone-level panel
+                                                    //       (overall verdict + reasoning). Latest-only is deliberate;
+                                                    //       we do NOT synthesize a milestone-wide overall verdict
+                                                    //       client-side because the model wasn't asked to weigh cross-
+                                                    //       run evidence.
+                                                    //   (2) `perProofMap` — drives the per-photo strip. First-writer-
+                                                    //       wins over a newest-first walk yields the newest assessment
+                                                    //       per proof. This is why a photo assessed 3 runs ago still
+                                                    //       carries its verdict even after 2 subsequent uploads of
+                                                    //       other proofs; and why a re-assessed proof (same key seen
+                                                    //       across multiple entries) shows the most recent verdict.
+                                                    const historyEntries = Array.isArray(m.verificationHistory) && m.verificationHistory.length > 0
                                                         ? [...m.verificationHistory].sort((a, b) => {
                                                             const ta = a?.runAt?.toMillis?.() ?? Date.parse(a?.runAt) ?? 0;
                                                             const tb = b?.runAt?.toMillis?.() ?? Date.parse(b?.runAt) ?? 0;
                                                             return tb - ta;
-                                                        })[0]
-                                                        : null;
-                                                    const perPhotoList = latestHistoryEntry
-                                                        ? (latestHistoryEntry.perPhotoAssessments ?? latestHistoryEntry.per_photo_assessments)
-                                                        : null;
-                                                    // "Photo N of M" denominator: the model was told the exact count
-                                                    // that was sent, so we surface the same value the model saw. Fall
-                                                    // back to array length if photosVerified is absent (very old rows).
-                                                    const totalAssessed = latestHistoryEntry?.photosVerified
-                                                        ?? (Array.isArray(perPhotoList) ? perPhotoList.length : 0);
-                                                    const cachedProofs = Array.isArray(cached) ? cached : [];
-                                                    // Set of proofKey() values for every proof the latest run
-                                                    // assessed. Empty when no history entry yet — so every thumbnail
-                                                    // correctly renders "Not yet assessed" until a run happens.
-                                                    const assessedKeys = new Set();
-                                                    if (latestHistoryEntry && Array.isArray(perPhotoList)) {
-                                                        perPhotoList.forEach((pa) => {
-                                                            const { proof: matched } = resolveProofForAssessment(pa, latestHistoryEntry, cachedProofs);
-                                                            if (matched) {
-                                                                const k = proofKey(matched);
-                                                                if (k) assessedKeys.add(k);
-                                                            }
-                                                        });
+                                                        })
+                                                        : [];
+                                                    const latestHistoryEntry = historyEntries[0] ?? null;
+                                                    const hasMultipleRuns = historyEntries.length > 1;
+
+                                                    // proofKey → { pa, entry, match } for the newest assessment of
+                                                    // each resolvable proof, across every run.
+                                                    const perProofMap = new Map();
+                                                    for (const entry of historyEntries) {
+                                                        const paList = Array.isArray(entry.perPhotoAssessments)
+                                                            ? entry.perPhotoAssessments
+                                                            : (Array.isArray(entry.per_photo_assessments) ? entry.per_photo_assessments : []);
+                                                        for (const pa of paList) {
+                                                            const { proof: matched, match } = resolveProofForAssessment(pa, entry, cachedProofs);
+                                                            if (!matched) continue;
+                                                            const k = proofKey(matched);
+                                                            if (!k || perProofMap.has(k)) continue;
+                                                            perProofMap.set(k, { pa, entry, match, proof: matched });
+                                                        }
                                                     }
+                                                    // Render order follows cachedProofs (the physical proof order in
+                                                    // the milestone), not history order — so the strip reads left-to-
+                                                    // right through the proofs the HCSD user sees below.
+                                                    const perProofRows = cachedProofs
+                                                        .map((p) => {
+                                                            const k = proofKey(p);
+                                                            if (!k) return null;
+                                                            const entry = perProofMap.get(k);
+                                                            return entry ? entry : null;
+                                                        })
+                                                        .filter(Boolean);
+                                                    const assessedKeys = new Set(perProofMap.keys());
+                                                    const anyHistory = historyEntries.length > 0;
                                                     return (
                                                         <>
                                                             {latestHistoryEntry && (() => {
@@ -1005,20 +1037,30 @@ const ProjectDetail = () => {
                                                                                 <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
                                                                                     {result.overallReasoning}
                                                                                 </p>
+                                                                                {hasMultipleRuns && (
+                                                                                    <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 mt-1 italic">
+                                                                                        Reflects the most recent scan only, not all accumulated evidence for this milestone.
+                                                                                    </p>
+                                                                                )}
                                                                             </div>
                                                                         </div>
 
-                                                                        {Array.isArray(perPhotoList) && perPhotoList.length > 0 && (
+                                                                        {perProofRows.length > 0 && (
                                                                             <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-700/60 space-y-3">
-                                                                                {perPhotoList.map((pa) => {
+                                                                                {hasMultipleRuns && (
+                                                                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                                                        Per-photo assessments · newest across all runs
+                                                                                    </p>
+                                                                                )}
+                                                                                {perProofRows.map(({ pa, entry, match, proof: matchedProof }) => {
                                                                                     const ps = getVerdictStyle(pa.verdict);
                                                                                     const PIcon = ps.icon;
-                                                                                    const { proof: matchedProof, match } = resolveProofForAssessment(pa, latestHistoryEntry, cachedProofs);
                                                                                     const approx = isApproximateMatch(match);
-                                                                                    const isNone = match === 'none';
-                                                                                    // Denominator matches the "Photo N of M" label the
-                                                                                    // model was given in the v2 prompt.
-                                                                                    const photoLabel = `Photo ${pa.photo_index + 1} of ${totalAssessed || perPhotoList.length}`;
+                                                                                    // Milestone-wide ordinal for a stable label. Each perProofRows
+                                                                                    // row corresponds to one proof in cachedProofs, so this index
+                                                                                    // lookup is O(N) but N is tiny (per-milestone proof count).
+                                                                                    const proofOrdinal = cachedProofs.findIndex((p) => proofKey(p) === proofKey(matchedProof));
+                                                                                    const photoLabel = `Photo ${proofOrdinal + 1} of ${cachedProofs.length}`;
                                                                                     const confidencePct = (typeof pa.confidence === 'number' && pa.confidence >= 0 && pa.confidence <= 1)
                                                                                         ? Math.round(pa.confidence * 100)
                                                                                         : null;
@@ -1027,38 +1069,28 @@ const ProjectDetail = () => {
                                                                                             ? 'photo match approximate (legacy record)'
                                                                                             : 'photo match approximate (by position)')
                                                                                         : null;
-                                                                                    const thumbAria = matchedProof
-                                                                                        ? `Open ${photoLabel} in lightbox — ${approx ? 'approximate match' : 'exact match'}`
-                                                                                        : `${photoLabel} — photo not found in this milestone`;
+                                                                                    const runAtStr = formatPHT(entry?.runAt);
+                                                                                    const thumbAria = `Open ${photoLabel} in lightbox — ${approx ? 'approximate match' : 'exact match'}`;
+                                                                                    const rowKey = proofKey(matchedProof) ?? `pa-${proofOrdinal}`;
                                                                                     return (
-                                                                                        <div key={pa.photo_index} className="flex items-start gap-2">
-                                                                                            {matchedProof ? (
-                                                                                                <button
-                                                                                                    type="button"
-                                                                                                    onClick={() => setLightbox(matchedProof)}
-                                                                                                    aria-label={thumbAria}
-                                                                                                    className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
-                                                                                                >
-                                                                                                    <img src={matchedProof.url} alt="" loading="lazy" className="w-full h-full object-cover" />
-                                                                                                    {approx && (
-                                                                                                        <span
-                                                                                                            className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center shadow-sm"
-                                                                                                            title={approximateMatchTooltip(match)}
-                                                                                                            aria-hidden="true"
-                                                                                                        >
-                                                                                                            ≈
-                                                                                                        </span>
-                                                                                                    )}
-                                                                                                </button>
-                                                                                            ) : (
-                                                                                                <div
-                                                                                                    className="shrink-0 w-12 h-12 rounded-md bg-slate-100 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center"
-                                                                                                    title="Photo not found in this milestone"
-                                                                                                    aria-label={thumbAria}
-                                                                                                >
-                                                                                                    <ImageIcon size={16} className="text-slate-400 dark:text-slate-500 opacity-60" />
-                                                                                                </div>
-                                                                                            )}
+                                                                                        <div key={rowKey} className="flex items-start gap-2">
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => setLightbox(matchedProof)}
+                                                                                                aria-label={thumbAria}
+                                                                                                className="relative shrink-0 w-12 h-12 rounded-md overflow-hidden bg-slate-200 dark:bg-slate-700 border border-slate-200 dark:border-slate-700/60 hover:ring-2 hover:ring-teal-400 transition-all"
+                                                                                            >
+                                                                                                <img src={matchedProof.url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                                                                                                {approx && (
+                                                                                                    <span
+                                                                                                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center shadow-sm"
+                                                                                                        title={approximateMatchTooltip(match)}
+                                                                                                        aria-hidden="true"
+                                                                                                    >
+                                                                                                        ≈
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </button>
                                                                                             <div className="flex-1 min-w-0">
                                                                                                 <div className="flex items-center gap-2 flex-wrap">
                                                                                                     <PIcon size={14} className={`${ps.iconColor} shrink-0`} />
@@ -1073,17 +1105,17 @@ const ProjectDetail = () => {
                                                                                                             Confidence: {confidencePct}%
                                                                                                         </span>
                                                                                                     )}
+                                                                                                    {hasMultipleRuns && runAtStr && (
+                                                                                                        <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                                                                                                            Assessed {runAtStr}
+                                                                                                        </span>
+                                                                                                    )}
                                                                                                     {matchLabel && (
                                                                                                         <span
                                                                                                             className="text-[10px] font-medium text-amber-600 dark:text-amber-400"
                                                                                                             title={approximateMatchTooltip(match)}
                                                                                                         >
                                                                                                             {matchLabel}
-                                                                                                        </span>
-                                                                                                    )}
-                                                                                                    {isNone && (
-                                                                                                        <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                                                                                                            photo not found in this milestone
                                                                                                         </span>
                                                                                                     )}
                                                                                                 </div>
@@ -1145,7 +1177,12 @@ const ProjectDetail = () => {
                                                                                         primaryLabel = 'Uploaded'; primaryValue = uploadedStr;
                                                                                     }
                                                                                     const pKey = proofKey(p);
-                                                                                    const isUnassessed = latestHistoryEntry != null && !(pKey && assessedKeys.has(pKey));
+                                                                                    // assessedKeys covers every proof with a persistent
+                                                                                    // verdict across all runs, so a photo assessed in an
+                                                                                    // older run correctly renders WITHOUT the "Not yet
+                                                                                    // assessed" badge even if a later run only scanned
+                                                                                    // different proofs.
+                                                                                    const isUnassessed = anyHistory && !(pKey && assessedKeys.has(pKey));
                                                                                     return (
                                                                                         <div key={key} className="flex flex-col gap-1">
                                                                                             <button
