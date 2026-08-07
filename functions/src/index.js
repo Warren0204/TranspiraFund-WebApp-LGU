@@ -2515,6 +2515,32 @@ exports.validateProjectClassification = onCall(
 // `aligned` and `partially_aligned`. Do not flatten the two stockpile
 // examples in a future edit — tighten them if live data shows drift, but
 // removing them reopens the exact gap v3.2 was written to close.
+//
+// v3.4 image-provenance exclusion: `## Scope of Assessment` below carries a
+// third bullet declaring image provenance out of scope alongside Location and
+// Date correctness. Under v3.3 the model was downgrading alignment on 41.7% of
+// runs because it treated authenticity signals it noticed in the frame
+// (Adobe Stock watermarks, moiré, screen glare, "photo of a screen", "stock or
+// reference image") as evidence for a lower verdict. Alignment and
+// authenticity are different questions. The upload pipeline does NOT detect
+// provenance: if a Project Engineer photographs a printed photo with the
+// mobile app, the burn-in banner still records where the phone was and when
+// the shutter fired — the banner is silent on whether the subject was real
+// work. Provenance detection remains genuinely undetected upstream; we
+// exclude it from the verdict because it is a separate concern from
+// alignment, not because something else already catches it.
+//
+// v3.4 verification-criteria disregard: the "Verification criteria are not
+// deliverables" paragraph immediately after the `partially_aligned` bullet
+// tells the model to disregard sentences prescribing how work should be
+// documented (e.g. "photographic verification of depth and width at 100 m
+// intervals"). Mobile-generated milestone descriptions mix physical
+// deliverables with acceptance criteria on the documentation itself; without
+// this paragraph the model treats the criterion as a third deliverable it
+// must evidence, and downgrades when a single photo cannot satisfy a
+// distance-sampled verification protocol. Same discipline as the
+// staged-materials guard: this paragraph exists because live data showed the
+// exact gap; do not remove it in a future edit.
 
 const VERIFICATION_SYSTEM_PROMPT = `You are a visual verification assistant for the Cebu City Department of Engineering and Public Works (DEPW), Construction Services Division. Your task is to assess whether photographs uploaded by a Project Engineer for a specific construction milestone visually depict the activity or deliverable described in that milestone.
 
@@ -2530,13 +2556,15 @@ The user message begins with structured project and milestone context (project t
 
 ## Scope of Assessment
 
-Your assessment concerns ONLY whether the visible construction activity in the photo depicts the milestone described. Two categories of check are handled by separate mechanisms and are NOT part of your assessment:
+Your assessment concerns ONLY whether the visible construction activity in the photo depicts the milestone described. Three categories of check are handled by separate mechanisms and are NOT part of your assessment:
 
 - Location correctness. Whether the photo was taken at the project's barangay, whether its GPS coordinates match the milestone site, and whether the burn-in banner's place name matches the project's location, are all verified separately by the geotagged upload pipeline. They must not influence your verdict.
 
 - Date correctness. Whether the capture time falls inside the project's contract window, and whether the timestamp on the burn-in banner is consistent with the project schedule, are verified separately. They must not influence your verdict.
 
-If a photo clearly depicts the milestone activity but appears to be at a different site, or was captured outside the project window, that is still \`aligned\`. Do not downgrade a verdict for either signal. Cite only visible construction elements when awarding \`aligned\` — never cite a location match, a date match, a location mismatch, or a date mismatch as reasoning for any verdict.
+- Image provenance. Whether the photograph is a first-generation field capture, a re-photograph of a print or a screen, a screen capture, a stock or reference image, or carries a watermark, is a separate concern from alignment and is NOT part of your assessment. Alignment asks whether the depicted work matches the milestone description; authenticity asks whether the pixels are original. Treat every image supplied to you as if it were a genuine field photograph and assess the depicted work on what it shows. Do not cite artifacts such as moiré, scan lines, screen glare, visible bezels or screen borders, cursor arrows, pixel-grid patterns, watermarks, "secondary image", "stock or instructional image", "reference image", "reproduction", "photograph of a screen", "photo of a screen", "screen capture", "CCTV or monitor feed", or any equivalent phrasing as evidence for or against any verdict. If the depicted work is clearly a milestone deliverable, choose \`aligned\` even if the pixels are second-generation; if the depicted work is unrelated or wrong-phase, choose \`not_aligned\` on that basis alone.
+
+If a photo clearly depicts the milestone activity but appears to be at a different site, or was captured outside the project window, or looks like a re-photograph, screen capture, or stock image, that is still \`aligned\`. Do not downgrade a verdict for any of these three signals. Cite only visible construction elements when awarding \`aligned\` — never cite a location match, a date match, a provenance judgment, or any of their mismatches as reasoning for any verdict.
 
 This exclusion covers metadata about the photo: the burn-in banner, the GPS coordinates in the photo label, and the capture timestamp. It does not cover signage, billboards, or other location or date information visible as part of the photographed scene itself — a project billboard naming a different project, or painted wall signage identifying a different barangay, is content in the frame and IS assessable as visible evidence for \`not_aligned\`. The distinction is metadata about the photo versus content in the photo. Content within the frame is always assessable.
 
@@ -2550,9 +2578,11 @@ Return one verdict per photo and one overall verdict for the batch. All four ver
 
 - "partially_aligned" — construction activity consistent with the project is visible, but no deliverable from the milestone description is clearly evidenced by two or more specific visible elements, OR only ancillary elements are visible (materials staged, equipment on site, workers present, site prepared) without any deliverable in progress or completed. Do not use this as a default for uncertainty; use it when the visible evidence is genuinely partial. If at least one deliverable is clearly evidenced, choose \`aligned\` — do not downgrade to \`partially_aligned\` on the grounds that other deliverables in the same milestone description are absent from the photo.
 
+**Verification criteria are not deliverables.** A milestone description may contain sentences that specify how the work should be documented or verified — for example, "photographic verification of X at N-meter intervals," "as-built documentation of Y," "measured survey of Z." These describe requirements on the documentation process, not construction deliverables. Assess the photo against the physical work described in the milestone (excavation, placement, compaction, installation, and similar) and disregard sentences that specify documentation, measurement, or verification requirements. A photo cannot fail alignment because it does not itself satisfy a photographic-verification protocol; alignment is about whether the depicted physical activity matches the described work.
+
 - "not_aligned" — the photo depicts a different activity, a different phase of the same project, or non-construction content. When choosing this verdict, state what you see instead in \`reasoning\`.
 
-- "insufficient_evidence" — the image quality prevents assessment: blur, darkness, obscuring angle, framing that hides the subject, or a shot too close or too far to identify the activity. This verdict is about image quality only. Do not choose it because you feel uncertain — if the image is clear and you can see the site, choose one of the other three verdicts based on what is visible.
+- "insufficient_evidence" — the capture quality prevents seeing the activity: blur, darkness, obscuring angle, framing that hides the subject, or a shot too close or too far to identify the activity. This verdict is about capture quality only, not about image provenance — a re-photograph, screen capture, or stock image that is nonetheless legible enough to show what work is depicted is assessed on what it shows (per the Image Provenance exclusion in Scope of Assessment above), not routed here. Do not choose this verdict because you feel uncertain, and do not choose it because you suspect the photograph is second-generation — if the image is clear enough to see the site or the activity, choose one of the other three verdicts based on what is visible.
 
 After per-photo verdicts, provide an overall verdict for the milestone using the same scale, weighted by your per-photo judgments.
 
@@ -2894,7 +2924,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v3.3-2026-08",
+      promptVersion: "v3.4-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2946,7 +2976,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v3.3-2026-08",
+        promptVersion: "v3.4-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -2993,7 +3023,7 @@ Assess each photo against the milestone description, then provide an overall ver
       // do not trust them for per-photo joins without a
       // promptVersion === "v2-2026-08" check.
       proofKeys: sentProofKeys,
-      // v3.3-2026-08 restricts the verdict to visual alignment; location and
+      // v3.3-2026-08 restricted the verdict to visual alignment; location and
       // date correctness are declared out of scope by the system prompt.
       // v3.1 closed the burn-in-banner loophole where the model was re-admitting
       // banner text under the "content within the frame" carve-out; v3.1 named
@@ -3008,17 +3038,31 @@ Assess each photo against the milestone description, then provide an overall ver
       // bar with an explicit staged-materials carve-out (stockpiled gravel is
       // not evidence of "gravel fill compacted"; see the source-level guard
       // note above VERIFICATION_SYSTEM_PROMPT).
-      // v3.3 fixes the photo_index convention mismatch, not the assessment
+      // v3.3 fixed the photo_index convention mismatch, not the assessment
       // criteria. The tool schema is now per-request via buildVerificationTool
       // so photo_index.maximum bounds to photoCount - 1 (was static maximum: 4),
       // and both the schema description and the system prompt now state
       // explicitly that photo_index is zero-based ("Photo 1 of M" → index 0).
       // Anthropic default tool use is advisory (no server-side rejection); the
-      // out-of-range guard downstream remains the enforcement layer. Phase 4
-      // should expect NO verdict-distribution change from v3.2, only correct
-      // per-photo bindings — the render-layer symptoms ("Photo 2 of 1", missing
-      // thumbnail, "Not yet assessed" badge on assessed photos) should clear.
-      promptVersion: "v3.3-2026-08",
+      // out-of-range guard downstream remains the enforcement layer.
+      // v3.4-2026-08 excludes image provenance from the verdict and instructs
+      // the model to disregard sentences in milestone descriptions that
+      // prescribe how work should be documented or verified. Live v3.3 audit
+      // showed 41.7% of runs downgrading alignment because the model treated
+      // authenticity signals (Adobe Stock watermarks, moiré, screen glare,
+      // "photo of a screen", "stock or reference image") as evidence for a
+      // lower verdict; alignment and authenticity are different questions and
+      // the upload pipeline does NOT detect provenance (a phone photographing
+      // a printed photo still produces a valid banner — the banner records
+      // where the phone was, not whether the subject was real work). v3.4
+      // also blocks the model from treating "photographic verification of X at
+      // N-meter intervals" as a deliverable it must satisfy, per the same
+      // source-level guard-note discipline as the v3.2 staged-materials
+      // carve-out. Phase 4 should expect a distribution shift on
+      // provenance-flagged runs (many should re-classify from
+      // partially_aligned / not_aligned to aligned) and on descriptions
+      // carrying verification-criterion phrasing.
+      promptVersion: "v3.4-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
