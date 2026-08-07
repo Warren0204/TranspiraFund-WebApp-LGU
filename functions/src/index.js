@@ -2556,7 +2556,7 @@ The user message begins with structured project and milestone context (project t
 
 ## Scope of Assessment
 
-Your assessment concerns ONLY whether the visible construction activity in the photo depicts the milestone described. Three categories of check are handled by separate mechanisms and are NOT part of your assessment:
+Your assessment concerns ONLY whether the visible construction activity in the photo depicts the milestone described. Four categories of check are handled by separate mechanisms and are NOT part of your assessment:
 
 - Location correctness. Whether the photo was taken at the project's barangay, whether its GPS coordinates match the milestone site, and whether the burn-in banner's place name matches the project's location, are all verified separately by the geotagged upload pipeline. They must not influence your verdict.
 
@@ -2564,9 +2564,11 @@ Your assessment concerns ONLY whether the visible construction activity in the p
 
 - Image provenance. Whether the photograph is a first-generation field capture, a re-photograph of a print or a screen, a screen capture, a stock or reference image, or carries a watermark, is a separate concern from alignment and is NOT part of your assessment. Alignment asks whether the depicted work matches the milestone description; authenticity asks whether the pixels are original. Treat every image supplied to you as if it were a genuine field photograph and assess the depicted work on what it shows. Do not cite artifacts such as moiré, scan lines, screen glare, visible bezels or screen borders, cursor arrows, pixel-grid patterns, watermarks, "secondary image", "stock or instructional image", "reference image", "reproduction", "photograph of a screen", "photo of a screen", "screen capture", "CCTV or monitor feed", or any equivalent phrasing as evidence for or against any verdict. If the depicted work is clearly a milestone deliverable, choose \`aligned\` even if the pixels are second-generation; if the depicted work is unrelated or wrong-phase, choose \`not_aligned\` on that basis alone.
 
-If a photo clearly depicts the milestone activity but appears to be at a different site, or was captured outside the project window, or looks like a re-photograph, screen capture, or stock image, that is still \`aligned\`. Do not downgrade a verdict for any of these three signals. Cite only visible construction elements when awarding \`aligned\` — never cite a location match, a date match, a provenance judgment, or any of their mismatches as reasoning for any verdict.
+- Project identity. Whether the photo depicts the specific project being documented — its project name, project ID, contract cost or amount, contractor, implementing office, jurisdiction, or project period — is a data-integrity concern verified separately and is NOT part of your assessment. This exclusion applies regardless of where the identity information appears: the burn-in banner, a project billboard physically on site, a tarpaulin, painted wall signage, a posted notice, or any other channel. Alignment asks whether the depicted work matches the milestone description; identity asks whether the depicted project is the correct one. Treat every image supplied to you as if it were captured at the correct project's site and assess the depicted work on what it shows. Do not cite a project name, project ID, contract amount or cost, contractor name, implementing office, jurisdiction, or project period — whether printed on in-scene signage, painted on a wall, printed on a tarpaulin, shown on the burn-in banner, or displayed by any other means — as evidence for or against any verdict.
 
-This exclusion covers metadata about the photo: the burn-in banner, the GPS coordinates in the photo label, and the capture timestamp. It does not cover signage, billboards, or other location or date information visible as part of the photographed scene itself — a project billboard naming a different project, or painted wall signage identifying a different barangay, is content in the frame and IS assessable as visible evidence for \`not_aligned\`. The distinction is metadata about the photo versus content in the photo. Content within the frame is always assessable.
+If a photo clearly depicts the milestone activity but appears to be at a different site, or was captured outside the project window, or looks like a re-photograph, screen capture, or stock image, or depicts a project billboard, tarpaulin, or other signage that names a different project, that is still \`aligned\`. Do not downgrade a verdict for any of these four signals. Cite only visible construction elements when awarding \`aligned\` — never cite a location match, a date match, a provenance judgment, a project-identity match or mismatch, or any of their signals as reasoning for any verdict.
+
+The exclusions above cover metadata about the photo (the burn-in banner, the GPS coordinates in the photo label, the capture timestamp) AND all project-identity information no matter where it appears, including on physical signage in the scene. In-scene signage — a project billboard, safety board, painted wall marking, or posted notice — remains assessable evidence for the ACTIVITY it indicates: a billboard mounted on a post is evidence that billboard installation has occurred, a posted safety board is evidence that safety signage was mounted, a warning sign is evidence that a particular work type is underway. It is NOT assessable evidence for the IDENTITY of the project depicted — the project name, project ID, contract cost or amount, contractor name, implementing office, jurisdiction, or project period printed on such signage must be ignored, even when it clearly names a different project. The distinction is signage as physical evidence of installation-or-work versus signage as an identity claim; the latter is out of scope.
 
 **The burn-in banner is not part of the photographed scene.** The banner is metadata applied by the upload pipeline after capture — it appears in the pixels of the image but is not content the camera captured from the site. Recognize it by form: a uniform five-line overlay strip aligned to the bottom edge of the photograph, in flat rendered text (not photographed lettering), listing place name, GPS coordinates with accuracy, capture time, and the engineer's name and role. Signage physically present at the site — project billboards, safety boards, painted wall markings — appears within the scene itself, subject to perspective, lighting, shadow, and camera angle, and is assessable per the paragraph above. Never cite the burn-in banner — its place name, its coordinates, or its capture timestamp — as evidence for or against any verdict, regardless of whether you describe it as "in-frame," "in the frame," "visible," "content within the photograph," or any equivalent phrasing.
 
@@ -2924,7 +2926,7 @@ Assess each photo against the milestone description, then provide an overall ver
       projectId,
       milestoneId,
       milestoneTitle: after.title ?? null,
-      promptVersion: "v3.4-2026-08",
+      promptVersion: "v3.5-2026-08",
       imageBlockCount: imageBlocks.length,
       contextComplete,
       systemPromptChars: VERIFICATION_SYSTEM_PROMPT.length,
@@ -2976,7 +2978,7 @@ Assess each photo against the milestone description, then provide an overall ver
       logger.error("[onProofUploaded] Response truncated at max_tokens; writing partial verificationHistory with truncated=true and skipping notification fan-out", {
         projectId,
         milestoneId,
-        promptVersion: "v3.4-2026-08",
+        promptVersion: "v3.5-2026-08",
         outputTokens: response.usage?.output_tokens,
         maxTokens: 2048,
         sentPhotoCount: sentProofs.length,
@@ -3062,7 +3064,20 @@ Assess each photo against the milestone description, then provide an overall ver
       // provenance-flagged runs (many should re-classify from
       // partially_aligned / not_aligned to aligned) and on descriptions
       // carrying verification-criterion phrasing.
-      promptVersion: "v3.4-2026-08",
+      // v3.5-2026-08 adds Project Identity as a fourth out-of-scope category
+      // and narrows the in-scene signage carve-out so that project name, ID,
+      // contract cost, contractor, implementing office, jurisdiction, and
+      // project period printed on a physical billboard or tarpaulin can no
+      // longer be cited as evidence for `not_aligned`. Live v3.4 was returning
+      // not_aligned 95% on a billboard-installation milestone because the
+      // model read the tarpaulin at the site and matched it against the
+      // project record — a project-identity check, not a milestone-alignment
+      // check. In-scene signage remains assessable for the ACTIVITY it
+      // indicates (billboard mounted = billboard installation happened). The
+      // accepted cost: a photo genuinely from a different project's site now
+      // returns aligned if the depicted activity matches; project identity
+      // joins location and provenance on the separate data-integrity track.
+      promptVersion: "v3.5-2026-08",
       contextComplete,
       temperature: 0,
       // Only stamped when the vision response was cut off at max_tokens.
