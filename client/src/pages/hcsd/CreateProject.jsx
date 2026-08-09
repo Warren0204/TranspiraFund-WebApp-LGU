@@ -341,6 +341,14 @@ const useCreateProject = () => {
                 classificationConfidence: typeof classifierResult?.confidence === 'number'
                     ? classifierResult.confidence
                     : undefined,
+                // Forward every field decideClassification returns. Omitting
+                // `admitted` (and the other v1-contract fields below) causes the
+                // server's stampedClassification builder at functions/src/index.js
+                // to fall through `typeof clientClassification.admitted === "boolean"`
+                // and re-derive admission from the legacy 0.8 confidence floor via
+                // classificationGatePasses — inverting the v1 contract that made
+                // confidence a recognition-only signal. See
+                // functions/__tests__/validateProjectClassification.test.js:642-660.
                 classification: classifierResult ? {
                     projectType: classifierResult.projectType,
                     confidence: classifierResult.confidence,
@@ -348,8 +356,14 @@ const useCreateProject = () => {
                     typicalDurationDays: classifierResult.typicalDurationDays,
                     reason: classifierResult.reason,
                     classifierVersion: classifierResult.classifierVersion,
+                    classifierPromptVersion: classifierResult.classifierPromptVersion,
                     classifiedAtISO: classifierResult.classifiedAtISO,
                     verdict: classifierResult.verdict,
+                    admitted: classifierResult.admitted,
+                    isComposite: classifierResult.isComposite,
+                    components: classifierResult.components,
+                    componentsSynthesized: classifierResult.componentsSynthesized,
+                    contractVersion: classifierResult.contractVersion,
                 } : undefined,
             });
 
@@ -1177,10 +1191,17 @@ const CreateProject = () => {
                             <h2 className="text-xl font-extrabold text-slate-900">Review before submitting</h2>
                         </div>
                         <div className="p-6 space-y-4 text-sm">
-                            {/* Novel-project paragraph (state b): admitted with confidence below 0.8. */}
+                            {/* Novel-project paragraph (state b): admitted with confidence below 0.8.
+                                Copy does NOT mention corpus / reference-set membership. Nothing at
+                                project creation reads the corpus — retrieval scoring happens at
+                                milestone generation and lives in the mobile repo (see
+                                functions/__tests__/validateProjectClassification.test.js:645
+                                "the mobile side derives retrieval quality from its own corpus
+                                scoring"). The pre-2026-08-09 copy asserted a corpus check that
+                                never occurred at this step. */}
                             {typeof classification.confidence === 'number' && classification.confidence < 0.8 && (
                                 <p className="text-slate-700 font-semibold leading-relaxed">
-                                    This project doesn't closely match any project in the validated 20-project reference set the milestone generator draws from. The generator will still produce a milestone plan, and the assigned Project Engineer will still review it before starting fieldwork. Treat the generated plan as a working draft that warrants closer engineering review than usual before it's confirmed.
+                                    The classifier could not assign a project type with high confidence — often because the name is general (missing scope details like length, the specific facility, or which structure is enclosed). The milestone plan will still be generated, and the assigned Project Engineer will review it before fieldwork begins. Treat the plan as a working draft that warrants closer engineering review than usual.
                                 </p>
                             )}
                             {/* Duration paragraph (state c): out-of-band duration.
