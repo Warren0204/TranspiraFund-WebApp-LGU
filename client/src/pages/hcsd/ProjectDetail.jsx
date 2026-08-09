@@ -44,6 +44,22 @@ const formatPHT = (raw) => {
     return `${PHT_FORMATTER.format(d)} (PHT)`;
 };
 
+// Strip a leading "Photo N of M" (case-insensitive on "photo", optional trailing
+// comma) from a per-photo reasoning string. The model authors this label per-
+// batch, so the number always references the SCAN's position (see
+// functions/src/index.js:2555) and misleads readers who see the row's milestone-
+// scoped header ("Photo 3 of 5") directly above. Display-only; pa.reasoning
+// stays untouched in Firestore. Returns the original text on non-matches, on
+// non-string input, or when the strip would leave an empty or whitespace-only
+// remainder.
+const stripLeadingPhotoLabel = (text) => {
+    if (typeof text !== 'string') return text;
+    const stripped = text.replace(/^\s*photo\s+\d+\s+of\s+\d+\s*,?\s+/i, '');
+    if (!stripped.trim()) return text;
+    if (stripped === text) return text;
+    return stripped[0].toUpperCase() + stripped.slice(1);
+};
+
 // Reasoning text for a per-photo assessment is 1-2 sentences per the tool
 // schema, but 4 photos means 4 paragraphs in the row block. Truncate to the
 // first sentence boundary, or 160 chars, whichever comes first. Callers pair
@@ -984,12 +1000,7 @@ const ProjectDetail = () => {
                                             className={`flex items-start gap-4 p-4 rounded-2xl border transition-all scroll-mt-24 ${isComplete ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-500/30' : isLate ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-500/30' : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/50'}`}
                                             style={{ animation: `slideUp 0.35s ease-out ${i * 0.05}s both` }}>
                                             <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${isComplete ? 'bg-emerald-500' : isLate ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600'}`}>
-                                                {isComplete
-                                                    ? <CheckCircle2 size={16} className="text-white" />
-                                                    : isLate
-                                                        ? <AlertTriangle size={14} className="text-white" />
-                                                        : <span className="text-[11px] font-black text-white">{m.sequence ?? i + 1}</span>
-                                                }
+                                                <span className="text-[11px] font-black text-white">{m.sequence ?? i + 1}</span>
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-start justify-between gap-2 mb-1">
@@ -1157,10 +1168,8 @@ const ProjectDetail = () => {
                                                                 const provenanceLine = provenanceBits.length > 0 ? provenanceBits.join(' · ') : null;
                                                                 // Multi-run: derive a milestone-wide count from perProofMap so
                                                                 // the summary reflects every proof's newest verdict across all
-                                                                // runs. The model's own overallReasoning is batch-scoped (may
-                                                                // say "Photo 1 of 1" while four photos are listed below), so
-                                                                // it moves behind a <details> disclosure. Single-run: batch
-                                                                // is the milestone, so overallReasoning stays inline as-is.
+                                                                // runs. Single-run: no count line is needed because the per-
+                                                                // photo strip below already itemizes the sole scan.
                                                                 let derivedCountSentence = null;
                                                                 if (hasMultipleRuns) {
                                                                     const counts = { aligned: 0, partially_aligned: 0, not_aligned: 0, insufficient_evidence: 0 };
@@ -1197,29 +1206,15 @@ const ProjectDetail = () => {
                                                                                 {provenanceLine && (
                                                                                     <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mb-1">{provenanceLine}</p>
                                                                                 )}
-                                                                                {hasMultipleRuns ? (
+                                                                                {hasMultipleRuns && derivedCountSentence && (
                                                                                     <>
-                                                                                        {derivedCountSentence && (
-                                                                                            <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
-                                                                                                {derivedCountSentence}
-                                                                                            </p>
-                                                                                        )}
-                                                                                        {result.overallReasoning && (
-                                                                                            <details className="mt-1 group">
-                                                                                                <summary className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 cursor-pointer hover:opacity-80 select-none list-none inline-flex items-center gap-1">
-                                                                                                    <ChevronDown size={10} className="transition-transform group-open:rotate-180" />
-                                                                                                    Latest scan detail
-                                                                                                </summary>
-                                                                                                <p className={`text-xs font-medium leading-relaxed mt-1 ${style.text}`}>
-                                                                                                    {result.overallReasoning}
-                                                                                                </p>
-                                                                                            </details>
-                                                                                        )}
+                                                                                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                                                                            Across all scans · newest verdict per photo
+                                                                                        </p>
+                                                                                        <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
+                                                                                            {derivedCountSentence}
+                                                                                        </p>
                                                                                     </>
-                                                                                ) : (
-                                                                                    <p className={`text-xs font-medium leading-relaxed ${style.text}`}>
-                                                                                        {result.overallReasoning}
-                                                                                    </p>
                                                                                 )}
                                                                             </div>
                                                                         </div>
@@ -1306,10 +1301,11 @@ const ProjectDetail = () => {
                                                                                                 </div>
                                                                                                 {(() => {
                                                                                                     const isExpanded = expandedReasoning.has(rowKey);
-                                                                                                    const { display, needsExpand } = truncateReasoning(pa.reasoning);
+                                                                                                    const displayReasoning = stripLeadingPhotoLabel(pa.reasoning);
+                                                                                                    const { display, needsExpand } = truncateReasoning(displayReasoning);
                                                                                                     return (
                                                                                                         <p className={`text-[11px] font-medium leading-snug mt-0.5 ${ps.text}`}>
-                                                                                                            {isExpanded ? pa.reasoning : display}
+                                                                                                            {isExpanded ? displayReasoning : display}
                                                                                                             {needsExpand && (
                                                                                                                 <button
                                                                                                                     type="button"
@@ -1673,7 +1669,7 @@ const ProjectDetail = () => {
                                                 )}
                                             </div>
                                             {currentPa.reasoning && (
-                                                <p className="text-[11px] leading-snug text-white/85">{currentPa.reasoning}</p>
+                                                <p className="text-[11px] leading-snug text-white/85">{stripLeadingPhotoLabel(currentPa.reasoning)}</p>
                                             )}
                                             {Array.isArray(currentPa.visible_elements) && currentPa.visible_elements.length > 0 && (
                                                 <div className="mt-1 flex flex-wrap gap-1">
