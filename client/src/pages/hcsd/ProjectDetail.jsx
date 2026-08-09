@@ -164,6 +164,18 @@ const fmtCurrency = (amt) => {
     return `₱${Number(amt).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 };
 
+// Definition-list row for the lightbox metadata block. Renders "—" when the
+// value is null/undefined/empty so every row always occupies its slot; a
+// missing field is visible-by-absence, not layout-shifting.
+const MetaRow = ({ label, value, mono = false }) => (
+    <div className="flex items-baseline gap-2 min-w-0">
+        <dt className="text-[10px] font-bold uppercase tracking-wider text-white/50 shrink-0 w-20">{label}</dt>
+        <dd className={`text-[11px] text-white/90 font-medium truncate min-w-0 ${mono ? 'font-mono' : ''}`} title={value ?? ''}>
+            {value == null || value === '' ? '—' : value}
+        </dd>
+    </div>
+);
+
 const statusMeta = (s) => {
     switch ((s || '').toLowerCase()) {
         case 'completed': return { pill: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/30', bar: 'from-emerald-500 to-green-400', dot: 'bg-emerald-500' };
@@ -276,7 +288,7 @@ const ProjectDetail = () => {
     const [ntpViewerOpen, setNtpViewerOpen] = useState(false);
 
     const { tenantId } = useAuth();
-    const { users, usersMap, loading: usersLoading } = useUsers();
+    const { users, usersMap, loading: usersLoading, displayName: resolveDisplayName } = useUsers();
 
     const [reassignTargetUid, setReassignTargetUid] = useState('');
     const [isReassigning, setIsReassigning] = useState(false);
@@ -1392,6 +1404,21 @@ const ProjectDetail = () => {
                                                                                     // and the verifier's photo_index. Display order and
                                                                                     // numbering are intentionally decoupled.
                                                                                     const thumbAppendNumber = appendNumberFor(p);
+                                                                                    // Verdict badge / "Not yet assessed" live in the caption row
+                                                                                    // BELOW the thumbnail, not as bottom-left overlays. The mobile
+                                                                                    // burn-in banner is a five-line strip aligned to the JPEG's
+                                                                                    // bottom edge (see functions/src/index.js:2573), so any bottom
+                                                                                    // corner overlays sat on top of it. Top corners are already
+                                                                                    // occupied by "N of M" and the GPS pin; a caption chip is the
+                                                                                    // only slot that never conflicts with the burnt banner.
+                                                                                    //
+                                                                                    // object-cover crops non-1:1 sources to fill the square tile.
+                                                                                    // Do not "fix" this to object-contain: at 2.17:1 (Casona
+                                                                                    // ultrawide) contain leaves large empty bands, and picker-grid
+                                                                                    // legibility loss is worse than the crop.
+                                                                                    const captionChip = isUnassessed
+                                                                                        ? { label: 'Not yet assessed', bg: 'bg-slate-500' }
+                                                                                        : (verdictBadgeLabel ? { label: verdictBadgeLabel, bg: verdictBadgeBg } : null);
                                                                                     return (
                                                                                         <div key={key} className="flex flex-col gap-1">
                                                                                             <button
@@ -1412,21 +1439,19 @@ const ProjectDetail = () => {
                                                                                                         <MapPin size={12} strokeWidth={2.5} />
                                                                                                     </span>
                                                                                                 )}
-                                                                                                {isUnassessed ? (
-                                                                                                    <span className="absolute bottom-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-900/70 text-white shadow-sm">
-                                                                                                        Not yet assessed
-                                                                                                    </span>
-                                                                                                ) : (verdictBadgeLabel && (
-                                                                                                    <span className={`absolute bottom-1.5 left-1.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded text-white shadow-sm ${verdictBadgeBg}`}>
-                                                                                                        {verdictBadgeLabel}
-                                                                                                    </span>
-                                                                                                ))}
                                                                                             </button>
-                                                                                            {primaryValue && (
-                                                                                                <div className="text-[10px] leading-tight px-0.5">
-                                                                                                    <p className="text-slate-600 dark:text-slate-300 font-semibold truncate" title={primaryValue}>
-                                                                                                        <span className="text-slate-400 dark:text-slate-500 font-medium">{primaryLabel}:</span> {primaryValue}
-                                                                                                    </p>
+                                                                                            {(primaryValue || captionChip) && (
+                                                                                                <div className="text-[10px] leading-tight px-0.5 flex items-center justify-between gap-1">
+                                                                                                    {primaryValue ? (
+                                                                                                        <p className="text-slate-600 dark:text-slate-300 font-semibold truncate min-w-0" title={primaryValue}>
+                                                                                                            <span className="text-slate-400 dark:text-slate-500 font-medium">{primaryLabel}:</span> {primaryValue}
+                                                                                                        </p>
+                                                                                                    ) : <span className="min-w-0" />}
+                                                                                                    {captionChip && (
+                                                                                                        <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded text-white shadow-sm ${captionChip.bg}`}>
+                                                                                                            {captionChip.label}
+                                                                                                        </span>
+                                                                                                    )}
                                                                                                 </div>
                                                                                             )}
                                                                                         </div>
@@ -1505,135 +1530,201 @@ const ProjectDetail = () => {
                 const nextIdxLB = (idx + 1) % total;
                 const prevAppendNum = lookupAppend(proofs[prevIdxLB]);
                 const nextAppendNum = lookupAppend(proofs[nextIdxLB]);
+                // Metadata rows are computed once per render for the right pane.
+                // Every field is sourced from normalizeProof (see lines 66-88),
+                // NOT from the burned pixel banner. Legacy shape tolerance in
+                // normalizeProof (flat latitude/longitude, ms-epoch `timestamp`)
+                // is preserved unchanged; capturedAt / uploadedAt / gps below are
+                // whatever normalizeProof produced.
+                const capturedStr = formatPHT(currentProof.capturedAt);
+                const uploadedStr = formatPHT(currentProof.uploadedAt);
+                const coordStr = currentProof.gps
+                    ? `${currentProof.gps.lat.toFixed(6)}, ${currentProof.gps.lng.toFixed(6)}`
+                    : null;
+                const accuracyStr = (typeof currentProof.accuracy === 'number' && isFinite(currentProof.accuracy))
+                    ? `${Math.round(currentProof.accuracy)} m`
+                    : null;
+                // uploadedBy on the proof is a UID (per canonical mobile shape
+                // in CLAUDE.md). Resolve to a display name via the tenant-scoped
+                // useUsers snapshot listener already running on this page
+                // (see line 279). The listener's query constrains by tenantId,
+                // which satisfies firestore.rules users/{uid} read for HCSD
+                // callers; a where(documentId(), 'in', uids) list query would
+                // NOT — it does not constrain by tenantId statically. Fall back
+                // to the UID string if the user doc is not (yet) in the map
+                // (unresolved, deleted user, or listener still loading).
+                const uploaderName = currentProof.uploadedBy
+                    ? (resolveDisplayName(currentProof.uploadedBy) ?? currentProof.uploadedBy)
+                    : null;
+                // Label rule preserved from the old vertical stack: Captured +
+                // Uploaded when both, "Recorded" when only capturedAt/legacy
+                // `timestamp` is present (pre-convergence mobile wrote the
+                // legacy field at upload time; do not relabel it to Captured
+                // without confirming what the field actually means).
+                const timeRows = [];
+                if (capturedStr && uploadedStr) {
+                    timeRows.push({ label: 'Captured', value: capturedStr });
+                    timeRows.push({ label: 'Uploaded', value: uploadedStr });
+                } else if (capturedStr) {
+                    timeRows.push({ label: 'Recorded', value: capturedStr });
+                } else if (uploadedStr) {
+                    timeRows.push({ label: 'Uploaded', value: uploadedStr });
+                }
+
                 return (
                     <div
-                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm overflow-y-auto"
                         onClick={() => setLightbox(null)}
                         role="dialog"
                         aria-modal="true"
                     >
-                        <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); setLightbox(null); }}
-                            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                            aria-label="Close"
-                        >
-                            <XIcon size={22} />
-                        </button>
-                        {canNav && (
-                            <>
+                        {/* Inner wrapper enables backdrop scroll (overflow-y-auto
+                            on the outer fixed element) while keeping vertical
+                            centering when the dialog fits. Standard modal
+                            pattern; directly addresses the pre-redesign
+                            unscrollable-overflow blocker. */}
+                        <div className="min-h-full flex items-center justify-center p-4">
+                            <div
+                                className="relative w-full max-w-[95vw] my-auto flex flex-col md:flex-row md:h-[90vh] md:max-h-[90vh] bg-slate-900/95 rounded-lg overflow-hidden shadow-2xl"
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <button
                                     type="button"
-                                    onClick={goPrev}
-                                    className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                                    aria-label={`Previous photo (${prevAppendNum ?? '?'} of ${appendTotalLB})`}
+                                    onClick={() => setLightbox(null)}
+                                    className="absolute top-3 right-3 z-20 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                                    aria-label="Close"
                                 >
-                                    <ChevronLeft size={22} />
+                                    <XIcon size={22} />
                                 </button>
-                                <button
-                                    type="button"
-                                    onClick={goNext}
-                                    className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
-                                    aria-label={`Next photo (${nextAppendNum ?? '?'} of ${appendTotalLB})`}
-                                >
-                                    <ChevronRight size={22} />
-                                </button>
-                            </>
-                        )}
-                        <div className="max-w-[95vw] max-h-[95vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-                            {canNav && (
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-white/70 tabular-nums">
-                                    Photo {currentAppendNum ?? '?'} of {appendTotalLB}
-                                </p>
-                            )}
-                            <img src={currentProof.url} alt={currentProof.name ?? ''} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl" />
-                            {currentProof.gps && (
-                                <a
-                                    href={`https://www.google.com/maps?q=${currentProof.gps.lat},${currentProof.gps.lng}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    title={`${currentProof.gps.lat.toFixed(6)}, ${currentProof.gps.lng.toFixed(6)}`}
-                                    className={`text-xs font-semibold text-white bg-teal-600/90 hover:bg-teal-500 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition-colors max-w-[80vw] ${currentProof.location ? '' : 'font-mono'}`}
-                                >
-                                    <MapPin size={12} strokeWidth={2.5} />
-                                    <span className="truncate">
-                                        {currentProof.location ?? `${currentProof.gps.lat.toFixed(6)}, ${currentProof.gps.lng.toFixed(6)}`}
-                                    </span>
-                                    <ExternalLink size={11} strokeWidth={2.5} />
-                                </a>
-                            )}
-                            {/* Per-photo verdict + reasoning are shown IN FULL inside
-                                the lightbox — the per-photo list above is a
-                                summary; the lightbox is the detail view, so no
-                                truncation here even though the row block truncates. */}
-                            {currentPa && currentVerdictStyle && (
-                                <div className="text-xs bg-black/50 rounded-lg px-3 py-2 max-w-[80vw] w-full flex flex-col gap-1 items-start border border-white/10">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        {CurrentVerdictIcon && <CurrentVerdictIcon size={14} className={currentVerdictStyle.iconColor} />}
-                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${currentVerdictStyle.pill}`}>
-                                            {currentVerdictStyle.label}
-                                        </span>
-                                        {currentConfidencePct != null && (
-                                            <span className="text-[10px] font-semibold text-white/70">
-                                                Confidence: {currentConfidencePct}%
-                                            </span>
-                                        )}
-                                    </div>
-                                    {currentPa.reasoning && (
-                                        <p className="text-[11px] leading-snug text-white/85">{currentPa.reasoning}</p>
-                                    )}
-                                    {Array.isArray(currentPa.visible_elements) && currentPa.visible_elements.length > 0 && (
-                                        <div className="mt-1 flex flex-wrap gap-1">
-                                            {currentPa.visible_elements.map((el, elIdx) => (
-                                                <span key={elIdx} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/10 text-white/80 border border-white/10">
-                                                    {el}
-                                                </span>
-                                            ))}
-                                        </div>
+                                {/* Image pane. min-h-0 min-w-0 lets object-contain
+                                    compute against the flex-allocated size instead
+                                    of the intrinsic image size — without them a
+                                    2.17:1 (Casona ultrawide) source can collapse
+                                    the pane in some browsers. Below md, the pane
+                                    has no explicit height, so it sizes to the
+                                    image's natural rendered height and leaves no
+                                    vertical band on ultrawide sources at phone
+                                    width (max-w-full caps by width first, height
+                                    follows). max-h-[60vh] below md protects
+                                    against very tall portrait sources on short
+                                    landscape phones. At md+, md:flex-1 makes the
+                                    pane fill the 90vh dialog; empty vertical
+                                    bands on ultrawide are expected there as the
+                                    accepted trade-off of object-contain in a
+                                    fixed pane. */}
+                                <div className="relative flex items-center justify-center bg-black/40 p-4 min-h-0 min-w-0 md:flex-1">
+                                    <img
+                                        src={currentProof.url}
+                                        alt={currentProof.name ?? ''}
+                                        className="max-w-full max-h-[60vh] md:max-h-full object-contain rounded shadow-lg"
+                                    />
+                                    {canNav && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={goPrev}
+                                                className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                                                aria-label={`Previous photo (${prevAppendNum ?? '?'} of ${appendTotalLB})`}
+                                            >
+                                                <ChevronLeft size={22} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={goNext}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                                                aria-label={`Next photo (${nextAppendNum ?? '?'} of ${appendTotalLB})`}
+                                            >
+                                                <ChevronRight size={22} />
+                                            </button>
+                                        </>
                                     )}
                                 </div>
-                            )}
-                            {!currentPa && (
-                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-900/70 text-white shadow-sm">
-                                    Not yet assessed
-                                </span>
-                            )}
-                            {(() => {
-                                const capturedStr = formatPHT(currentProof.capturedAt);
-                                const uploadedStr = formatPHT(currentProof.uploadedAt);
-                                // Same label rule as the thumbnail grid caption
-                                // (see comment there): Captured+Uploaded when both,
-                                // "Recorded" when only capturedAt/timestamp is
-                                // present (pre-convergence mobile wrote the legacy
-                                // `timestamp` at upload time — do not "fix" this
-                                // label to Captured without confirming). Both
-                                // Captured and Uploaded render here because the
-                                // lightbox is the detail view; the thumbnail card
-                                // shows only one to keep the grid readable.
-                                const lines = [];
-                                if (capturedStr && uploadedStr) {
-                                    lines.push({ label: 'Captured', value: capturedStr });
-                                    lines.push({ label: 'Uploaded', value: uploadedStr });
-                                } else if (capturedStr) {
-                                    lines.push({ label: 'Recorded', value: capturedStr });
-                                } else if (uploadedStr) {
-                                    lines.push({ label: 'Uploaded', value: uploadedStr });
-                                }
-                                if (currentProof.uploadedBy) {
-                                    lines.push({ label: 'Uploaded by', value: currentProof.uploadedBy });
-                                }
-                                if (lines.length === 0) return null;
-                                return (
-                                    <div className="text-xs text-white/85 bg-black/40 rounded-lg px-3 py-2 max-w-[80vw] flex flex-col gap-0.5 items-center">
-                                        {lines.map((l) => (
-                                            <p key={l.label} className="truncate max-w-full">
-                                                <span className="font-medium text-white/60">{l.label}:</span> <span className="font-semibold">{l.value}</span>
-                                            </p>
+                                {/* Detail pane. md:overflow-y-auto gives it its own
+                                    scroll container so long AI reasoning scrolls
+                                    inside the pane rather than pushing the dialog
+                                    past the viewport. Below md the pane grows
+                                    naturally and the whole dialog scrolls via
+                                    the backdrop wrapper. */}
+                                <aside className="w-full md:w-[360px] md:h-full flex flex-col md:overflow-y-auto p-4 gap-3 border-t md:border-t-0 md:border-l border-white/10 text-white">
+                                    {canNav && (
+                                        <p className="text-[11px] font-bold uppercase tracking-wider text-white/70 tabular-nums">
+                                            Photo {currentAppendNum ?? '?'} of {appendTotalLB}
+                                        </p>
+                                    )}
+                                    {/* Per-photo verdict + reasoning render IN FULL
+                                        here. The right pane is a dedicated scroll
+                                        container (md:overflow-y-auto), so length
+                                        no longer pushes the dialog past the
+                                        viewport as it did in the old vertical
+                                        stack. Below md, the whole dialog scrolls
+                                        via the backdrop wrapper. Do not
+                                        re-introduce truncation. */}
+                                    {currentPa && currentVerdictStyle && (
+                                        <div className="text-xs bg-black/40 rounded-lg px-3 py-2 flex flex-col gap-1 items-start border border-white/10">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                {CurrentVerdictIcon && <CurrentVerdictIcon size={14} className={currentVerdictStyle.iconColor} />}
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${currentVerdictStyle.pill}`}>
+                                                    {currentVerdictStyle.label}
+                                                </span>
+                                                {currentConfidencePct != null && (
+                                                    <span className="text-[10px] font-semibold text-white/70">
+                                                        Confidence: {currentConfidencePct}%
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {currentPa.reasoning && (
+                                                <p className="text-[11px] leading-snug text-white/85">{currentPa.reasoning}</p>
+                                            )}
+                                            {Array.isArray(currentPa.visible_elements) && currentPa.visible_elements.length > 0 && (
+                                                <div className="mt-1 flex flex-wrap gap-1">
+                                                    {currentPa.visible_elements.map((el, elIdx) => (
+                                                        <span key={elIdx} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/10 text-white/80 border border-white/10">
+                                                            {el}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    {!currentPa && (
+                                        <span className="self-start text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-slate-800/80 text-white shadow-sm">
+                                            Not yet assessed
+                                        </span>
+                                    )}
+                                    {currentProof.gps && (
+                                        <a
+                                            href={`https://www.google.com/maps?q=${currentProof.gps.lat},${currentProof.gps.lng}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            title={coordStr}
+                                            className={`self-start text-xs font-semibold text-white bg-teal-600/90 hover:bg-teal-500 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition-colors max-w-full ${currentProof.location ? '' : 'font-mono'}`}
+                                        >
+                                            <MapPin size={12} strokeWidth={2.5} />
+                                            <span className="truncate">
+                                                {currentProof.location ?? coordStr}
+                                            </span>
+                                            <ExternalLink size={11} strokeWidth={2.5} />
+                                        </a>
+                                    )}
+                                    {/* Metadata block. Every burnt-banner field is
+                                        surfaced here as HTML, sourced from
+                                        normalizeProof — a redesign of the mobile
+                                        banner (parked work, see MEMORY.md) can
+                                        drop reader-only fields from the pixels
+                                        without losing readability on the web,
+                                        because the web already renders every
+                                        field structurally. */}
+                                    <dl className="text-xs bg-black/40 rounded-lg px-3 py-2 border border-white/10 flex flex-col gap-1">
+                                        <MetaRow label="Location" value={currentProof.location} />
+                                        <MetaRow label="Coordinates" value={coordStr} mono />
+                                        <MetaRow label="Accuracy" value={accuracyStr} />
+                                        {timeRows.map((r) => (
+                                            <MetaRow key={r.label} label={r.label} value={r.value} />
                                         ))}
-                                    </div>
-                                );
-                            })()}
+                                        <MetaRow label="Uploaded by" value={uploaderName} />
+                                    </dl>
+                                </aside>
+                            </div>
                         </div>
                     </div>
                 );
