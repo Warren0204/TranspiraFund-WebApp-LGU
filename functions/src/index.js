@@ -1105,6 +1105,7 @@ exports.createProject = onCall(async (request) => {
     try {
         const projectRef = await admin.firestore().collection("projects").add({
             ...projectFieldsClean,
+            actualPercent: 0,
             status: projectFieldsClean.projectEngineer ? "Ongoing" : "Delayed",
             progress: 0,
             createdBy: auth.uid,
