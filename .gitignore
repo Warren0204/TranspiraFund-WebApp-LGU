@@ -88,3 +88,8 @@ client/dist/
 
 # Transient verification outputs (firebase functions:list, etc.)
 fnlist.json
+
+# Local cache directory used by scripts/verifier-diagnostic.js and related
+# Phase 4 tooling. Runner artifacts (per-run raw model responses, sha256
+# indexes) land here; docs/phase4/ is the committable output directory.
+scripts/.cache/
