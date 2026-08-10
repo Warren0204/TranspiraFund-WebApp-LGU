@@ -37,6 +37,12 @@ const {
     prescreenProjectDescription,
 } = require("./lib/classification");
 
+const {
+    CLEAR_DATE,
+    computeActualPercent,
+    decideStatusUpdate,
+} = require("./lib/milestone-rollup");
+
 // Short stable hash of the classifier system prompt — stamped on every
 // persisted classification so a future prompt rewrite can be detected when
 // reading historical project docs.
@@ -1989,51 +1995,60 @@ exports.recomputeProjectActualPercent = onDocumentWritten(
     async (event) => {
         const { projectId } = event.params;
         try {
-            const snap = await admin.firestore()
-                .collection("projects").doc(projectId)
-                .collection("milestones").get();
+            const projectRef = admin.firestore().collection("projects").doc(projectId);
+            const msSnap = await projectRef.collection("milestones").get();
+            const milestones = msSnap.docs.map((d) => d.data());
 
-            const confirmed = snap.docs
-                .map((d) => d.data())
-                .filter((m) => m.confirmed !== false);
+            const { actualPercent, method, skipped } = computeActualPercent(milestones);
 
-            if (confirmed.length === 0) {
-                await admin.firestore().collection("projects").doc(projectId)
-                    .update({ actualPercent: 0 });
-                return;
+            if (skipped > 0) {
+                logger.warn(`[recomputeProjectActualPercent] ${projectId}: skipped ${skipped} confirmed milestone(s) with no valid weightPercentage`);
+            }
+            if (method === "count-fallback") {
+                logger.info(`[recomputeProjectActualPercent] ${projectId}: count-fallback (no weighted milestones)`);
             }
 
-            const completed = confirmed.filter((m) => {
-                const statusLower = (m.status || "").toLowerCase();
-                return ["done", "complete", "completed"].includes(statusLower);
-            }).length;
+            const projectSnap = await projectRef.get();
+            const current = projectSnap.data() || {};
 
-            const actualPercent = Math.round((completed / confirmed.length) * 100);
+            // Bidirectional status rollup. When every eligible milestone (see the
+            // isEligible filter in lib/milestone-rollup.js) is done, persist
+            // status = "Completed" and stamp actualDateCompleted if missing. When
+            // actualPercent drops back below 100 on a Completed project, revert
+            // status to "Ongoing" and clear actualDateCompleted. On revert we
+            // defer to detectProjectSlippage (:2160) for the Ongoing-vs-Delayed
+            // decision rather than duplicating slippage math here;
+            // client/src/utils/slippage.js deriveStatus() also covers the display
+            // in the intervening window. A Delayed project below 100 is left
+            // alone; this trigger never drags Delayed to Ongoing. No client
+            // surface writes project.status directly today, so there is no human
+            // intent to preserve; if that ever changes, this rollup will need a
+            // guard. Auto-reverts are traced through Cloud Functions logs only
+            // (no HCSD audit entry per :210 whitelist, no notification write).
+            const statusDecision = decideStatusUpdate({
+                actualPercent,
+                currentStatus: current.status,
+                currentActualDateCompleted: current.actualDateCompleted,
+                today: new Date().toISOString().split("T")[0],
+            });
+
             const updates = { actualPercent };
-
-            // Forward-only status rollup: when all confirmed milestones are
-            // done, persist project.status = "Completed" so every consumer
-            // (HCSD filters, dashboards, deleteOfficialAccount's
-            // active-vs-completed filter) sees one source of truth. Mobile's
-            // client-side deriveStatus() already returns "Completed" in this
-            // state; this just makes the persisted field catch up. We don't
-            // auto-revert Completed → Ongoing if a milestone gets un-marked
-            // — that's rare and slightly destructive; HCSD can change it
-            // manually if needed.
-            if (actualPercent === 100) {
-                const projectSnap = await admin.firestore()
-                    .collection("projects").doc(projectId).get();
-                const current = projectSnap.data() || {};
-                if ((current.status || "").toLowerCase() !== "completed") {
-                    updates.status = "Completed";
-                    if (!current.actualDateCompleted) {
-                        updates.actualDateCompleted = new Date().toISOString().split("T")[0];
-                    }
+            if (statusDecision) {
+                for (const [key, value] of Object.entries(statusDecision)) {
+                    updates[key] = value === CLEAR_DATE
+                        ? admin.firestore.FieldValue.delete()
+                        : value;
+                }
+                if (statusDecision.status === "Ongoing") {
+                    logger.info(`[recomputeProjectActualPercent] ${projectId}: status reverted`, {
+                        previousStatus: current.status || null,
+                        previousActualDate: current.actualDateCompleted || null,
+                        newPercent: actualPercent,
+                    });
                 }
             }
 
-            await admin.firestore().collection("projects").doc(projectId)
-                .update(updates);
+            await projectRef.update(updates);
         } catch (err) {
             logger.error(`[recomputeProjectActualPercent] ${projectId}:`, err);
         }
