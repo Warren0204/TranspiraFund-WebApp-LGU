@@ -6,6 +6,7 @@ import {
     Hash, Banknote, Flag, ExternalLink, ChevronDown, ChevronUp,
     ChevronLeft, ChevronRight,
     ImageIcon, X as XIcon, XCircle, HelpCircle, Check,
+    CloudOff, RefreshCw,
 } from 'lucide-react';
 import HcsdSidebar from '../../components/layout/HcsdSidebar';
 import NtpViewerModal from '../../components/shared/NtpViewerModal';
@@ -301,6 +302,17 @@ const ProjectDetail = () => {
     const [draftCount, setDraftCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+    const [loadError, setLoadError] = useState(false);
+    const [retryTick, setRetryTick] = useState(0);
+    const [milestonesError, setMilestonesError] = useState(false);
+    const [milestonesRetryTick, setMilestonesRetryTick] = useState(0);
+    const [usingCache, setUsingCache] = useState(false);
+    // Latch that flips to true after the first server-sourced snapshot arrives.
+    // We suppress the "cached" badge until then so a healthy online load never
+    // flashes it during the normal cache-then-server initial-fire sequence.
+    // navigator.onLine is a fallback so a page loaded entirely offline (no
+    // server snapshot ever) still shows the badge.
+    const seenServerRef = useRef(false);
     const [ntpViewerOpen, setNtpViewerOpen] = useState(false);
 
     const { tenantId } = useAuth();
@@ -363,13 +375,28 @@ const ProjectDetail = () => {
             if (!snap.exists()) { setNotFound(true); setLoading(false); return; }
             setProject({ id: snap.id, ...snap.data() });
             setLoading(false);
+            setLoadError(false);
+            // fromCache latch: only surface the cached badge once we've seen
+            // at least one server snapshot (or if navigator says we're
+            // offline entirely). Prevents the flash on healthy loads while
+            // still catching the "loaded totally offline" case.
+            const isFromCache = snap.metadata.fromCache;
+            if (!isFromCache) {
+                seenServerRef.current = true;
+                setUsingCache(false);
+            } else if (seenServerRef.current || !navigator.onLine) {
+                setUsingCache(true);
+            }
         }, (error) => {
             console.error('[ProjectDetail/project] snapshot listener error:', error);
-            setNotFound(true);
+            // Do NOT set notFound here — a network/transport failure is not
+            // the same as a missing document. loadError renders the retry
+            // screen instead of the dead-end "Project Not Found" page.
+            setLoadError(true);
             setLoading(false);
         });
         return () => unsub();
-    }, [id]);
+    }, [id, retryTick]);
 
     useEffect(() => {
         if (!id || !tenantId) return;
@@ -385,11 +412,16 @@ const ProjectDetail = () => {
             });
             setMilestones(all.filter(m => m.confirmed !== false));
             setDraftCount(all.filter(m => m.confirmed === false).length);
+            setMilestonesError(false);
         }, (error) => {
             console.error('[ProjectDetail/milestones] snapshot listener error:', error);
+            // Inline advisory rather than a page-level failure — the last
+            // known milestones stay on screen; the user is told they may
+            // be out of date.
+            setMilestonesError(true);
         });
         return () => unsub();
-    }, [id, tenantId]);
+    }, [id, tenantId, milestonesRetryTick]);
 
     useEffect(() => {
         if (loading || milestones.length === 0) return;
@@ -600,6 +632,41 @@ const ProjectDetail = () => {
         </div>
     );
 
+    if (loadError && !project) return (
+        <div className="min-h-screen hcsd-bg font-sans">
+            <HcsdSidebar />
+            <main className="ml-0 md:ml-72 p-4 md:p-6 lg:p-10 pt-20 md:pt-10 flex items-center justify-center min-h-screen">
+                <div className="text-center max-w-md">
+                    <div className="w-16 h-16 rounded-full bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center mx-auto mb-4">
+                        <CloudOff size={28} className="text-amber-500 dark:text-amber-400" />
+                    </div>
+                    <h2 className="text-lg font-bold text-slate-700 dark:text-slate-200">Can't load this project</h2>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 mb-5">
+                        We couldn't reach the server. This may be a temporary connection problem.
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => { setLoadError(false); setLoading(true); setRetryTick((n) => n + 1); }}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-sm transition-all"
+                        >
+                            <RefreshCw size={15} />
+                            Try again
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/hcsd/projects')}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold rounded-xl text-sm transition-all"
+                        >
+                            <ArrowLeft size={15} />
+                            Back to Registry
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    );
+
     const p = project;
 
     return (
@@ -621,6 +688,15 @@ const ProjectDetail = () => {
                                 <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                                 {displayStatus}
                             </span>
+                            {usingCache && (
+                                <span
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide border bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30"
+                                    title="Showing cached data. We'll refresh when the connection returns."
+                                >
+                                    <CloudOff size={11} />
+                                    Cached
+                                </span>
+                            )}
                             {p.barangay && (
                                 <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
                                     <MapPin size={11} className="text-teal-500" />
@@ -970,6 +1046,25 @@ const ProjectDetail = () => {
                                 {draftCount} AI-generated draft{draftCount !== 1 ? 's' : ''} awaiting engineer review
                                 <span className="font-normal text-indigo-600/80 dark:text-indigo-400/80"> · hidden until confirmed on mobile</span>
                             </p>
+                        </div>
+                    )}
+
+                    {milestonesError && (
+                        <div className="px-6 py-3 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-500/30 flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0">
+                                <CloudOff size={13} className="text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <p className="flex-1 text-xs font-semibold text-amber-700 dark:text-amber-300 leading-snug">
+                                Milestones may be out of date. We couldn't refresh from the server.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setMilestonesRetryTick((n) => n + 1)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide bg-amber-500 hover:bg-amber-600 text-white transition-colors shrink-0"
+                            >
+                                <RefreshCw size={11} />
+                                Retry
+                            </button>
                         </div>
                     )}
 

@@ -1,7 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const REQUIRED_VARS = [
@@ -44,7 +49,27 @@ if (appCheckSiteKey) {
 }
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Persistent IndexedDB cache with multi-tab support so an HCSD user can
+// open a second Project Detail tab and share the cache. On a browser
+// where IndexedDB is unavailable (some private-browsing modes,
+// enterprise-locked environments) initializeFirestore itself does not
+// throw; the SDK degrades to memory internally. The try/catch is a
+// belt-and-suspenders fallback that reverts to the bare getFirestore
+// path (today's behavior) if anything unexpected throws at init.
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} catch (err) {
+  console.warn('[firebase] persistent cache init failed, falling back to memory-only Firestore', err);
+  dbInstance = getFirestore(app);
+}
+export const db = dbInstance;
+
 export const storage = getStorage(app);
 
 export default app;
